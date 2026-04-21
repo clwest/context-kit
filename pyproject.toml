@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "context-kit"
+version = "0.3.0"
+description = "Bootstrap tool for AI-assisted projects that preserves context across sessions, prevents doc drift, and scaffolds a memory layer around your code."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Chris", email = "westremarketing@gmail.com" },
+]
+maintainers = [
+    { name = "Chris", email = "westremarketing@gmail.com" },
+]
+keywords = [
+    "ai",
+    "llm",
+    "claude",
+    "bootstrap",
+    "scaffold",
+    "documentation",
+    "pair-programming",
+    "drift-detection",
+    "context",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Documentation",
+]
+# Zero runtime dependencies by design.
+dependencies = []
+
+[project.scripts]
+context-kit = "context_kit:main"
+
+[project.urls]
+Homepage = "https://github.com/clwest/context-kit"
+Repository = "https://github.com/clwest/context-kit"
+Issues = "https://github.com/clwest/context-kit/issues"
+Changelog = "https://github.com/clwest/context-kit/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+# The CLI entry point lives at the top level as a single-file module, and
+# the subcommand implementations live in the ``cli`` package.
+py-modules = ["context_kit"]
+packages = ["cli"]
+include-package-data = true
+
+# Starter + guide files need to ship inside a wheel so ``init`` can find them
+# after a non-editable install. ``include-package-data`` + ``MANIFEST.in``
+# handles sdist; for wheels to include non-package data, Phase 4 will move
+# starter/ and the guide docs inside the ``cli`` package (they currently live
+# at the repo root to stay human-readable). Editable installs (``pip install
+# -e .``) work today because the source tree stays in place.
+
+[tool.setuptools.package-data]
+cli = []
