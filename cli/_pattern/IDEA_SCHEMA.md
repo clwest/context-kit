@@ -51,7 +51,10 @@ placeholders where you didn't.
 
 ## Tech stack
 
-<languages, frameworks, services — optional>
+<languages, frameworks, services — optional. If you omit this section,
+`context-kit seed` will call `recommend-stack` and bake an
+opinionated v0 stack pick into `docs/BUILD_PLAN.md` for you. Beginners:
+leave it out. You can always edit BUILD_PLAN.md afterward.>
 
 ## First milestone
 
@@ -149,16 +152,19 @@ cd my-app
 # 2. Write your idea
 $EDITOR idea.md
 
-# 3. Seed
+# 3. (Optional) Get a stack opinion before seeding
+context-kit recommend-stack idea.md
+
+# 4. Seed (will auto-fill Tech stack if you omitted it)
 context-kit seed idea.md
 
-# 4. Refresh the runtime anchor
+# 5. Refresh the runtime anchor
 context-kit inventory --write
 
-# 5. Verify the agent sees what it needs
+# 6. Verify the agent sees what it needs
 context-kit orient
 
-# 6. Build
+# 7. Build
 claude  # or your AI tool of choice
 ```
 

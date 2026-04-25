@@ -85,6 +85,23 @@ real intent instead of empty stubs. Deterministic — no LLM calls.
 If `state:` is `seeded` or anything other than `scaffold`, the
 project has already moved past the seed step; don't re-suggest it.
 
+## Optional — run recommend-stack when the user doesn't know what to build with
+
+If the user has a clear *what* but vague or empty *tech stack* in their
+idea file (or hasn't started one), suggest:
+
+```bash
+context-kit recommend-stack idea.md
+```
+
+It returns an opinionated v0 stack pick: what to use, why, what not to
+add yet, when to upgrade. Deterministic, no LLM. Designed for
+beginners who can describe the problem but not the implementation.
+
+If the user runs `seed` next and their idea file has no `## Tech stack`
+section, `seed` calls this same engine automatically and bakes the
+recommendation into `docs/BUILD_PLAN.md`.
+
 ## Optional — run doctor when something feels off in the environment
 
 If the user is hitting build/run errors that look like environment

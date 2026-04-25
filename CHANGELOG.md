@@ -10,6 +10,23 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `context-kit recommend-stack PATH` — opinionated, deterministic v0
+  stack guidance for non-technical builders. Reads the same structured
+  idea file as `seed`. 8 MVP rules covering medication-reminders,
+  mobile-personal-tracking, business-dashboard, content-website,
+  local-automation, web-api, plus two modifier rules
+  (privacy-sensitive, simple-mvp). Substring matching, case-insensitive.
+  Highest-priority primary + capped "also detected" annotations.
+  Default fallback when no rules match. Always exits 0; this is
+  advisory. Output: human-readable by default, `--json` for tooling.
+  **Seed integration:** when `## Tech stack` is missing from the idea
+  file, `seed` calls into this engine and bakes the recommendation
+  into `docs/BUILD_PLAN.md` with an attribution note. When
+  `## Tech stack` is present, `seed` trusts the user's pick. The
+  medication-reminders rule emphasizes accessibility (large tap
+  targets, simple language, high contrast, minimal screens) and uses
+  practical-not-scary privacy framing. Schema documented at
+  `cli/_pattern/IDEA_SCHEMA.md`.
 - `context-kit doctor` — read-only environment + setup diagnostics
   with 7 checks: Python version, git availability, context-kit
   project structure, Node.js version (against a `KNOWN_STABLE_NODE_MAJORS`

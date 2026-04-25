@@ -130,6 +130,7 @@ context-kit COMMAND [options]
 Commands:
   init NAME            Scaffold a new project with the context-kit pattern
   seed PATH            Turn a structured idea file into project context (5 files)
+  recommend-stack PATH Suggest a beginner-friendly v0 stack from an idea file
   start                Launch the onboarding server for the current project
   orient               Print the assembled session-start orientation report
   hotpath              Show the largest files most likely to dominate AI context
@@ -222,6 +223,25 @@ claude  # or your AI tool of choice
 | `--write` | off | Update the managed block in `docs/CONTEXT_KIT_INVENTORY.md` |
 | `--check` | off | Exit 0 only if the managed block is current; 1 if stale |
 | `--json` | off | Print machine-readable JSON to stdout (read-only) |
+
+**`recommend-stack` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| *positional* `PATH` | required | Path to the markdown idea file |
+| `--json` | off | Print machine-readable JSON to stdout |
+
+`recommend-stack` reads a structured markdown idea file (same format
+as `seed`) and prints an opinionated v0 stack pick: what to use, why,
+what NOT to add yet, risks, when to upgrade later. Deterministic, no
+LLM, always exits 0. Designed for non-technical builders who know
+their problem but not whether they need React, Flutter, Django, etc.
+
+**Seed integration:** when `## Tech stack` is **missing** from the
+idea file, `seed` calls into the same engine and bakes the
+recommendation into `docs/BUILD_PLAN.md` automatically (with an
+attribution note). When `## Tech stack` is **present**, `seed` trusts
+your pick and leaves it alone.
 
 **`doctor` options**
 

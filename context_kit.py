@@ -236,6 +236,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print machine-readable JSON to stdout",
     )
 
+    # recommend-stack
+    rec = sub.add_parser(
+        "recommend-stack",
+        help="Suggest a beginner-friendly stack from a structured idea file",
+        description=(
+            "Read a markdown idea file and recommend a v0 stack — opinionated, "
+            "deterministic, no LLM. Always exits 0; this is advisory. "
+            "When `seed` runs and the idea file has no `## Tech stack` section, "
+            "seed calls into this same engine to populate BUILD_PLAN.md."
+        ),
+    )
+    rec.add_argument(
+        "idea",
+        help="Path to the markdown idea file (e.g. ./idea.md)",
+    )
+    rec.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON to stdout",
+    )
+
     return parser
 
 
@@ -285,6 +306,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         from cli.doctor import run_doctor
         return run_doctor(args)
+
+    if args.command == "recommend-stack":
+        from cli.recommend_stack import run_recommend_stack
+        return run_recommend_stack(args)
 
     parser.print_help()
     return 1

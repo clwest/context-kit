@@ -371,7 +371,23 @@ def _render_product_topic_body(sections: dict) -> str:
     )
 
 
-def _render_build_plan_body(sections: dict) -> str:
+def _render_build_plan_body(sections: dict, idea_text: str = "") -> str:
+    # Tech stack: use the user's content if present; otherwise call into
+    # `recommend-stack` and bake the recommendation in. Same engine the
+    # standalone command uses, so the two paths can never disagree.
+    user_stack = sections.get("stack", "").strip() if "stack" in sections else ""
+    if user_stack:
+        stack_body = user_stack
+    elif idea_text:
+        try:
+            from .recommend_stack import recommend, format_for_build_plan  # type: ignore
+            result = recommend(idea_text)
+            stack_body = format_for_build_plan(result)
+        except ImportError:
+            stack_body = "*(stack TBD — recommend_stack module unavailable)*"
+    else:
+        stack_body = "*(stack TBD)*"
+
     parts = [
         "## First milestone",
         "",
@@ -383,7 +399,7 @@ def _render_build_plan_body(sections: dict) -> str:
         "",
         "## Tech stack",
         "",
-        _section_or_placeholder(sections, "stack", "*(stack TBD)*"),
+        stack_body,
         "",
         "## Non-goals",
         "",
@@ -616,7 +632,13 @@ def _seed_build_plan(
     dry_run: bool,
 ) -> list[tuple[Path, str]]:
     path = project / "docs" / "BUILD_PLAN.md"
-    body = _wrap_block(_render_build_plan_body(sections), idea_path)
+    # Pass the raw idea text so recommend-stack can match on full context
+    # (not just the parsed sections) when filling in a missing Tech stack.
+    try:
+        idea_text = idea_path.read_text(encoding="utf-8")
+    except OSError:
+        idea_text = ""
+    body = _wrap_block(_render_build_plan_body(sections, idea_text), idea_path)
     if path.is_file():
         existing = path.read_text(encoding="utf-8")
         new_text = _replace_or_insert_block(existing, body)
