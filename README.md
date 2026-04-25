@@ -122,6 +122,11 @@ Run `python3 context_kit.py <command> --help` for per-command options.
 |---|---|---|
 | `--project DIR` | `cwd` | Project root to orient against |
 
+`orient` is also the command the bundled Claude Code skill calls — see
+`skills/context-kit/SKILL.md`. Every generated project gets a copy at
+`.claude/skills/context-kit/SKILL.md`, so any agent run inside the
+project picks it up automatically.
+
 ---
 
 ## What gets generated

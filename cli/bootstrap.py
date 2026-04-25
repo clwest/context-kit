@@ -47,6 +47,13 @@ RUNTIME_COPY = (
     ("cli/orient.py", "cli/orient.py"),
 )
 
+# The Claude Code skill ships into the generated project's local
+# ``.claude/skills/`` so any agent run inside the project picks it up
+# automatically. Source dir, destination dir (relative to project root).
+SKILLS_COPY = (
+    ("skills/context-kit", ".claude/skills/context-kit"),
+)
+
 # Suffixes treated as text (placeholder substitution applies). Everything else
 # is copied byte-for-byte.
 TEXT_SUFFIXES = frozenset({
@@ -87,6 +94,11 @@ def bootstrap(
     # 4. Runtime files — so the generated project can run
     #    ``python3 context_kit.py start`` / ``orient`` without the source repo.
     written += _copy_runtime(REPO_ROOT, target, force=force)
+
+    # 5. Claude Code skill — agent-facing entry point. Drops into
+    #    ``<project>/.claude/skills/context-kit/`` so any agent run in
+    #    the project picks it up automatically.
+    written += _copy_skills(REPO_ROOT, target, force=force)
 
     return written
 
@@ -168,6 +180,23 @@ def _copy_runtime(src_root: Path, dst_root: Path, *, force: bool) -> list[Path]:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
         written.append(dst)
+    return written
+
+
+def _copy_skills(src_root: Path, dst_root: Path, *, force: bool) -> list[Path]:
+    """Copy Claude Code skill directories into the generated project."""
+    written: list[Path] = []
+    for src_rel, dst_rel in SKILLS_COPY:
+        src = src_root / src_rel
+        dst = dst_root / dst_rel
+        if not src.is_dir():
+            continue
+        if dst.exists() and not force:
+            continue
+        if dst.exists() and force:
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+        written += [p for p in sorted(dst.rglob("*")) if p.is_file()]
     return written
 
 

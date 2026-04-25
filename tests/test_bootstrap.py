@@ -76,6 +76,15 @@ class TestInitWritesExpectedFiles(unittest.TestCase):
         for _, dst_rel in RUNTIME_COPY:
             self.assertTrue((target / dst_rel).is_file(), f"runtime missing: {dst_rel}")
 
+    def test_claude_skill_copied_into_generated_project(self):
+        target = self.tmpdir / "skill"
+        run_init(_init_args("Skill", target))
+        skill = target / ".claude" / "skills" / "context-kit" / "SKILL.md"
+        self.assertTrue(skill.is_file(), "SKILL.md was not copied into the generated project")
+        body = skill.read_text(encoding="utf-8")
+        self.assertIn("name: context-kit", body)
+        self.assertIn("context-kit orient", body)
+
     def test_default_target_is_slug_in_cwd(self):
         old_cwd = os.getcwd()
         try:

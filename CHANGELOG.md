@@ -14,6 +14,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   context (start-here doc, two-doc anchor preview, latest handoff,
   pattern pointers) so an agent or returning human reads from a single
   authoritative path instead of guessing which file to open first.
+- Claude Code skill at `skills/context-kit/SKILL.md`, copied into every
+  generated project at `.claude/skills/context-kit/SKILL.md`. An agent
+  loads the skill, runs `orient`, and follows the priority order — no
+  human prompt required to bootstrap a new session.
 
 ## [0.3.0] — 2026-04-21
 
