@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or pattern discussion
+    url: https://github.com/clwest/context-kit/discussions
+    about: Open-ended questions about the pattern, AI-collaboration habits, or whether context-kit fits your project — please use Discussions, not Issues.
