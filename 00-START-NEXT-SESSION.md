@@ -10,89 +10,72 @@
 
 ---
 
-## What just shipped (Session 4 — on branch `pypi-prep`)
+## What just shipped
 
-- `feat(packaging): make wheel installable` — bump 0.3.0 → 0.4.0.
-  All starter, pattern, and skill assets moved into `cli/_starter/`,
-  `cli/_pattern/`, `cli/_skills/` as package data. Bootstrap reads
-  via `importlib.resources` — same code path for editable and wheel
-  installs.
-- `pip install contextkit-ai` works end-to-end after the human
-  publishes to PyPI (see manual steps below). PyPI distribution name
-  is `contextkit-ai` because `context-kit` was rejected as too similar
-  to another project; the CLI command stays `context-kit`.
-- TRUST_CALIBRATION entry added: AI was estimating implementation
-  work in human time instead of AI execution time. Future estimates
-  distinguish the two.
-- 92/92 tests passing. Clean-venv wheel smoke test green: install
-  → `init` → 29-file generated project with no `__pycache__`
-  leakage → `orient`/`hotpath`/`inventory` all run inside the
-  generated project.
+`contextkit-ai 0.4.2` is live on PyPI. The `init / seed / orient`
+loop is the shippable shape of the tool now.
 
-See `docs/handoffs/SESSION_004_PYPI_PREP.md` for full detail.
+Recent commit history (latest first):
+
+- `chore(release): bump to 0.4.2` — version bump; 0.4.1 was already
+  published without `seed` and PyPI versions are immutable, so seed
+  ships in 0.4.2.
+- `docs: position seed in launch + log estimation calibration` —
+  README + DISTRIBUTION_NOTES updated with the three-line positioning;
+  TRUST_CALIBRATION gains an entry on AI-paced estimates being too
+  high when design is locked.
+- `feat(seed): generate project context from idea files` — the
+  Session 5 feature. 5 target files, managed-block markers, schema
+  documented at `cli/_pattern/IDEA_SCHEMA.md`. 34 new tests.
+- `chore(packaging): rename PyPI distribution to contextkit-ai` —
+  the unsuffixed `context-kit` name was rejected.
+- `feat(packaging): make wheel installable` — Session 4 work; assets
+  moved inside `cli/` as package data, bootstrap reads via
+  `importlib.resources`.
+
+127/127 tests passing. Clean-venv install of the live PyPI wheel
+verified end-to-end (init → seed → orient).
+
+See the SESSION_NNN_*.md handoffs in `docs/handoffs/` for full
+context. The latest is Session 4 (`SESSION_004_PYPI_PREP.md`); a
+Session 5 handoff is queued for the next session that does
+non-launch work.
 
 ---
 
 ## MODE: launch watch (still)
 
-PyPI prep was plumbing for the launch, not new product scope. We
-remain in launch-watch mode: **no new build work until 3-5 real
-feedback signals are in.** Decision gate is in
+PyPI publish was infrastructure for the launch, not new product
+scope. We remain in launch-watch mode: **no new build work until
+3-5 real feedback signals are in.** Decision gate is in
 `docs/LAUNCH_FEEDBACK.md`.
 
 ---
 
 ## What the human is doing (off-keyboard, in order)
 
-### Now: merge `pypi-prep` and publish
+### Done
 
-1. Push `pypi-prep`, optionally open a PR for self-review, then
-   merge to `main`.
-2. **Verify the package name is available:**
-   ```bash
-   pip index versions contextkit-ai
-   ```
-3. **Build a fresh wheel from main:**
-   ```bash
-   git checkout main && git pull
-   rm -rf dist build
-   python3 -m build
-   ```
-4. **TestPyPI dry-run** (recommended before real PyPI):
-   ```bash
-   pip install --upgrade twine
-   python3 -m twine upload --repository testpypi dist/*
-   ```
-   You'll need a TestPyPI account + API token in `~/.pypirc`.
-5. **Verify TestPyPI install** in a fresh venv:
-   ```bash
-   python3 -m venv /tmp/test-pypi
-   /tmp/test-pypi/bin/pip install \
-       --index-url https://test.pypi.org/simple/ \
-       --extra-index-url https://pypi.org/simple/ \
-       contextkit-ai
-   /tmp/test-pypi/bin/context-kit init "Test PyPI" --target /tmp/tp
-   ```
-6. **Real PyPI publish:**
-   ```bash
-   python3 -m twine upload dist/*
-   ```
-7. **Tag and push:**
-   ```bash
-   git tag v0.4.0 && git push --tags
-   ```
-8. **Update `docs/DISTRIBUTION_NOTES.md`** — change "coming soon to
-   PyPI" to "now on PyPI." Then push.
+- ✅ `pip install contextkit-ai` is live on PyPI as **0.4.2**.
+- ✅ Tags `v0.4.1` and `v0.4.2` pushed.
+- ✅ GitHub release v0.4.2 published:
+  https://github.com/clwest/context-kit/releases/tag/v0.4.2
+- ✅ All launch copy in `docs/DISTRIBUTION_NOTES.md` reflects the
+  shipped state.
 
-### Then: the launch (unchanged from Session 3)
+### Now: the public launch
 
-9. Reply to Damian, Brian, Austin under their original LinkedIn
-   comments using the snippets in `DISTRIBUTION_NOTES.md`.
-10. Wait ~24h.
-11. Post the long-form LinkedIn update (now with `pip install
-    context-kit` baked in).
-12. Wait ~24h.
-13. Post the X/Twitter thread.
+1. **Reply** to Damian, Brian, Austin under their original LinkedIn
+   comments using the snippets in `DISTRIBUTION_NOTES.md`. Edit to
+   your voice. Include the demo (asciinema cast or screen recording
+   of `examples/demo.sh`) if you have one.
+2. **Wait ~24h.** Read whatever comes back.
+3. **Post** the long-form LinkedIn update (draft in
+   `DISTRIBUTION_NOTES.md` — leads with the `init / seed / orient`
+   loop and the live install).
+4. **Wait ~24h.**
+5. **Post** the X/Twitter thread (6 tweets, draft in
+   `DISTRIBUTION_NOTES.md`).
 
 ---
 
