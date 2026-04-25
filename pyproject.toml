@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "context-kit"
-version = "0.3.0"
+version = "0.4.0"
 description = "Bootstrap tool for AI-assisted projects that preserves context across sessions, prevents doc drift, and scaffolds a memory layer around your code."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -59,12 +59,20 @@ py-modules = ["context_kit"]
 packages = ["cli"]
 include-package-data = true
 
-# Starter + guide files need to ship inside a wheel so ``init`` can find them
-# after a non-editable install. ``include-package-data`` + ``MANIFEST.in``
-# handles sdist; for wheels to include non-package data, Phase 4 will move
-# starter/ and the guide docs inside the ``cli`` package (they currently live
-# at the repo root to stay human-readable). Editable installs (``pip install
-# -e .``) work today because the source tree stays in place.
+# All starter, pattern, and skill assets live inside the ``cli`` package
+# under ``_starter/``, ``_pattern/``, and ``_skills/``. They ship in the
+# wheel via the explicit globs below and are read at runtime via
+# ``importlib.resources`` (see cli/bootstrap.py). Editable installs work
+# the same way because importlib.resources sees the in-place tree.
 
 [tool.setuptools.package-data]
-cli = []
+cli = [
+    "_pattern/*.md",
+    "_pattern/templates/*",
+    "_starter/root/*",
+    "_starter/docs/*",
+    "_starter/docs/topics/*",
+    "_starter/docs/handoffs/*",
+    "_starter/scaffold/python/*",
+    "_skills/context-kit/*",
+]

@@ -9,7 +9,16 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-04-25
+
 ### Added
+- **Wheel-installable.** `pip install context-kit` now works end-to-end
+  for non-editable installs. Starter assets, the 8 guide docs, the
+  reference templates, and the bundled Claude Code skill have been
+  moved inside the `cli` package as `cli/_starter/`, `cli/_pattern/`,
+  and `cli/_skills/`, and they ship as `package_data`. Bootstrap
+  reads them via `importlib.resources` — same code path for editable
+  installs and wheel installs.
 - `context-kit orient` — prints the project's assembled session-start
   context (start-here doc, two-doc anchor preview, latest handoff,
   pattern pointers) so an agent or returning human reads from a single

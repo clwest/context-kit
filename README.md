@@ -36,17 +36,33 @@ handoffs, and explicit AI/human collaboration conventions.
 
 ---
 
+## Install
+
+```bash
+pip install context-kit
+# or, isolated:
+pipx install context-kit
+```
+
+Or from source (editable install):
+
+```bash
+git clone https://github.com/clwest/context-kit
+cd context-kit
+pip install -e .
+```
+
 ## Quick start
 
 ```bash
 # 1. Scaffold a new project
-python3 context_kit.py init "My App"
+context-kit init "My App"
 
 # 2. Enter it
 cd my-app
 
-# 3. Open the onboarding page (opens your browser — no install required)
-python3 context_kit.py start
+# 3. Open the onboarding page (opens your browser — no extra install required)
+context-kit start
 ```
 
 That's it. The onboarding page walks you through the first-session checklist
@@ -55,13 +71,13 @@ and shows you which files matter most.
 With the optional Python scaffold (drift verifier + index builder):
 
 ```bash
-python3 context_kit.py init "My App" --with-scaffold
+context-kit init "My App" --with-scaffold
 ```
 
 Custom target directory:
 
 ```bash
-python3 context_kit.py init "My App" --target ~/projects/my-app
+context-kit init "My App" --target ~/projects/my-app
 ```
 
 ---
@@ -336,19 +352,22 @@ OS-picked port.
 
 ---
 
-## Installable CLI (experimental)
+## Installable CLI
 
-A minimal `pyproject.toml` is shipped so the CLI can be installed editable:
+`pip install context-kit` is the supported install. The wheel ships
+`starter/`, the 8 guide docs, the reference templates, and the
+bundled Claude Code skill as package data inside the `cli` package,
+so `context-kit init` works end-to-end after a wheel install:
 
 ```bash
-pip install -e .
+pip install context-kit
 context-kit init "My App"
 context-kit start
 ```
 
-Editable installs work end-to-end today. Wheel distribution is Phase 4 work
-(the starter tree and guide docs need packaging as data files, not just
-Python modules).
+Editable installs (`pip install -e .`) work the same way — both modes
+load packaged assets via `importlib.resources`, so there's no separate
+"developer" code path.
 
 ---
 
@@ -357,7 +376,8 @@ Python modules).
 - **Phase 1** (minimal working bootstrap) — ✅ shipped
 - **Phase 2** (rename to context-kit + onboarding server) — ✅ shipped
 - **Phase 3** (tests + pyproject + git init + README polish) — ✅ shipped
-- Phase 4 (wheel packaging, LICENSE, release workflow) — planned
+- **Phase 4** (wheel packaging — `pip install context-kit` works end-to-end) — ✅ shipped in 0.4.0
+- Phase 5 (release workflow, CI install matrix) — in progress
 
 ---
 

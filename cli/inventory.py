@@ -157,7 +157,25 @@ def _cli_modules(project: Path) -> list[str]:
 
 
 def _guide_docs(project: Path) -> list[str]:
-    return sorted(p.name for p in project.glob("0[1-8]_*.md") if p.is_file())
+    """Locate the 8 numbered guide docs.
+
+    In the source repo they live at ``cli/_pattern/`` (so they ship as
+    package data inside a wheel). In a generated project they live at
+    ``docs/docs-pattern/`` (the materialized copy). Check both, dedupe
+    by name. Returns empty list if neither location has them.
+    """
+    candidates: dict[str, None] = {}
+    for base in (
+        project / "cli" / "_pattern",
+        project / "docs" / "docs-pattern",
+        project,  # legacy: pre-PyPI source-repo root layout
+    ):
+        if not base.is_dir():
+            continue
+        for p in base.glob("0[1-8]_*.md"):
+            if p.is_file():
+                candidates[p.name] = None
+    return sorted(candidates.keys())
 
 
 def _docs_files(project: Path) -> list[str]:
@@ -248,15 +266,27 @@ def _test_count(project: Path) -> int:
 
 
 def _skill_files(project: Path) -> list[str]:
-    """Every ``SKILL.md`` discovered under ``skills/``."""
-    skills = project / "skills"
-    if not skills.is_dir():
-        return []
-    return sorted(
-        str(p.relative_to(skills))
-        for p in skills.rglob("SKILL.md")
-        if p.is_file()
-    )
+    """Every ``SKILL.md`` discovered under any known skill location.
+
+    Source repo (post-PyPI):    ``cli/_skills/<name>/SKILL.md``
+    Generated project:          ``.claude/skills/<name>/SKILL.md``
+    Source repo (legacy):       ``skills/<name>/SKILL.md``
+
+    Returns paths relative to the project root, deduped.
+    """
+    found: dict[str, None] = {}
+    for base_rel in ("cli/_skills", ".claude/skills", "skills"):
+        base = project / base_rel
+        if not base.is_dir():
+            continue
+        for p in base.rglob("SKILL.md"):
+            if p.is_file():
+                try:
+                    rel = str(p.relative_to(project))
+                except ValueError:
+                    rel = str(p)
+                found[rel] = None
+    return sorted(found.keys())
 
 
 def _tracked_file_count(project: Path) -> int | None:

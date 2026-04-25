@@ -34,6 +34,46 @@ Each entry:
 
 ## Entries
 
+## 2026-04-25 — estimating work in human time, not Claude Code time
+
+**Type:** judgment-needs-pushback
+**Session:** SESSION_004_PYPI_PREP (planning conversation)
+**Context:** scoping the PyPI-prep work. The user asked how to make
+context-kit pip-installable.
+**What the AI claimed:** "~half a day of careful work + tests" to
+land the wheel-install feature.
+**What was actually true:** at AI execution speed, the actual work
+was ~30-45 minutes of focused code + test loops. The "half day"
+estimate was unconsciously imagining a human writing the code at
+human speed (read the file, think, type, test, debug, repeat).
+**How it was caught:** the human pushed back directly: "remember
+that when you start thinking in coding times you need to think in
+how long it will take you to do something not me. You are writing
+the code, I am just guiding."
+**Lesson / pattern:** when Claude Code is doing the implementation,
+estimate based on Claude execution + test-loop time, not on a
+human's read/think/type/debug cycle. Practical rule for future
+estimates:
+
+  - If the user is reviewing and guiding (not typing): use AI
+    execution time. Roughly: read + plan + write + test = 5-10
+    minutes per moderate change; 30-60 minutes for a
+    multi-file feature with tests; hours only for genuinely
+    open-ended exploration.
+  - If the user is coding alongside or doing the typing: revert to
+    human-paced estimates.
+  - When uncertain, say which mode the estimate assumes ("at AI
+    pace, ~30 min; if you're typing, half a day"), don't quietly
+    pick the longer one to seem cautious.
+
+This calibration matters because over-estimating in AI mode
+generates false friction: the human postpones useful work because
+"that's a half-day project" when the real cost is 30 minutes. The
+larger the gap between estimated and actual, the more good work
+gets deferred indefinitely.
+
+---
+
 ## 2026-04-25 — "deliberate worked example" was the wrong call
 
 **Type:** judgment-needs-pushback

@@ -187,19 +187,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "init":
-        starter_root = REPO_ROOT / "starter"
-        if not starter_root.exists():
+        # Imported lazily so generated projects — which ship only the
+        # subset of cli/ in RUNTIME_COPY — don't crash on the other
+        # subcommands. If bootstrap is unavailable, the user is most
+        # likely running this from inside a generated project; tell
+        # them where to go.
+        try:
+            from cli.bootstrap import run_init
+        except ImportError:
             sys.stderr.write(
-                "error: `init` requires the context-kit source repo "
-                "(starter/ not found next to context_kit.py).\n"
+                "error: `init` is not available in this context.\n"
                 "You appear to be running context-kit from inside a generated "
-                "project. To create a new project, run `init` from the "
-                "context-kit source repo instead.\n"
+                "project, which only ships the runtime subcommands. To create "
+                "a new project, install the full package (`pip install context-kit`) "
+                "and run `context-kit init` from anywhere.\n"
             )
             return 2
-        # Imported lazily so generated projects (which ship only server.py)
-        # don't crash on `context_kit.py start`.
-        from cli.bootstrap import run_init
         return run_init(args)
 
     if args.command == "start":

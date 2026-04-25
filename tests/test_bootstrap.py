@@ -76,6 +76,15 @@ class TestInitWritesExpectedFiles(unittest.TestCase):
         for _, dst_rel in RUNTIME_COPY:
             self.assertTrue((target / dst_rel).is_file(), f"runtime missing: {dst_rel}")
 
+    def test_default_target_is_slug_in_cwd(self):
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.tmpdir)
+            run_init(_init_args("Slug Test", target=None))
+            self.assertTrue((self.tmpdir / "slug-test").is_dir())
+        finally:
+            os.chdir(old_cwd)
+
     def test_claude_skill_copied_into_generated_project(self):
         target = self.tmpdir / "skill"
         run_init(_init_args("Skill", target))
@@ -85,14 +94,43 @@ class TestInitWritesExpectedFiles(unittest.TestCase):
         self.assertIn("name: context-kit", body)
         self.assertIn("context-kit orient", body)
 
-    def test_default_target_is_slug_in_cwd(self):
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(self.tmpdir)
-            run_init(_init_args("Slug Test", target=None))
-            self.assertTrue((self.tmpdir / "slug-test").is_dir())
-        finally:
-            os.chdir(old_cwd)
+
+class TestPackagedResources(unittest.TestCase):
+    """Asserts that all package data needed by `init` is accessible
+    via importlib.resources.
+
+    This is the same code path the wheel install uses at runtime;
+    if these paths don't exist here they won't exist after `pip
+    install context-kit` either.
+    """
+
+    def test_pattern_resources_present(self):
+        import importlib.resources as resources
+        cli_root = resources.files("cli")
+        self.assertTrue((cli_root / "_pattern" / "01_two_doc_anchor.md").is_file())
+        self.assertTrue((cli_root / "_pattern" / "08_collaboration_roles.md").is_file())
+        self.assertTrue((cli_root / "_pattern" / "README.md").is_file())
+        self.assertTrue(
+            (cli_root / "_pattern" / "templates" / "PLATFORM_WHAT_IT_IS.template.md").is_file()
+        )
+
+    def test_starter_resources_present(self):
+        import importlib.resources as resources
+        cli_root = resources.files("cli")
+        self.assertTrue((cli_root / "_starter" / "root" / "CLAUDE.md").is_file())
+        self.assertTrue((cli_root / "_starter" / "root" / "00-START-NEXT-SESSION.md").is_file())
+        self.assertTrue((cli_root / "_starter" / "docs" / "TRUST_CALIBRATION.md").is_file())
+        self.assertTrue(
+            (cli_root / "_starter" / "docs" / "{{APP_UPPER}}_WHAT_IT_IS.md").is_file()
+        )
+        self.assertTrue(
+            (cli_root / "_starter" / "scaffold" / "python" / "doc_claim_verification.py").is_file()
+        )
+
+    def test_skill_resources_present(self):
+        import importlib.resources as resources
+        skill = resources.files("cli") / "_skills" / "context-kit" / "SKILL.md"
+        self.assertTrue(skill.is_file())
 
 
 class TestContentSubstitution(unittest.TestCase):
