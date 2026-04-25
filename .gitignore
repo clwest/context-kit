@@ -45,6 +45,7 @@ tmp/
 /local_test_output/
 
 # Local tooling state
-.claude/
+.claude/*
+!.claude/skills/
 .env
 .env.local
