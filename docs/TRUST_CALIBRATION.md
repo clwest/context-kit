@@ -34,6 +34,50 @@ Each entry:
 
 ## Entries
 
+## 2026-04-25 — even AI-paced estimates can be too high when design is locked
+
+**Type:** estimation-too-high (in the safer direction)
+**Session:** SESSION_005_SEED (`feat(seed): generate project context from idea files`)
+**Context:** estimating implementation + tests + smoke time for the
+`context-kit seed` feature, after the three-way design discussion
+(Claude / human / ChatGPT) had reached agreement on every load-bearing
+question.
+**What the AI claimed:** "~30-45 min at AI pace" to land the feature.
+**What was actually true:** **10m 34s** end-to-end — tests written,
+implementation written, two smoke-test bugs caught and fixed, full
+verification battery green, wheel built and re-tested.
+**How it was caught:** the human noticed the gap and asked for a
+calibration entry.
+**Lesson / pattern:** AI-paced estimates can still be too conservative
+when the design uncertainty has already been resolved. The earlier
+calibration (below, "estimating work in human time") corrected the
+*human-pace-vs-AI-pace* axis. This one corrects a different axis:
+**design-uncertainty time** vs **coding-execution time**. Both got
+collapsed into "implementation time" in my estimate, even though the
+design discussion had already paid down the uncertainty.
+
+Practical rule going forward:
+
+- When the design is locked (file ownership clear, edge cases
+  enumerated, contracts agreed), estimate based on **coding
+  execution + test loop time only**. For a moderately-sized feature
+  with tests: 5-15 min, not 30-45.
+- When the design is genuinely open (architecture ambiguous, edge
+  cases unclear, contracts unsettled), surface **uncertainty as
+  risk, not as time**. Say "design uncertainty: high" instead of
+  inflating the time estimate to absorb it.
+- Default to the lower honest number. If I'm wrong on the low side
+  ("I said 10 min, took 25"), the human re-plans cheaply. If I'm
+  wrong on the high side ("I said 45 min, took 10"), useful work
+  gets postponed indefinitely. The asymmetry favors the lower
+  estimate.
+
+The compounded version of both calibration entries: **estimate
+based on the actual cycle that will happen, not on a generic
+"implementation" abstraction.**
+
+---
+
 ## 2026-04-25 — estimating work in human time, not Claude Code time
 
 **Type:** judgment-needs-pushback

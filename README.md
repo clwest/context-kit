@@ -10,6 +10,17 @@ status: active
 context-kit scaffolds the structure, memory layer, and drift detection that
 keep your AI pair programmer from starting over every session.
 
+Three commands, one loop:
+
+- **`context-kit init`** — creates the project memory structure
+- **`context-kit seed idea.md`** — turns a raw idea into Claude-ready starting context
+- **`context-kit orient`** — loads the current context for the next AI session
+  *(the bundled Claude Code skill calls this automatically)*
+
+Plus `inventory --check` for CI drift detection and `hotpath` for
+file-size budget warnings. All read-only by default. All exit cleanly
+for an agent to parse.
+
 Think `create-next-app`, but for the memory layer around your code.
 
 > Distilled from ~1,100 AI-assisted build sessions across ~18 months of
