@@ -9,6 +9,28 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-04-25
+
+**context-kit for non-technical builders.** The full loop from a raw
+idea to a Claude-ready project, with environment guardrails:
+
+```
+init  →  recommend-stack  →  seed  →  doctor  →  orient
+```
+
+| Step | What it does |
+|---|---|
+| `init` | Creates the project memory structure |
+| `recommend-stack` | Helps beginners choose a sane v0 stack from their idea |
+| `seed` | Turns the raw idea into Claude-ready context |
+| `doctor` | Catches environment/setup blockers before they bite |
+| `orient` | Loads the current project context for the AI session |
+
+Two real features ship in this release: `recommend-stack` (Session 7,
+beginner stack guidance driven by the medication-reminder use case)
+and `doctor` (Session 6, environment diagnostics driven by real
+Munchkin App / Expo / Metro friction).
+
 ### Added
 - `context-kit recommend-stack PATH` — opinionated, deterministic v0
   stack guidance for non-technical builders. Reads the same structured
@@ -39,6 +61,20 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   real Munchkin App dogfood friction (EMFILE under Metro, Expo Go
   SDK mismatches, `expo-cli` deprecation drift) — see
   `docs/handoffs/SESSION_006_DOCTOR.md`.
+
+### Changed
+- README leads with the 5-command loop and "for non-technical
+  builders" framing, replacing the prior 3-command shape (which
+  predates `recommend-stack` and `doctor`).
+- IDEA_SCHEMA explicitly notes `## Tech stack` is optional;
+  `recommend-stack` will fill it in via `seed` if omitted.
+- Bundled Claude Code skill points at the new commands at the right
+  moments (suggest `recommend-stack` when stack is unclear; suggest
+  `doctor` when environment friction is suspected).
+
+### Tests
+- 202 unit tests passing (was 127 in 0.4.2). +35 for `recommend-stack`,
+  +40 for `doctor`.
 
 ## [0.4.2] — 2026-04-25
 

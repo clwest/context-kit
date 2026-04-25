@@ -8,14 +8,23 @@ status: active
 **Build AI projects that don't lose context.**
 
 context-kit scaffolds the structure, memory layer, and drift detection that
-keep your AI pair programmer from starting over every session.
+keep your AI pair programmer from starting over every session. Designed
+so even non-technical builders can go from a raw idea to a Claude-ready
+project without choosing a stack alone.
 
-Three commands, one loop:
+Five commands, one loop:
 
-- **`context-kit init`** — creates the project memory structure
-- **`context-kit seed idea.md`** — turns a raw idea into Claude-ready starting context
-- **`context-kit orient`** — loads the current context for the next AI session
-  *(the bundled Claude Code skill calls this automatically)*
+```
+init  →  recommend-stack  →  seed  →  doctor  →  orient
+```
+
+| Step | What it does |
+|---|---|
+| **`context-kit init`** | Creates the project memory structure |
+| **`context-kit recommend-stack idea.md`** | Helps beginners pick a sane v0 stack from their idea |
+| **`context-kit seed idea.md`** | Turns the raw idea into Claude-ready context |
+| **`context-kit doctor`** | Catches environment / setup blockers before they bite |
+| **`context-kit orient`** | Loads the current context for the next AI session *(the bundled Claude Code skill calls this automatically)* |
 
 Plus `inventory --check` for CI drift detection and `hotpath` for
 file-size budget warnings. All read-only by default. All exit cleanly
@@ -75,30 +84,44 @@ pip install -e .
 
 ## Quick start
 
-```bash
-# 1. Scaffold a new project
-context-kit init "My App"
+The full beginner loop, end-to-end:
 
-# 2. Enter it
+```bash
+# 1. Scaffold the project
+context-kit init "My App"
 cd my-app
 
-# 3. Open the onboarding page (opens your browser — no extra install required)
-context-kit start
+# 2. Write a structured idea file (see docs/docs-pattern/IDEA_SCHEMA.md)
+$EDITOR idea.md
+
+# 3. Get an opinionated v0 stack pick (skip if you already know your stack)
+context-kit recommend-stack idea.md
+
+# 4. Bake the idea + recommendation into project context
+context-kit seed idea.md
+
+# 5. Verify your environment is ready (Python, git, Node, Expo, etc.)
+context-kit doctor
+
+# 6. Confirm the agent has what it needs at session start
+context-kit orient
+
+# 7. Build
+claude  # or your AI tool of choice — the bundled skill auto-loads
 ```
 
-That's it. The onboarding page walks you through the first-session checklist
-and shows you which files matter most.
+Each command is read-only-by-default (`init` and `seed` write; the
+others just report). Exit codes are CI-friendly. Run any of them
+individually whenever you need them; nothing depends on a fixed order
+after the first few.
+
+For experienced builders: skip steps 3 and 5 unless you want them.
+The minimum loop is `init → seed → orient`.
 
 With the optional Python scaffold (drift verifier + index builder):
 
 ```bash
 context-kit init "My App" --with-scaffold
-```
-
-Custom target directory:
-
-```bash
-context-kit init "My App" --target ~/projects/my-app
 ```
 
 ---
