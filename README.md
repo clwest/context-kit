@@ -84,7 +84,20 @@ pip install -e .
 
 ## Quick start
 
-The full beginner loop, end-to-end:
+**If you're new, just run this:**
+
+```bash
+context-kit start
+```
+
+It opens a guided onboarding page in your browser that walks you
+through naming the project, writing your idea, running the right CLI
+commands, and getting your environment ready. You don't have to know
+what `init`, `seed`, `recommend-stack`, `doctor`, or `orient` mean
+before you begin — the wizard surfaces each one at the right moment.
+
+For experienced builders who want the CLI directly, the full beginner
+loop, end-to-end:
 
 ```bash
 # 1. Scaffold the project

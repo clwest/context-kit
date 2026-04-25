@@ -1,8 +1,23 @@
 """context-kit `start` subcommand: localhost onboarding server.
 
-Serves a single self-contained HTML page that welcomes the developer to
-their new project and points them at the load-bearing files. Standard
-library only — no external dependencies.
+Two pages:
+
+- ``/``        — the existing project-view onboarding page (when the user
+                 already has an init'd context-kit project)
+- ``/wizard``  — the beginner wizard (when the user has nothing yet, or
+                 has scaffolded but not seeded)
+
+Plus three small JSON APIs the wizard calls into:
+
+- ``GET  /api/state``                              — classify cwd
+- ``POST /api/idea``                                — write idea.md
+- ``GET  /api/check?step={init|seed}&project_dir`` — verify a CLI step ran
+
+The wizard writes only ``idea.md``. Every CLI step (`init`, `seed`,
+`doctor`) is copy-paste — the wizard polls the filesystem to verify
+they ran before advancing.
+
+Standard library only — no external dependencies.
 """
 
 from __future__ import annotations
@@ -10,11 +25,16 @@ from __future__ import annotations
 import argparse
 import html
 import http.server
+import importlib.resources as resources
+import json
+import os
 import re
 import socket
 import sys
+import urllib.parse
 import webbrowser
 from pathlib import Path
+from typing import Optional
 
 # Single-page onboarding template. Placeholders use ``{{NAME}}`` syntax so
 # the substitution matches the rest of context-kit.
@@ -250,20 +270,224 @@ def _pick_port(preferred: int, host: str) -> int:
         return s.getsockname()[1]
 
 
+def _detect_project_state(cwd: Path) -> str:
+    """Classify the project at ``cwd`` for wizard branching.
+
+    Returns one of:
+      - ``"none"``      no context-kit markers found
+      - ``"scaffold"``  init'd, ``state: scaffold`` frontmatter
+      - ``"seeded"``    seed has run (frontmatter ``state: seeded``)
+      - any other state value the user has written into the frontmatter
+    """
+    start = cwd / "00-START-NEXT-SESSION.md"
+    if not start.is_file():
+        return "none"
+    try:
+        text = start.read_text(encoding="utf-8")
+    except OSError:
+        return "none"
+    if not text.startswith("---\n"):
+        return "scaffold"  # init'd but no frontmatter (older template)
+    end_idx = text.find("\n---\n", 4)
+    if end_idx < 0:
+        return "scaffold"
+    fm = text[4:end_idx]
+    for line in fm.splitlines():
+        s = line.strip()
+        if s.startswith("state:"):
+            return s[len("state:"):].strip() or "scaffold"
+    return "scaffold"
+
+
+def _safe_project_path(cwd: Path, requested: str) -> Path:
+    """Resolve ``requested`` relative to ``cwd``; reject traversal.
+
+    Raises ``ValueError`` if the resolved path escapes ``cwd``.
+    """
+    cwd = cwd.resolve()
+    if requested in ("", ".", "./"):
+        return cwd
+    candidate = (cwd / requested).resolve()
+    try:
+        candidate.relative_to(cwd)
+    except ValueError as exc:
+        raise ValueError(
+            f"path {requested!r} resolves outside the project root {cwd}"
+        ) from exc
+    return candidate
+
+
+def _load_wizard_html() -> Optional[str]:
+    """Read the bundled wizard HTML from the cli package's ``_static`` dir.
+
+    Returns ``None`` when the asset isn't present (e.g., in a generated
+    project's reduced ``cli`` package). Callers should fall back to
+    redirecting the user at ``/`` in that case.
+    """
+    try:
+        return (resources.files("cli") / "_static" / "wizard.html").read_text(
+            encoding="utf-8"
+        )
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        return None
+
+
 class _OnboardingHandler(http.server.BaseHTTPRequestHandler):
-    """Serves a single page on / and /index.html; 404 everywhere else."""
+    """Routes:
+
+    - ``/``, ``/index.html``               existing project-view page
+    - ``/wizard``                          beginner wizard HTML
+    - ``GET  /api/state``                  JSON classify cwd
+    - ``GET  /api/check?step=...&...``     JSON poll filesystem
+    - ``POST /api/idea``                   write idea.md to a project subdir
+
+    Per-route handler context lives on ``self.server``:
+    - ``onboarding_html``  pre-rendered HTML for ``/``
+    - ``wizard_html``      pre-loaded HTML for ``/wizard`` (or fallback)
+    - ``cwd``              the cwd ``run_start`` was invoked from
+    """
 
     def do_GET(self) -> None:  # noqa: N802 — http.server API
-        if self.path not in ("/", "/index.html"):
-            self.send_error(404, "Not Found")
+        path, _, query = self.path.partition("?")
+        if path in ("/", "/index.html"):
+            self._send_html(getattr(self.server, "onboarding_html", ""))
             return
-        body: bytes = getattr(self.server, "onboarding_html", "").encode("utf-8")
+        if path == "/wizard":
+            wizard = getattr(self.server, "wizard_html", None)
+            if wizard:
+                self._send_html(wizard)
+            else:
+                # No wizard available (running from a generated project's
+                # local cli/ which doesn't ship _static/). Send a friendly
+                # redirect-style note rather than 404.
+                self._send_html(
+                    "<!doctype html><meta charset=utf-8>"
+                    "<title>Wizard not available</title>"
+                    "<body style='font-family:system-ui;max-width:40rem;"
+                    "margin:3rem auto;padding:0 1rem'>"
+                    "<h1>Wizard not available here</h1>"
+                    "<p>The beginner wizard ships in the installed "
+                    "<code>contextkit-ai</code> package but not in a "
+                    "generated project's local copy. <a href='/'>Open the "
+                    "project view instead</a>.</p></body>"
+                )
+            return
+        if path == "/api/state":
+            self._handle_api_state()
+            return
+        if path == "/api/check":
+            params = urllib.parse.parse_qs(query)
+            self._handle_api_check(params)
+            return
+        self.send_error(404, "Not Found")
+
+    def do_POST(self) -> None:  # noqa: N802 — http.server API
+        path, _, _ = self.path.partition("?")
+        if path == "/api/idea":
+            self._handle_api_idea()
+            return
+        self.send_error(404, "Not Found")
+
+    # ---- handlers -----------------------------------------------------
+
+    def _handle_api_state(self) -> None:
+        cwd = getattr(self.server, "cwd", Path.cwd()).resolve()
+        state = _detect_project_state(cwd)
+        if state == "none":
+            suggested = "welcome"
+        elif state == "scaffold":
+            suggested = "recommend-stack"
+        else:
+            suggested = "open-existing"
+        self._send_json({
+            "cwd": str(cwd),
+            "project_state": state,
+            "suggested_step": suggested,
+        })
+
+    def _handle_api_idea(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_error_json(400, "invalid Content-Length")
+            return
+        if length <= 0 or length > 256_000:
+            self._send_error_json(400, "request body must be 1..256000 bytes")
+            return
+        try:
+            payload = json.loads(self.rfile.read(length))
+        except json.JSONDecodeError:
+            self._send_error_json(400, "request body is not valid JSON")
+            return
+        project_dir = payload.get("project_dir", "")
+        content = payload.get("content", "")
+        if not isinstance(project_dir, str) or not isinstance(content, str):
+            self._send_error_json(400, "project_dir and content must be strings")
+            return
+        if not content.strip():
+            self._send_error_json(400, "content is empty")
+            return
+        cwd = getattr(self.server, "cwd", Path.cwd()).resolve()
+        try:
+            target_dir = _safe_project_path(cwd, project_dir)
+        except ValueError as exc:
+            self._send_error_json(400, str(exc))
+            return
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / "idea.md"
+            tmp = target.with_suffix(".md.tmp")
+            tmp.write_text(content, encoding="utf-8")
+            os.replace(tmp, target)
+        except OSError as exc:
+            self._send_error_json(500, f"failed to write idea.md: {exc}")
+            return
+        self._send_json({"written": True, "path": str(target)})
+
+    def _handle_api_check(self, params: dict) -> None:
+        step = (params.get("step") or [""])[0]
+        project_dir = (params.get("project_dir") or ["."])[0]
+        cwd = getattr(self.server, "cwd", Path.cwd()).resolve()
+        try:
+            target_dir = _safe_project_path(cwd, project_dir)
+        except ValueError as exc:
+            self._send_error_json(400, str(exc))
+            return
+        if step == "init":
+            satisfied = (target_dir / "00-START-NEXT-SESSION.md").is_file()
+            reason = "00-START-NEXT-SESSION.md present" if satisfied \
+                else "00-START-NEXT-SESSION.md not found in project_dir"
+        elif step == "seed":
+            satisfied = (target_dir / "docs" / "BUILD_PLAN.md").is_file()
+            reason = "docs/BUILD_PLAN.md present" if satisfied \
+                else "docs/BUILD_PLAN.md not found in project_dir"
+        else:
+            self._send_error_json(400, f"unknown step: {step!r} (expected init|seed)")
+            return
+        self._send_json({"satisfied": satisfied, "reason": reason})
+
+    # ---- low-level send helpers --------------------------------------
+
+    def _send_html(self, body: str) -> None:
+        data = body.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(data)
+
+    def _send_json(self, payload: dict, status: int = 200) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_error_json(self, status: int, message: str) -> None:
+        self._send_json({"error": message}, status=status)
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - shadow OK
         # Silence the default per-request access log. Parameter names must
@@ -276,31 +500,44 @@ def run_start(args: argparse.Namespace) -> int:
     """Entry point for the ``start`` subcommand dispatched from context_kit.py."""
     project_root = Path.cwd().resolve()
 
-    looks_like_project = (
-        (project_root / "00-START-NEXT-SESSION.md").exists()
-        or (project_root / "docs" / "docs-pattern").is_dir()
-    )
-    if not looks_like_project:
+    port = _pick_port(args.port, args.host)
+    base_url = f"http://{args.host}:{port}"
+    body = _render_html(project_root, base_url + "/")
+    wizard_body = _load_wizard_html()
+
+    # Decide which page to open in the browser. If we're in a fresh dir
+    # (no project markers), the wizard is the right beginner entry. If
+    # a project is already seeded, open the existing project view.
+    state = _detect_project_state(project_root)
+    if state in ("none", "scaffold") and wizard_body:
+        landing_path = "/wizard"
+    else:
+        landing_path = "/"
+    landing_url = base_url + landing_path
+
+    # Only warn when the user landed on the project view but the dir
+    # doesn't actually look like a project. (When the wizard is opening,
+    # "no project here yet" is the expected state, not a warning.)
+    if landing_path == "/" and state == "none":
         sys.stderr.write(
             f"warning: {project_root} does not look like a context-kit project "
             f"(no 00-START-NEXT-SESSION.md or docs/docs-pattern/ found). "
             f"Continuing anyway.\n"
         )
 
-    port = _pick_port(args.port, args.host)
-    url = f"http://{args.host}:{port}/"
-    body = _render_html(project_root, url)
-
     server = http.server.HTTPServer((args.host, port), _OnboardingHandler)
-    # Attach the rendered HTML so the handler can read it off self.server.
+    # Attach handler context (read in the request handler off self.server).
     server.onboarding_html = body  # type: ignore[attr-defined]
+    server.wizard_html = wizard_body  # type: ignore[attr-defined]
+    server.cwd = project_root  # type: ignore[attr-defined]
 
-    print(f"context-kit: onboarding server running at {url}")
+    print(f"context-kit: server running at {base_url}")
+    print(f"context-kit: opening {landing_url}")
     print("context-kit: press Ctrl+C to stop.")
 
     if not args.no_browser:
         try:
-            webbrowser.open(url)
+            webbrowser.open(landing_url)
         except Exception:  # pragma: no cover — webbrowser is best-effort
             pass
 

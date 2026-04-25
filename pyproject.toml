@@ -79,4 +79,5 @@ cli = [
     "_starter/docs/handoffs/*",
     "_starter/scaffold/python/*",
     "_skills/context-kit/*",
+    "_static/*",
 ]

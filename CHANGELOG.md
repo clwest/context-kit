@@ -9,6 +9,26 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`context-kit start` is now a beginner wizard.** Open a guided
+  onboarding page in the browser that walks a first-time user through:
+  naming the project, writing the idea, saving `idea.md`, then running
+  `init` / `recommend-stack` (optional) / `seed` / `doctor` / opening
+  their AI tool. Each CLI step is shown as a copy-paste command; the
+  wizard polls the filesystem to verify it ran before advancing.
+  Detection is conservative: in a fresh directory the wizard opens; in
+  an already-seeded project the existing project view opens unchanged.
+  Wizard state persists in browser localStorage so closing the tab
+  doesn't lose progress.
+- New JSON endpoints on the local server (used by the wizard, useful
+  for tooling): `GET /api/state` (classify cwd as none/scaffold/seeded),
+  `POST /api/idea` (write idea.md to a project subdirectory; rejects
+  path traversal), `GET /api/check?step=init|seed&project_dir=…`
+  (verify CLI step ran).
+- Wizard HTML ships as package data at `cli/_static/wizard.html`.
+- README leads with `context-kit start` as the beginner entry point;
+  CLI quickstart kept below for experienced builders.
+
 ## [0.5.0] — 2026-04-25
 
 **context-kit for non-technical builders.** The full loop from a raw

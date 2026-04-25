@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>context-kit · welcome</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #151822;
+    --panel-2: #1c2030;
+    --border: #262a35;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --accent: #6ee7b7;
+    --accent-strong: #10b981;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fafbfc;
+      --panel: #ffffff;
+      --panel-2: #f3f4f6;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #059669;
+      --accent-strong: #047857;
+      --warn: #b45309;
+      --danger: #dc2626;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+  header { margin-bottom: 1.5rem; }
+  h1 {
+    font-size: 1.6rem;
+    margin: 0 0 .25rem;
+    letter-spacing: -0.01em;
+  }
+  .tag { color: var(--muted); font-size: .9rem; }
+  .progress {
+    display: flex;
+    gap: .35rem;
+    margin: 1.25rem 0 1.5rem;
+  }
+  .progress > span {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+  }
+  .progress > span.done { background: var(--accent-strong); }
+  .progress > span.current { background: var(--accent); }
+  section.step {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    display: none;
+  }
+  section.step.visible { display: block; }
+  h2 { font-size: 1.2rem; margin: 0 0 .25rem; }
+  h2 .step-num {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: .85em;
+    margin-right: .35rem;
+  }
+  p { margin: .5rem 0; }
+  label {
+    display: block;
+    margin: 1rem 0 .35rem;
+    font-size: .9rem;
+    color: var(--muted);
+  }
+  input[type="text"], textarea {
+    width: 100%;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .6rem .75rem;
+    font: inherit;
+  }
+  textarea { resize: vertical; min-height: 5rem; }
+  textarea.long { min-height: 8rem; }
+  .row { display: flex; gap: .75rem; margin-top: 1rem; flex-wrap: wrap; }
+  button {
+    background: var(--accent-strong);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: .55rem 1rem;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-weight: 400;
+  }
+  button.skip {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    text-decoration: underline;
+    padding: .55rem .25rem;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .cmd {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .65rem .85rem;
+    font-family: var(--mono);
+    font-size: .9rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    margin: .75rem 0;
+  }
+  .cmd .copy {
+    flex-shrink: 0;
+    background: var(--border);
+    color: var(--text);
+    padding: .25rem .55rem;
+    font-size: .8rem;
+    font-weight: 400;
+    border-radius: 4px;
+  }
+  pre.preview {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .85rem 1rem;
+    font-family: var(--mono);
+    font-size: .85rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 18rem;
+    overflow-y: auto;
+  }
+  .hint { color: var(--muted); font-size: .85rem; }
+  .status {
+    margin-top: .75rem;
+    padding: .5rem .75rem;
+    border-radius: 6px;
+    font-size: .9rem;
+    display: none;
+  }
+  .status.ok    { background: rgba(16, 185, 129, .1); color: var(--accent-strong); display: block; }
+  .status.warn  { background: rgba(251, 191, 36, .1); color: var(--warn); display: block; }
+  .status.err   { background: rgba(248, 113, 113, .1); color: var(--danger); display: block; }
+  footer {
+    color: var(--muted);
+    font-size: .85rem;
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  code {
+    font-family: var(--mono);
+    background: var(--border);
+    padding: .1rem .35rem;
+    border-radius: 4px;
+    font-size: .9em;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>context-kit · welcome</h1>
+  <div class="tag">Set up your project so an AI assistant can build with direction.</div>
+</header>
+
+<div class="progress" aria-label="progress">
+  <span data-progress="1"></span>
+  <span data-progress="2"></span>
+  <span data-progress="3"></span>
+  <span data-progress="4"></span>
+  <span data-progress="5"></span>
+  <span data-progress="6"></span>
+  <span data-progress="7"></span>
+</div>
+
+<!-- ============================================================== -->
+<section class="step" data-step="1">
+  <h2><span class="step-num">1.</span>Welcome</h2>
+  <p>context-kit helps your AI coding assistant remember what you're building
+  across sessions. Without it, the AI starts cold every time, drifts, and
+  hallucinates confidently. With it, the project stays coherent.</p>
+  <p>This wizard walks you through setting up your first project. You'll
+  type your idea once; we'll generate the right files and tell you exactly
+  which terminal commands to run.</p>
+  <p class="hint">If you'd rather use the CLI directly, every step shows
+  the command. Skip the wizard whenever you want.</p>
+  <div class="row">
+    <button onclick="advance(2)">Begin</button>
+    <button class="secondary" onclick="resumeOrReset()">Resume / start fresh</button>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="step" data-step="2">
+  <h2><span class="step-num">2.</span>Where will the project live?</h2>
+  <p>We'll create a folder under your current working directory:</p>
+  <p class="hint" id="cwdLabel">cwd: …</p>
+
+  <label for="appName">App name (e.g. <em>Med Tracker</em>)</label>
+  <input type="text" id="appName" placeholder="My App" autofocus>
+
+  <label for="projectDir">Project folder name (auto-derived; edit if you want)</label>
+  <input type="text" id="projectDir" placeholder="my-app">
+
+  <div class="status" id="step2Status"></div>
+  <div class="row">
+    <button onclick="confirmStep2()">Continue</button>
+    <button class="secondary" onclick="advance(1)">Back</button>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="step" data-step="3">
+  <h2><span class="step-num">3.</span>What are you building?</h2>
+  <p class="hint">Be plain. The AI will read this verbatim. Skip anything
+  that doesn't apply.</p>
+
+  <label for="ideaWhat">What are we building? <em>(required)</em></label>
+  <textarea id="ideaWhat" class="long" placeholder="A small app that…"></textarea>
+
+  <label for="ideaWho">Who is it for?</label>
+  <textarea id="ideaWho" placeholder="(optional)"></textarea>
+
+  <label for="ideaProblem">What problem does it solve?</label>
+  <textarea id="ideaProblem" placeholder="(optional)"></textarea>
+
+  <label for="ideaMilestone">First milestone</label>
+  <textarea id="ideaMilestone" placeholder="(optional — what would 'v0 done' look like?)"></textarea>
+
+  <label for="ideaStack">Tech stack <em>(skip if you're not sure — we'll suggest one)</em></label>
+  <textarea id="ideaStack" placeholder="(optional)"></textarea>
+
+  <label for="ideaQuestions">Open questions</label>
+  <textarea id="ideaQuestions" placeholder="(optional — what you don't know yet)"></textarea>
+
+  <div class="status" id="step3Status"></div>
+  <div class="row">
+    <button onclick="confirmStep3()">Continue</button>
+    <button class="secondary" onclick="advance(2)">Back</button>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="step" data-step="4">
+  <h2><span class="step-num">4.</span>Save your idea.md</h2>
+  <p>Here's what we'll write. You can go back and edit any field.</p>
+  <pre class="preview" id="ideaPreview">(loading)</pre>
+  <p class="hint" id="targetPathLabel">Target: …</p>
+  <div class="status" id="step4Status"></div>
+  <div class="row">
+    <button onclick="saveIdea()">Save idea.md</button>
+    <button class="secondary" onclick="advance(3)">Back</button>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="step" data-step="5">
+  <h2><span class="step-num">5.</span>Initialize the project</h2>
+  <p>Run this in your terminal (in the folder where you started <code>context-kit</code>):</p>
+  <div class="cmd">
+    <span id="initCmd">context-kit init "…"</span>
+    <button class="copy" data-copy-target="initCmd">Copy</button>
+  </div>
+  <p class="hint">After it finishes, click below. We'll verify the project files exist.</p>
+  <div class="status" id="step5Status"></div>
+  <div class="row">
+    <button onclick="checkAndAdvance('init', 5, 6)">I ran it</button>
+    <button class="secondary" onclick="advance(4)">Back</button>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="step" data-step="6">
+  <h2><span class="step-num">6.</span><em>(optional)</em> See the recommended stack</h2>
+  <p>If you skipped Tech stack above (or want a second opinion), run:</p>
+  <div class="cmd">
+    <span id="recCmd">context-kit recommend-stack …</span>
+    <button class="copy" data-copy-target="recCmd">Copy</button>
+  </div>
+  <p class="hint">Read the recommendation in your terminal. Then click below.
+  (You can also skip this — <code>seed</code> auto-fills the stack section
+  if you didn't write one.)</p>
+  <div class="status" id="step6Status"></div>
+  <div class="row">
+    <button onclick="advance(7)">Continue</button>
+    <button class="skip" onclick="advance(7)">Skip</button>
+    <button class="secondary" onclick="advance(5)">Back</button>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="step" data-step="7">
+  <h2><span class="step-num">7.</span>Seed the project</h2>
+  <p>Bake your idea into the project's load-bearing files:</p>
+  <div class="cmd">
+    <span id="seedCmd">context-kit seed …</span>
+    <button class="copy" data-copy-target="seedCmd">Copy</button>
+  </div>
+  <p class="hint">After it finishes, click below. We'll verify
+  <code>docs/BUILD_PLAN.md</code> exists.</p>
+  <div class="status" id="step7Status"></div>
+  <div class="row">
+    <button onclick="checkAndAdvance('seed', 7, 8)">I ran it</button>
+    <button class="secondary" onclick="advance(6)">Back</button>
+  </div>
+</section>
+
+<!-- ============================================================== -->
+<section class="step" data-step="8">
+  <h2><span class="step-num">8.</span>Check your environment + you're ready</h2>
+  <p>Last thing before you build: verify your environment is set up
+  (Python, git, Node, Expo, file watchers, etc.):</p>
+  <div class="cmd">
+    <span>context-kit doctor</span>
+    <button class="copy" data-copy-text="context-kit doctor">Copy</button>
+  </div>
+  <p class="hint">Warnings here are fine on a first run. Only the red
+  <code>X</code> blocking lines need attention.</p>
+
+  <h2 style="margin-top:2rem"><span class="step-num">→</span>You're set up.</h2>
+  <p>Open this folder in your AI coding tool. If you use Claude Code, run
+  <code>claude</code>; the bundled skill should load automatically. If
+  you use a different AI tool, point it at this folder — it just won't
+  auto-load the skill.</p>
+
+  <p>Whenever you come back, run <code>context-kit start</code> again to
+  resume or to view your project.</p>
+
+  <div class="row">
+    <button class="secondary" onclick="advance(7)">Back</button>
+    <button onclick="resetWizard()">Start over for a new project</button>
+  </div>
+</section>
+
+<footer>
+  context-kit · <span id="cwdFooter">running in your local terminal</span> ·
+  <a href="/" style="color:inherit">view existing project</a>
+</footer>
+
+</div>
+
+<script>
+"use strict";
+
+const KEY = "contextkit:wizard:v1";
+
+const state = {
+  step: 1,
+  appName: "",
+  projectDir: "",
+  idea: {
+    what: "", who: "", problem: "",
+    milestone: "", stack: "", questions: "",
+  },
+};
+
+const fieldMap = {
+  appName:        () => document.getElementById("appName"),
+  projectDir:     () => document.getElementById("projectDir"),
+  ideaWhat:       () => document.getElementById("ideaWhat"),
+  ideaWho:        () => document.getElementById("ideaWho"),
+  ideaProblem:    () => document.getElementById("ideaProblem"),
+  ideaMilestone:  () => document.getElementById("ideaMilestone"),
+  ideaStack:      () => document.getElementById("ideaStack"),
+  ideaQuestions:  () => document.getElementById("ideaQuestions"),
+};
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) Object.assign(state, JSON.parse(raw));
+  } catch (e) { /* ignore */ }
+}
+
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+}
+
+function clearStorage() {
+  try { localStorage.removeItem(KEY); } catch (e) {}
+}
+
+function syncFieldsFromState() {
+  fieldMap.appName().value = state.appName;
+  fieldMap.projectDir().value = state.projectDir;
+  fieldMap.ideaWhat().value = state.idea.what;
+  fieldMap.ideaWho().value = state.idea.who;
+  fieldMap.ideaProblem().value = state.idea.problem;
+  fieldMap.ideaMilestone().value = state.idea.milestone;
+  fieldMap.ideaStack().value = state.idea.stack;
+  fieldMap.ideaQuestions().value = state.idea.questions;
+}
+
+function captureFieldsToState() {
+  state.appName = fieldMap.appName().value.trim();
+  state.projectDir = fieldMap.projectDir().value.trim() || slugify(state.appName);
+  state.idea.what = fieldMap.ideaWhat().value.trim();
+  state.idea.who = fieldMap.ideaWho().value.trim();
+  state.idea.problem = fieldMap.ideaProblem().value.trim();
+  state.idea.milestone = fieldMap.ideaMilestone().value.trim();
+  state.idea.stack = fieldMap.ideaStack().value.trim();
+  state.idea.questions = fieldMap.ideaQuestions().value.trim();
+  save();
+}
+
+function slugify(s) {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "my-app";
+}
+
+function setStatus(elId, kind, msg) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.className = "status " + (kind || "");
+  el.textContent = msg || "";
+}
+
+function showOnly(stepNum) {
+  document.querySelectorAll("section.step").forEach(s => {
+    s.classList.toggle("visible", Number(s.dataset.step) === stepNum);
+  });
+  document.querySelectorAll(".progress > span").forEach(s => {
+    const n = Number(s.dataset.progress);
+    s.classList.toggle("done", n < stepNum);
+    s.classList.toggle("current", n === stepNum);
+  });
+  state.step = stepNum;
+  save();
+  // Re-render dynamic content for the step we just landed on.
+  if (stepNum === 4) renderPreview();
+  if (stepNum === 5) document.getElementById("initCmd").textContent =
+    'context-kit init "' + (state.appName || "My App") + '"';
+  if (stepNum === 6) document.getElementById("recCmd").textContent =
+    'context-kit recommend-stack ' + state.projectDir + '/idea.md';
+  if (stepNum === 7) document.getElementById("seedCmd").textContent =
+    'cd ' + state.projectDir + ' && context-kit seed idea.md';
+  window.scrollTo({top: 0, behavior: "smooth"});
+}
+
+function advance(toStep) {
+  showOnly(toStep);
+}
+
+function confirmStep2() {
+  captureFieldsToState();
+  if (!state.appName) {
+    setStatus("step2Status", "err", "App name is required.");
+    return;
+  }
+  if (!state.projectDir) state.projectDir = slugify(state.appName);
+  fieldMap.projectDir().value = state.projectDir;
+  save();
+  advance(3);
+}
+
+function confirmStep3() {
+  captureFieldsToState();
+  if (!state.idea.what) {
+    setStatus("step3Status", "err", "“What are we building?” is required.");
+    return;
+  }
+  setStatus("step3Status", "", "");
+  advance(4);
+}
+
+function buildIdeaMd() {
+  const parts = ["# " + (state.appName || "My App"), ""];
+  const pushSection = (heading, body) => {
+    if (!body) return;
+    parts.push("## " + heading, "", body, "");
+  };
+  pushSection("What are we building?", state.idea.what);
+  pushSection("Who is it for?", state.idea.who);
+  pushSection("Problem", state.idea.problem);
+  pushSection("First milestone", state.idea.milestone);
+  pushSection("Tech stack", state.idea.stack);
+  pushSection("Open questions", state.idea.questions);
+  return parts.join("\n").replace(/\n+$/, "") + "\n";
+}
+
+function renderPreview() {
+  const text = buildIdeaMd();
+  document.getElementById("ideaPreview").textContent = text;
+  document.getElementById("targetPathLabel").textContent =
+    "Target: " + state.projectDir + "/idea.md (under your current directory)";
+}
+
+async function saveIdea() {
+  const content = buildIdeaMd();
+  setStatus("step4Status", "", "Writing…");
+  try {
+    const resp = await fetch("/api/idea", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        project_dir: state.projectDir,
+        content: content,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      setStatus("step4Status", "err", "Failed: " + (data.error || resp.status));
+      return;
+    }
+    setStatus("step4Status", "ok", "Wrote " + data.path);
+    setTimeout(() => advance(5), 600);
+  } catch (e) {
+    setStatus("step4Status", "err", "Network error: " + e.message);
+  }
+}
+
+async function checkAndAdvance(step, fromStep, toStep) {
+  const statusId = "step" + fromStep + "Status";
+  setStatus(statusId, "", "Checking…");
+  try {
+    const url = "/api/check?step=" + encodeURIComponent(step) +
+                "&project_dir=" + encodeURIComponent(state.projectDir);
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!resp.ok) {
+      setStatus(statusId, "err", "Check failed: " + (data.error || resp.status));
+      return;
+    }
+    if (data.satisfied) {
+      setStatus(statusId, "ok", "OK: " + data.reason);
+      setTimeout(() => advance(toStep), 600);
+    } else {
+      setStatus(statusId, "warn",
+        "Doesn't look like that worked yet. " + data.reason +
+        ". Run the command from your project's parent directory and try again.");
+    }
+  } catch (e) {
+    setStatus(statusId, "err", "Network error: " + e.message);
+  }
+}
+
+function resetWizard() {
+  if (!confirm("Start over? Your in-progress wizard state will be cleared.")) return;
+  clearStorage();
+  Object.assign(state, {
+    step: 1, appName: "", projectDir: "",
+    idea: { what: "", who: "", problem: "", milestone: "", stack: "", questions: "" },
+  });
+  syncFieldsFromState();
+  showOnly(1);
+}
+
+function resumeOrReset() {
+  if (!confirm("Resume your in-progress wizard at step " + state.step + "? Cancel to start over.")) {
+    resetWizard();
+  } else {
+    showOnly(state.step);
+  }
+}
+
+async function bootstrap() {
+  load();
+  syncFieldsFromState();
+
+  // Wire copy buttons (event delegation).
+  document.body.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".copy");
+    if (!btn) return;
+    const targetId = btn.getAttribute("data-copy-target");
+    const inlineText = btn.getAttribute("data-copy-text");
+    const text = targetId
+      ? document.getElementById(targetId).textContent
+      : inlineText;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      const orig = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.textContent = orig; }, 1200);
+    } catch (err) { /* ignore */ }
+  });
+
+  // Auto-save on input across all known fields.
+  Object.values(fieldMap).forEach(getEl => {
+    const el = getEl();
+    if (el) el.addEventListener("input", () => captureFieldsToState());
+  });
+
+  // Auto-derive project dir from app name when project dir is empty.
+  fieldMap.appName().addEventListener("input", () => {
+    if (!fieldMap.projectDir().value.trim()) {
+      fieldMap.projectDir().value = slugify(fieldMap.appName().value);
+    }
+  });
+
+  // Surface the cwd from /api/state so users see where files will land.
+  try {
+    const resp = await fetch("/api/state");
+    const data = await resp.json();
+    document.getElementById("cwdLabel").textContent = "cwd: " + data.cwd;
+    document.getElementById("cwdFooter").textContent = "cwd: " + data.cwd;
+    if (data.project_state === "scaffold" && state.step < 5) {
+      // If they've already init'd, jump them ahead — but only if they
+      // hadn't already progressed past step 5 themselves.
+      state.step = Math.max(state.step, 5);
+    }
+  } catch (e) { /* ignore */ }
+
+  showOnly(state.step || 1);
+}
+
+bootstrap();
+</script>
+</body>
+</html>
