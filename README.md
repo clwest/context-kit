@@ -428,7 +428,8 @@ load packaged assets via `importlib.resources`, so there's no separate
 - **Phase 2** (rename to context-kit + onboarding server) — ✅ shipped
 - **Phase 3** (tests + pyproject + git init + README polish) — ✅ shipped
 - **Phase 4** (wheel packaging — `pip install contextkit-ai` works end-to-end) — ✅ shipped in 0.4.1
-- Phase 5 (release workflow, CI install matrix) — in progress
+- **Phase 5** (idea-to-context: `seed` command) — ✅ shipped in 0.4.2
+- Phase 6 (release workflow, CI install matrix) — in progress
 
 ---
 

@@ -9,6 +9,13 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-04-25
+
+First public release with the full `init` / `seed` / `orient` loop.
+0.4.1 (which shipped to PyPI without `seed`) is immutable, so this
+release adds `seed` plus the supporting init-template change as a
+minor version bump.
+
 ### Added
 - `context-kit seed PATH` — turn a structured markdown idea file into
   project context. Populates 5 files (`*_WHAT_IT_IS.md` TL;DR,
@@ -30,6 +37,10 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   contract.
 
 ## [0.4.1] — 2026-04-25
+
+First version actually published to PyPI (as `contextkit-ai`).
+Shipped wheel-installability + the orient/skill/hotpath/inventory
+features. Did **not** include `seed` — that arrived in 0.4.2.
 
 ### Changed
 - **PyPI distribution name is `contextkit-ai`** (not `context-kit`).

@@ -27,7 +27,7 @@ All can land in a single commit (suggested message:
 |---|---|---|
 | `docs/DISTRIBUTION_NOTES.md:~175-176` | "Whenever ready — PyPI publish. The tweet/post don't depend on it; 'coming soon to PyPI' is fine messaging." | "PyPI publish is live (`pip install contextkit-ai`). The tweet/post can lead with the real install command." |
 | `docs/DISTRIBUTION_NOTES.md:~59` | "Still on the punch list: PyPI publish, real public users, real dogfood reports." | "Still on the punch list: real public users, real dogfood reports." |
-| `docs/DISTRIBUTION_NOTES.md:~185` | "Show HN. The repo is at v0.3.0 with one tagged release. Show HN is a swing once there's a real wheel install + a couple of public dogfood reports." | Bump to v0.4.1; the "real wheel install" half is now done — keep the "couple of public dogfood reports" gate. |
+| `docs/DISTRIBUTION_NOTES.md:~185` | "Show HN. The repo is at v0.3.0 with one tagged release. Show HN is a swing once there's a real wheel install + a couple of public dogfood reports." | Bump to v0.4.2; the "real wheel install" half is now done — keep the "couple of public dogfood reports" gate. |
 | `00-START-NEXT-SESSION.md` (queued sections) | references to "PyPI publish" as queued work | Remove from queued list; PyPI is shipped. |
 
 The LinkedIn long-form draft and the Twitter/X thread already work
