@@ -93,6 +93,7 @@ context-kit COMMAND [options]
 Commands:
   init NAME            Scaffold a new project with the context-kit pattern
   start                Launch the onboarding server for the current project
+  orient               Print the assembled session-start orientation report
 
 Run `python3 context_kit.py <command> --help` for per-command options.
 ```
@@ -114,6 +115,12 @@ Run `python3 context_kit.py <command> --help` for per-command options.
 | `--host HOST` | `127.0.0.1` | Host to bind |
 | `--port PORT` | `0` (auto) | Port; `0` lets the OS pick a free one |
 | `--no-browser` | off | Don't auto-open the browser |
+
+**`orient` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--project DIR` | `cwd` | Project root to orient against |
 
 ---
 

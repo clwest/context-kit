@@ -91,6 +91,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Don't auto-open the browser.",
     )
 
+    # orient
+    orient = sub.add_parser(
+        "orient",
+        help="Print the assembled session-start orientation report",
+        description=(
+            "Assemble the current project's authoritative session-start "
+            "context into a single plain-text report: the start-here doc, "
+            "the two-doc anchor, the latest handoff, and pointers to the "
+            "pattern guide. This is what the context-kit Claude skill calls."
+        ),
+    )
+    orient.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+
     return parser
 
 
@@ -117,6 +134,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "start":
         from cli.server import run_start
         return run_start(args)
+
+    if args.command == "orient":
+        from cli.orient import run_orient
+        return run_orient(args)
 
     parser.print_help()
     return 1

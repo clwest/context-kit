@@ -9,6 +9,12 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `context-kit orient` — prints the project's assembled session-start
+  context (start-here doc, two-doc anchor preview, latest handoff,
+  pattern pointers) so an agent or returning human reads from a single
+  authoritative path instead of guessing which file to open first.
+
 ## [0.3.0] — 2026-04-21
 
 First public release.

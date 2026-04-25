@@ -38,12 +38,13 @@ PATTERN_EXCLUDES = frozenset({
 })
 
 # Files from the context-kit source that every generated project needs at
-# runtime so that ``python3 context_kit.py start`` works standalone. These
-# are copied byte-for-byte (no placeholder substitution).
+# runtime so that ``python3 context_kit.py start`` and ``orient`` work
+# standalone. These are copied byte-for-byte (no placeholder substitution).
 RUNTIME_COPY = (
     ("context_kit.py", "context_kit.py"),
     ("cli/__init__.py", "cli/__init__.py"),
     ("cli/server.py", "cli/server.py"),
+    ("cli/orient.py", "cli/orient.py"),
 )
 
 # Suffixes treated as text (placeholder substitution applies). Everything else
@@ -84,7 +85,7 @@ def bootstrap(
         )
 
     # 4. Runtime files — so the generated project can run
-    #    ``python3 context_kit.py start`` without the source repo.
+    #    ``python3 context_kit.py start`` / ``orient`` without the source repo.
     written += _copy_runtime(REPO_ROOT, target, force=force)
 
     return written
