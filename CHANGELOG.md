@@ -9,10 +9,19 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.4.0] — 2026-04-25
+## [0.4.1] — 2026-04-25
 
-### Added
-- **Wheel-installable.** `pip install context-kit` now works end-to-end
+### Changed
+- **PyPI distribution name is `contextkit-ai`** (not `context-kit`).
+  PyPI rejected the unsuffixed `context-kit` name as too similar to
+  an existing project, so the distribution was renamed before first
+  publish. The CLI command (`context-kit`), the GitHub repo
+  (`clwest/context-kit`), and the importable Python module
+  (`context_kit`) are unchanged. Only the install command differs:
+  `pip install contextkit-ai` then `context-kit init "My App"`.
+
+### Added (originally targeted for 0.4.0; first publish ships in 0.4.1)
+- **Wheel-installable.** `pip install contextkit-ai` now works end-to-end
   for non-editable installs. Starter assets, the 8 guide docs, the
   reference templates, and the bundled Claude Code skill have been
   moved inside the `cli` package as `cli/_starter/`, `cli/_pattern/`,

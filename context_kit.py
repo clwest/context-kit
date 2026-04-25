@@ -199,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
                 "error: `init` is not available in this context.\n"
                 "You appear to be running context-kit from inside a generated "
                 "project, which only ships the runtime subcommands. To create "
-                "a new project, install the full package (`pip install context-kit`) "
+                "a new project, install the full package (`pip install contextkit-ai`) "
                 "and run `context-kit init` from anywhere.\n"
             )
             return 2

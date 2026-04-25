@@ -39,9 +39,19 @@ handoffs, and explicit AI/human collaboration conventions.
 ## Install
 
 ```bash
-pip install context-kit
+pip install contextkit-ai
 # or, isolated:
-pipx install context-kit
+pipx install contextkit-ai
+```
+
+The PyPI distribution is **`contextkit-ai`** (the unsuffixed
+`context-kit` name was rejected as too similar to another project).
+The CLI command and the GitHub repo are still `context-kit` — only
+the install command differs:
+
+```bash
+$ pip install contextkit-ai
+$ context-kit init "My App"
 ```
 
 Or from source (editable install):
@@ -354,13 +364,13 @@ OS-picked port.
 
 ## Installable CLI
 
-`pip install context-kit` is the supported install. The wheel ships
+`pip install contextkit-ai` is the supported install. The wheel ships
 `starter/`, the 8 guide docs, the reference templates, and the
 bundled Claude Code skill as package data inside the `cli` package,
 so `context-kit init` works end-to-end after a wheel install:
 
 ```bash
-pip install context-kit
+pip install contextkit-ai
 context-kit init "My App"
 context-kit start
 ```
@@ -376,7 +386,7 @@ load packaged assets via `importlib.resources`, so there's no separate
 - **Phase 1** (minimal working bootstrap) — ✅ shipped
 - **Phase 2** (rename to context-kit + onboarding server) — ✅ shipped
 - **Phase 3** (tests + pyproject + git init + README polish) — ✅ shipped
-- **Phase 4** (wheel packaging — `pip install context-kit` works end-to-end) — ✅ shipped in 0.4.0
+- **Phase 4** (wheel packaging — `pip install contextkit-ai` works end-to-end) — ✅ shipped in 0.4.1
 - Phase 5 (release workflow, CI install matrix) — in progress
 
 ---

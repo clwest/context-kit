@@ -51,6 +51,6 @@ That's the whole pattern. Same three commands work in any project that
 ran `context-kit init` — the bundled Claude skill calls them at the
 start of every session.
 
-  $ pip install context-kit         # (coming soon to PyPI)
+  $ pip install contextkit-ai
   $ context-kit init "My App"
 EOF

@@ -17,8 +17,10 @@
   `cli/_pattern/`, `cli/_skills/` as package data. Bootstrap reads
   via `importlib.resources` — same code path for editable and wheel
   installs.
-- `pip install context-kit` works end-to-end after the human
-  publishes to PyPI (see manual steps below).
+- `pip install contextkit-ai` works end-to-end after the human
+  publishes to PyPI (see manual steps below). PyPI distribution name
+  is `contextkit-ai` because `context-kit` was rejected as too similar
+  to another project; the CLI command stays `context-kit`.
 - TRUST_CALIBRATION entry added: AI was estimating implementation
   work in human time instead of AI execution time. Future estimates
   distinguish the two.
@@ -48,7 +50,7 @@ feedback signals are in.** Decision gate is in
    merge to `main`.
 2. **Verify the package name is available:**
    ```bash
-   pip index versions context-kit
+   pip index versions contextkit-ai
    ```
 3. **Build a fresh wheel from main:**
    ```bash
@@ -68,7 +70,7 @@ feedback signals are in.** Decision gate is in
    /tmp/test-pypi/bin/pip install \
        --index-url https://test.pypi.org/simple/ \
        --extra-index-url https://pypi.org/simple/ \
-       context-kit
+       contextkit-ai
    /tmp/test-pypi/bin/context-kit init "Test PyPI" --target /tmp/tp
    ```
 6. **Real PyPI publish:**
