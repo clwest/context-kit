@@ -191,6 +191,43 @@ class TestLiveWizardServer(unittest.TestCase):
         self.assertTrue(headers.get("Content-Type", "").startswith("text/html"))
         self.assertIn("context-kit", body)
 
+    def test_wizard_step2_uses_clearer_naming_copy(self):
+        """Step 2 explains what the project name is for and de-emphasizes
+        the folder field."""
+        _, body, _ = self._get("/wizard")
+        # New title and intro (assert two short fragments — the source HTML
+        # wraps the long line, so a single long substring won't match)
+        self.assertIn("Where should we create your project?", body)
+        self.assertIn("Give your idea a short, clear name.", body)
+        self.assertIn("where your project files will live", body)
+        # Re-framed labels
+        self.assertIn("Project name", body)
+        self.assertIn("Folder name", body)
+        # Examples that signal what kind of name is useful
+        self.assertIn("Dad Med Reminder", body)
+        self.assertIn("Kids Fitness Tracker", body)
+        # Folder helper makes it clear this field rarely needs editing
+        self.assertIn(
+            "Auto-created from the project name. You usually don't need to change this.",
+            body,
+        )
+
+    def test_wizard_step2_warns_on_generic_project_names(self):
+        """Locks in the gentle warning behavior + the trigger list.
+
+        We assert the warning text and a representative subset of trigger
+        words are present in the page (the JS list lives in the served
+        HTML; the actual warning fires client-side at input time).
+        """
+        _, body, _ = self._get("/wizard")
+        self.assertIn(
+            "That name may be hard to recognize later. Consider something more specific.",
+            body,
+        )
+        # A few representative trigger words from the GENERIC_NAMES set
+        for trigger in ('"new"', '"app"', '"test"', '"project"'):
+            self.assertIn(trigger, body, f"missing generic-name trigger: {trigger}")
+
     def test_wizard_step3_uses_friendly_beginner_copy(self):
         """Step 3 must read like a friendly conversation, not a tech form.
 

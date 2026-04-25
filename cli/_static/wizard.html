@@ -232,15 +232,18 @@
 
 <!-- ============================================================== -->
 <section class="step" data-step="2">
-  <h2><span class="step-num">2.</span>Where will the project live?</h2>
-  <p>We'll create a folder under your current working directory:</p>
+  <h2><span class="step-num">2.</span>Where should we create your project?</h2>
+  <p class="intro">Give your idea a short, clear name. This becomes the
+  folder where your project files will live.</p>
   <p class="hint" id="cwdLabel">cwd: …</p>
 
-  <label for="appName">App name (e.g. <em>Med Tracker</em>)</label>
-  <input type="text" id="appName" placeholder="My App" autofocus>
+  <label for="appName">Project name</label>
+  <p class="field-hint">Examples: "Dad Med Reminder", "Kids Fitness Tracker", "Landscaping Dashboard"</p>
+  <input type="text" id="appName" placeholder="" autofocus>
 
-  <label for="projectDir">Project folder name (auto-derived; edit if you want)</label>
-  <input type="text" id="projectDir" placeholder="my-app">
+  <label for="projectDir">Folder name</label>
+  <p class="field-hint">Auto-created from the project name. You usually don't need to change this.</p>
+  <input type="text" id="projectDir" placeholder="">
 
   <div class="status" id="step2Status"></div>
   <div class="row">
@@ -491,15 +494,48 @@ function advance(toStep) {
   showOnly(toStep);
 }
 
+// Names that are technically valid but hard to recognize a week later.
+// We warn but never block — see the "don't police silly folder names yet"
+// directive in the design conversation.
+const GENERIC_NAMES = new Set([
+  "new", "app", "test", "project", "demo", "untitled",
+  "foo", "bar", "baz", "myapp", "my-app", "tmp", "temp",
+]);
+const GENERIC_WARNING =
+  "That name may be hard to recognize later. Consider something more specific.";
+
+function genericNameWarning(name) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return null;
+  if (trimmed.length < 4) return GENERIC_WARNING;
+  if (GENERIC_NAMES.has(trimmed.toLowerCase())) return GENERIC_WARNING;
+  return null;
+}
+
+function refreshStep2Warning() {
+  const warn = genericNameWarning(fieldMap.appName().value);
+  const el = document.getElementById("step2Status");
+  if (warn) {
+    setStatus("step2Status", "warn", warn);
+  } else if (el && el.classList.contains("warn")) {
+    // Only clear our own warning — don't stomp a real error.
+    setStatus("step2Status", "", "");
+  }
+}
+
 function confirmStep2() {
   captureFieldsToState();
   if (!state.appName) {
-    setStatus("step2Status", "err", "App name is required.");
+    setStatus("step2Status", "err", "Add a project name before continuing.");
     return;
   }
   if (!state.projectDir) state.projectDir = slugify(state.appName);
   fieldMap.projectDir().value = state.projectDir;
   save();
+  // The generic-name check is a warning, not a gate. Show it once more
+  // before advancing so users with vague names see the suggestion.
+  const warn = genericNameWarning(state.appName);
+  if (warn) setStatus("step2Status", "warn", warn);
   advance(3);
 }
 
@@ -632,11 +668,13 @@ async function bootstrap() {
     if (el) el.addEventListener("input", () => captureFieldsToState());
   });
 
-  // Auto-derive project dir from app name when project dir is empty.
+  // Auto-derive project dir from app name when project dir is empty,
+  // and live-warn on very short or generic project names.
   fieldMap.appName().addEventListener("input", () => {
     if (!fieldMap.projectDir().value.trim()) {
       fieldMap.projectDir().value = slugify(fieldMap.appName().value);
     }
+    refreshStep2Warning();
   });
 
   // Surface the cwd from /api/state so users see where files will land.
