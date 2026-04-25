@@ -144,6 +144,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Warn when the top-N sum exceeds this many KB (default: 200)",
     )
 
+    # inventory
+    inventory = sub.add_parser(
+        "inventory",
+        help="Generate a runtime-derived inventory of the project",
+        description=(
+            "Generate runtime-derived inventory facts (CLI subcommands, "
+            "guide docs, templates, tests, package metadata, hot-path "
+            "summary, etc.) and update only the managed block inside "
+            "docs/CONTEXT_KIT_INVENTORY.md. Three modes: --write updates "
+            "the file, --check exits 0 only if the block is current, "
+            "--json prints machine-readable output."
+        ),
+    )
+    inventory.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    inventory_mode = inventory.add_mutually_exclusive_group()
+    inventory_mode.add_argument(
+        "--write",
+        action="store_true",
+        help="Update the managed block in docs/CONTEXT_KIT_INVENTORY.md",
+    )
+    inventory_mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit 0 only if the managed block is current; 1 if stale",
+    )
+    inventory_mode.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the inventory as JSON to stdout (no file changes)",
+    )
+
     return parser
 
 
@@ -178,6 +213,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "hotpath":
         from cli.hotpath import run_hotpath
         return run_hotpath(args)
+
+    if args.command == "inventory":
+        from cli.inventory import run_inventory
+        return run_inventory(args)
 
     parser.print_help()
     return 1

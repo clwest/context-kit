@@ -1,42 +1,46 @@
 ---
 title: "context-kit Repo Inventory"
-status: manual
-last_verified: 2026-04-25
+status: auto-with-narrative
 companion_doc: CONTEXT_KIT_WHAT_IT_IS.md
 ---
 
 # context-kit Repo Inventory
 
-> **MANUAL UNTIL GENERATOR EXISTS.** Every count below was hand-counted
-> on `last_verified`. This file is a *promise* of what runtime-derived
-> data will look like once a real generator is wired up — see Option D
-> in `00-START-NEXT-SESSION.md`. Until then, treat these numbers as
-> accurate at the timestamp above and stale by default.
+> **Numbers are runtime-derived as of Session 2.** All counts and tables
+> below the markers are produced by `python3 context_kit.py inventory --write`
+> from real repo state. Everything *outside* the markers is human-written
+> commentary that the generator does not touch.
 >
-> The convention still holds: when this file disagrees with the
-> narrative anchor, this file wins. The drift detection just happens
-> in human heads instead of in code, for now.
+> When narrative and the auto-block disagree, the auto-block wins. When
+> the auto-block disagrees with the running test suite or the actual
+> filesystem, that is a generator bug — file an issue.
 
 ---
 
-## Core counts
+## How to use this file
 
-| Item | Count | Source of truth |
-|---|---|---|
-| CLI subcommands | 4 | `init`, `start`, `orient`, `hotpath` (registered in `context_kit.py` `build_parser`) |
-| Python source files in `cli/` | 6 | `__init__.py`, `bootstrap.py`, `placeholders.py`, `server.py`, `orient.py`, `hotpath.py` |
-| Top-level guide docs | 8 | `01_two_doc_anchor.md` … `08_collaboration_roles.md` |
-| Reference templates | 4 | files in `templates/` |
-| Starter files | 9 | files under `starter/` (root, docs, scaffold combined) |
-| Bundled Claude skills | 1 | `skills/context-kit/SKILL.md` |
-| Unit tests | 69 | `python3 -m unittest discover -s tests -t .` |
-| Test files | 5 | `test_bootstrap.py`, `test_placeholders.py`, `test_server.py`, `test_orient.py`, `test_hotpath.py` |
-| Runtime files copied to generated projects | 5 | `RUNTIME_COPY` in `cli/bootstrap.py` |
-| Skills copied to generated projects | 1 directory | `SKILLS_COPY` in `cli/bootstrap.py` |
+```bash
+# Refresh the auto-block from current repo state
+python3 context_kit.py inventory --write
+
+# Verify the auto-block matches reality (CI-friendly; exits 1 if stale)
+python3 context_kit.py inventory --check
+
+# Pipe machine-readable inventory to another tool
+python3 context_kit.py inventory --json | jq .
+```
+
+Run `--check` in CI to fail builds when the inventory drifts from the
+code that ships in the same commit.
 
 ---
 
-## Subcommand inventory
+## Subcommand inventory (narrative)
+
+The auto-block lists subcommand names. The narrative below adds
+properties the agent needs to behave well — read-only vs mutating,
+whether they touch the network, where they live in the codebase. Worth
+keeping by hand because it changes rarely and is risk-relevant.
 
 | Command | Module | Read-only? | Network? |
 |---|---|---|---|
@@ -44,10 +48,15 @@ companion_doc: CONTEXT_KIT_WHAT_IT_IS.md
 | `start` | `cli/server.py` | No (binds localhost) | No (loopback only) |
 | `orient` | `cli/orient.py` | Yes | No |
 | `hotpath` | `cli/hotpath.py` | Yes | No |
+| `inventory` | `cli/inventory.py` | `--write` mutates one file; `--check` and `--json` read-only | No |
 
 ---
 
-## Guide doc inventory
+## Guide-doc topics (narrative)
+
+The auto-block lists guide-doc filenames. The narrative below maps each
+filename to the topic it teaches. Worth keeping by hand because the
+topics are the value, not the filenames.
 
 | File | Topic |
 |---|---|
@@ -62,52 +71,71 @@ companion_doc: CONTEXT_KIT_WHAT_IT_IS.md
 
 ---
 
-## Drift notes (manual review)
+## Drift notes
 
-Manual inventories are fragile by construction. Every count above had
-to be re-verified by hand for this commit, and *will* drift again the
-moment the next subcommand, guide doc, or test file lands. The
-permanent fix is the inventory generator (Session 2 Option D). Until
-then, these are the rough edges a real generator would catch
-automatically without anyone having to remember:
+Things a human reader should know that the generator can't tell them:
 
-- `tests/` is not in `PATTERN_EXCLUDES` (see `cli/bootstrap.py`), so
-  generated projects ship our test files inside `docs/docs-pattern/`.
-  Harmless, but a real verifier would flag it.
-- The 9-file starter count includes `starter/root/`, `starter/docs/`,
-  and `starter/scaffold/` — `--with-scaffold` is opt-in but the files
-  always ship in the source tree.
-- Several counts appear in two places (here and the narrative anchor's
-  TL;DR scale line). The generator should drive both, not just this
-  file, or the narrative will silently disagree again.
+- **`tests/` is not in `PATTERN_EXCLUDES`** (see `cli/bootstrap.py`),
+  so generated projects ship our test files inside
+  `docs/docs-pattern/tests/`. Harmless but noisy. Worth fixing in a
+  small follow-up commit; tracked in `00-START-NEXT-SESSION.md` queued
+  investigations.
+- **The narrative anchor's TL;DR has its own scale line** that
+  duplicates a few of the auto-block counts. The generator does not
+  rewrite the narrative anchor. If you change the scale line, the
+  burden is on you to keep it consistent with the auto-block.
+- **Self-reference exclusion.** The auto-block deliberately omits the
+  inventory file itself from `docs/` count and the hot-path summary.
+  Without that, `--check` would fail immediately after `--write`
+  because writing the file changes the file. See
+  `cli/inventory.py:_docs_files` and `_hotpath_summary`.
 
 ---
 
 ## Release history
 
-See `CHANGELOG.md` for the canonical version log. Latest tagged
-release: `0.3.0` (2026-04-21). `[Unreleased]` currently contains the
-`orient`, skill, and `hotpath` features shipped 2026-04-25.
+See `CHANGELOG.md` for the canonical version log. The auto-block above
+mirrors the *current* package metadata from `pyproject.toml`; the
+changelog has the human-written *why* behind each version.
 
 ---
 
-## How to verify (until a generator exists)
+<!-- The block below was added by `context-kit inventory --write`. -->
+<!-- It will be regenerated on every `--write`. Edit outside the markers freely. -->
 
-```bash
-# Test count
-python3 -m unittest discover -s tests -t . 2>&1 | tail -3
+<!-- context-kit:inventory:start -->
+<!-- Auto-generated by `context-kit inventory --write`. Do not edit by hand. -->
+<!-- Last generated: 2026-04-25T18:22:56+00:00 -->
+<!-- Schema version: 1 -->
 
-# Subcommand list
-python3 context_kit.py --help | grep -E "^\s+(init|start|orient|hotpath)"
+## Auto-generated counts
 
-# File counts
-find starter -type f | wc -l
-find templates -type f | wc -l
-ls 0[1-8]_*.md | wc -l
+| Item | Count | Notes |
+|---|---|---|
+| CLI subcommands | 5 | hotpath, init, inventory, orient, start |
+| Python modules in `cli/` | 7 | __init__.py, bootstrap.py, hotpath.py, inventory.py, orient.py, placeholders.py, server.py |
+| Top-level guide docs | 8 | matches `0[1-8]_*.md` |
+| `docs/` files (top-level) | 2 | excludes handoffs |
+| Session handoffs | 2 | `docs/handoffs/` |
+| Templates | 4 | `templates/` |
+| Starter files (excl. scaffold) | 7 | `starter/` |
+| Scaffold files | 2 | `starter/scaffold/` |
+| Test files | 6 | `tests/test_*.py` |
+| Tests collected | 89 | from `def test_` parse |
+| Skill files | 1 | `skills/**/SKILL.md` |
+| Tracked files | 50 | from `git ls-files` |
 
-# Hot-file dashboard
-python3 context_kit.py hotpath
-```
+## Package metadata (from `pyproject.toml`)
 
-Any drift between the table above and these commands = update the
-table. That's the manual version of the verifier loop.
+- **name:** context-kit
+- **version:** 0.3.0
+- **description:** Bootstrap tool for AI-assisted projects that preserves context across sessions, prevents doc drift, and scaffolds a memory layer around your code.
+- **requires-python:** >=3.9
+
+## Hot-path summary
+
+- **Source:** git ls-files
+- **Files scanned:** 49
+- **Top 10 sum:** 88.8 KB
+- **Total size:** 232.0 KB
+<!-- context-kit:inventory:end -->

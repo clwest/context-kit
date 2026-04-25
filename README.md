@@ -95,6 +95,7 @@ Commands:
   start                Launch the onboarding server for the current project
   orient               Print the assembled session-start orientation report
   hotpath              Show the largest files most likely to dominate AI context
+  inventory            Generate a runtime-derived inventory of the project
 
 Run `python3 context_kit.py <command> --help` for per-command options.
 ```
@@ -144,6 +145,28 @@ when run inside a git repo, and falls back to a recursive walk
 Use it when an AI session feels like it's looping or losing focus —
 file size is a surprisingly good proxy for "this won't fit comfortably
 in the agent's context."
+
+**`inventory` options** (mutually exclusive modes)
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--project DIR` | `cwd` | Project root to scan |
+| `--write` | off | Update the managed block in `docs/CONTEXT_KIT_INVENTORY.md` |
+| `--check` | off | Exit 0 only if the managed block is current; 1 if stale |
+| `--json` | off | Print machine-readable JSON to stdout (read-only) |
+
+`inventory` generates runtime-derived counts (CLI subcommands, guide
+docs, templates, tests, package metadata, hot-path summary, etc.)
+and writes them between two markers:
+
+```
+<!-- context-kit:inventory:start -->
+<!-- context-kit:inventory:end -->
+```
+
+Everything outside the markers is human-written commentary and is
+preserved on every `--write`. Use `--check` in CI to fail the build
+when the inventory drifts from the code that ships in the same commit.
 
 ---
 

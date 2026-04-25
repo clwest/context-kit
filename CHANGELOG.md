@@ -25,6 +25,17 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   walk (with sensible ignores). Inspired by Damian Tedrow's "hot
   path" observation that file size is a strong proxy for whether a
   region of code will fit comfortably in an AI session's context.
+- `context-kit inventory` — runtime inventory generator with
+  `--write` / `--check` / `--json` modes. Writes only inside HTML
+  comment markers (`<!-- context-kit:inventory:start -->` /
+  `:end -->`) and preserves all human content outside them. Counts
+  CLI subcommands, cli/ modules, top-level guide docs, docs files,
+  handoffs, templates, starter and scaffold files, test files,
+  test-method count, skill files, git-tracked file count, and a
+  hot-path summary, plus extracts package metadata from
+  `pyproject.toml`. `--check` is CI-friendly (exits 1 on drift).
+  Closes the dogfood loop opened in the initial release: the repo's
+  own inventory is now half auto-generated.
 
 ## [0.3.0] — 2026-04-21
 
