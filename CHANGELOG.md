@@ -9,6 +9,26 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `context-kit seed PATH` — turn a structured markdown idea file into
+  project context. Populates 5 files (`*_WHAT_IT_IS.md` TL;DR,
+  `00-START-NEXT-SESSION.md` first milestone, the bootstrap handoff,
+  `docs/topics/product.md`, and a structured `docs/BUILD_PLAN.md`)
+  using managed-block markers (`<!-- context-kit:seed:start -->` /
+  `:end -->`) so human content outside the markers is preserved
+  forever. Deterministic, no LLM. Tolerant of natural heading
+  variations; unrecognized headings preserved under "Other notes" in
+  BUILD_PLAN.md. Supports `--force`, `--dry-run`. Idempotent re-runs.
+  Schema documented at `cli/_pattern/IDEA_SCHEMA.md` (ships into
+  every generated project's `docs/docs-pattern/`).
+
+### Changed
+- Init template now writes `state: scaffold` frontmatter at the top of
+  `00-START-NEXT-SESSION.md`. Seed reads this to know whether the
+  start-here is safe to populate (and updates it to `state: seeded`
+  on success). Replaces fragile string matching with an explicit
+  contract.
+
 ## [0.4.1] — 2026-04-25
 
 ### Changed

@@ -85,6 +85,14 @@ class TestInitWritesExpectedFiles(unittest.TestCase):
         finally:
             os.chdir(old_cwd)
 
+    def test_scaffolded_start_here_has_state_scaffold_frontmatter(self):
+        """Locks in the contract `context-kit seed` relies on."""
+        target = self.tmpdir / "state-check"
+        run_init(_init_args("State Check", target))
+        body = (target / "00-START-NEXT-SESSION.md").read_text(encoding="utf-8")
+        self.assertTrue(body.startswith("---\n"))
+        self.assertIn("state: scaffold", body.split("\n---\n", 1)[0])
+
     def test_claude_skill_copied_into_generated_project(self):
         target = self.tmpdir / "skill"
         run_init(_init_args("Skill", target))

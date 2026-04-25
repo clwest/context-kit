@@ -118,6 +118,7 @@ context-kit COMMAND [options]
 
 Commands:
   init NAME            Scaffold a new project with the context-kit pattern
+  seed PATH            Turn a structured idea file into project context (5 files)
   start                Launch the onboarding server for the current project
   orient               Print the assembled session-start orientation report
   hotpath              Show the largest files most likely to dominate AI context
@@ -171,6 +172,35 @@ when run inside a git repo, and falls back to a recursive walk
 Use it when an AI session feels like it's looping or losing focus —
 file size is a surprisingly good proxy for "this won't fit comfortably
 in the agent's context."
+
+**`seed` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| *positional* `PATH` | required | Path to the markdown idea file |
+| `--project DIR` | `cwd` | Project root (must already be `init`'d) |
+| `--force` | off | Overwrite seed-owned content even when normally skipped |
+| `--dry-run` | off | Print what would change; don't write files |
+
+`seed` reads a structured markdown idea file (see
+`docs/docs-pattern/IDEA_SCHEMA.md` inside any generated project for the
+full format) and populates five files in your project: the narrative
+anchor's TL;DR, the start-here doc's first milestone, the bootstrap
+handoff, a product-framing topic, and a structured `BUILD_PLAN.md`.
+Deterministic, no LLM. Re-runnable: managed-block markers
+(`<!-- context-kit:seed:start --> / :end -->`) keep human content
+outside them safe across re-runs.
+
+The recommended greenfield workflow:
+
+```bash
+context-kit init "My App"
+cd my-app && $EDITOR idea.md
+context-kit seed idea.md
+context-kit inventory --write
+context-kit orient
+claude  # or your AI tool of choice
+```
 
 **`inventory` options** (mutually exclusive modes)
 

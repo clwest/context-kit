@@ -179,6 +179,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the inventory as JSON to stdout (no file changes)",
     )
 
+    # seed
+    seed = sub.add_parser(
+        "seed",
+        help="Turn a structured idea file into project context (5 files)",
+        description=(
+            "Read a markdown idea file (see docs/docs-pattern/IDEA_SCHEMA.md "
+            "for the format) and populate the project's narrative anchor, "
+            "start-here doc, bootstrap handoff, product topic, and "
+            "BUILD_PLAN.md. Deterministic; no LLM. Managed-block markers "
+            "(<!-- context-kit:seed:start --> / :end -->) keep human "
+            "content outside them safe across re-runs."
+        ),
+    )
+    seed.add_argument(
+        "idea",
+        help="Path to the markdown idea file (e.g. ./idea.md)",
+    )
+    seed.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    seed.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite seed-owned content even when it would otherwise be skipped",
+    )
+    seed.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="Print what would change; don't write any files",
+    )
+
     return parser
 
 
@@ -220,6 +254,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "inventory":
         from cli.inventory import run_inventory
         return run_inventory(args)
+
+    if args.command == "seed":
+        from cli.seed import run_seed
+        return run_seed(args)
 
     parser.print_help()
     return 1

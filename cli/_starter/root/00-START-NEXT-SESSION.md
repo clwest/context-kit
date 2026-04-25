@@ -1,9 +1,18 @@
+---
+state: scaffold
+---
+
 # Next Session — Start Here
 
 > **Source of truth for numbers:** `docs/{{APP_UPPER}}_WHAT_IT_IS.md` (narrative)
 > + `docs/{{APP_UPPER}}_INVENTORY.md` (runtime-derived, regenerable).
 > When any doc disagrees with either of these, INVENTORY wins.
 > Live drift report: `python manage.py verify_doc_claims --only-drift` (once wired up).
+>
+> **Frontmatter `state:`** above is consumed by `context-kit seed`.
+> `scaffold` = freshly init'd, safe for seed to populate.
+> `seeded` = seed ran. `active` = a real session-end handoff has been written.
+> Don't edit by hand unless you know what you're doing.
 
 ---
 

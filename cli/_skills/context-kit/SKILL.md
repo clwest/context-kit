@@ -67,6 +67,24 @@ While working in the project:
   The collaboration rule is "AI drafts, human edits, AI is expected to
   push back when framing looks wrong."
 
+## Optional — run seed before orient on a fresh project
+
+If the project's `00-START-NEXT-SESSION.md` frontmatter shows
+`state: scaffold` *and* there's an `idea.md` (or similar structured
+idea file) at the project root, the user hasn't seeded yet. Suggest:
+
+```bash
+context-kit seed idea.md
+```
+
+This populates the narrative anchor's TL;DR, the start-here doc's
+first milestone, a bootstrap handoff, a product-framing topic, and a
+`BUILD_PLAN.md` from the idea file. After that, `orient` will surface
+real intent instead of empty stubs. Deterministic — no LLM calls.
+
+If `state:` is `seeded` or anything other than `scaffold`, the
+project has already moved past the seed step; don't re-suggest it.
+
 ## Optional — run hotpath when scope feels large
 
 If the orient output reveals a project with many or very long anchor
