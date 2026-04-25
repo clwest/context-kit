@@ -45,6 +45,7 @@ RUNTIME_COPY = (
     ("cli/__init__.py", "cli/__init__.py"),
     ("cli/server.py", "cli/server.py"),
     ("cli/orient.py", "cli/orient.py"),
+    ("cli/hotpath.py", "cli/hotpath.py"),
 )
 
 # The Claude Code skill ships into the generated project's local

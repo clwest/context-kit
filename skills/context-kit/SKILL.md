@@ -67,6 +67,22 @@ While working in the project:
   The collaboration rule is "AI drafts, human edits, AI is expected to
   push back when framing looks wrong."
 
+## Optional — run hotpath when scope feels large
+
+If the orient output reveals a project with many or very long anchor
+docs, or you find yourself reading the same files repeatedly without
+making progress, run:
+
+```bash
+context-kit hotpath
+```
+
+It lists the largest files in the project and warns when any one file
+or the top-N sum is likely to dominate your context window. The output
+is advisory — when it warns, the right move is usually to narrow focus
+to one file at a time, or stop and start a fresh session before
+tackling the hot region.
+
 ## When the orient command does not exist
 
 If `context-kit orient` and `python3 context_kit.py orient` both fail, the

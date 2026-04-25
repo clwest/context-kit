@@ -18,6 +18,13 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   generated project at `.claude/skills/context-kit/SKILL.md`. An agent
   loads the skill, runs `orient`, and follows the priority order — no
   human prompt required to bootstrap a new session.
+- `context-kit hotpath` — read-only file-size dashboard. Lists the
+  largest files in a project and warns when any single file exceeds
+  50 KB or the top 10 sum exceeds 200 KB (both tunable). Prefers
+  `git ls-files` when inside a git repo, falls back to a recursive
+  walk (with sensible ignores). Inspired by Damian Tedrow's "hot
+  path" observation that file size is a strong proxy for whether a
+  region of code will fit comfortably in an AI session's context.
 
 ## [0.3.0] — 2026-04-21
 

@@ -94,6 +94,7 @@ Commands:
   init NAME            Scaffold a new project with the context-kit pattern
   start                Launch the onboarding server for the current project
   orient               Print the assembled session-start orientation report
+  hotpath              Show the largest files most likely to dominate AI context
 
 Run `python3 context_kit.py <command> --help` for per-command options.
 ```
@@ -126,6 +127,23 @@ Run `python3 context_kit.py <command> --help` for per-command options.
 `skills/context-kit/SKILL.md`. Every generated project gets a copy at
 `.claude/skills/context-kit/SKILL.md`, so any agent run inside the
 project picks it up automatically.
+
+**`hotpath` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--project DIR` | `cwd` | Project root to scan |
+| `--single-threshold-kb N` | `50` | Warn on any single file larger than this |
+| `--top-count N` | `10` | How many of the largest files to list |
+| `--top-threshold-kb N` | `200` | Warn when the top-N sum exceeds this |
+
+`hotpath` is read-only and always exits 0. It prefers `git ls-files`
+when run inside a git repo, and falls back to a recursive walk
+(skipping `.git`, `node_modules`, `__pycache__`, `.venv`, `dist`,
+`build`, `.next`, `coverage`, `.pytest_cache`, `*.egg-info`, etc).
+Use it when an AI session feels like it's looping or losing focus —
+file size is a surprisingly good proxy for "this won't fit comfortably
+in the agent's context."
 
 ---
 

@@ -108,6 +108,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Project root (default: current working directory)",
     )
 
+    # hotpath
+    hotpath = sub.add_parser(
+        "hotpath",
+        help="Show the largest files most likely to dominate AI context",
+        description=(
+            "Read-only file-size dashboard. Prefers git-tracked files when "
+            "in a git repo; falls back to a recursive walk. Always exits 0 "
+            "— warnings are advisory and meant for the agent (or human) to "
+            "decide whether to start a fresh session, narrow focus, or "
+            "split a large file."
+        ),
+    )
+    hotpath.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    hotpath.add_argument(
+        "--single-threshold-kb",
+        type=int,
+        default=50,
+        help="Warn on any single file larger than this many KB (default: 50)",
+    )
+    hotpath.add_argument(
+        "--top-count",
+        type=int,
+        default=10,
+        help="How many of the largest files to list (default: 10)",
+    )
+    hotpath.add_argument(
+        "--top-threshold-kb",
+        type=int,
+        default=200,
+        help="Warn when the top-N sum exceeds this many KB (default: 200)",
+    )
+
     return parser
 
 
@@ -138,6 +174,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "orient":
         from cli.orient import run_orient
         return run_orient(args)
+
+    if args.command == "hotpath":
+        from cli.hotpath import run_hotpath
+        return run_hotpath(args)
 
     parser.print_help()
     return 1
