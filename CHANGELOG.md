@@ -9,6 +9,23 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-04-25
+
+**Beginner-first onboarding.** `context-kit start` is now a guided
+wizard that opens in the browser and walks a first-time user from
+`pip install` to a Claude-ready project — no prior knowledge of the
+CLI required.
+
+Versioning rationale:
+- `0.5.0` = non-technical builder *capabilities*
+  (`recommend-stack` + `doctor`)
+- `0.6.0` = beginner-first *onboarding* (`context-kit start` opens
+  a wizard that surfaces those capabilities at the right moments)
+
+The CLI is unchanged for experienced users; the wizard is a guided
+wrapper, not a replacement. Already-seeded projects still get the
+existing project-view page at `/`.
+
 ### Added
 - **`context-kit start` is now a beginner wizard.** Open a guided
   onboarding page in the browser that walks a first-time user through:
@@ -28,6 +45,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Wizard HTML ships as package data at `cli/_static/wizard.html`.
 - README leads with `context-kit start` as the beginner entry point;
   CLI quickstart kept below for experienced builders.
+
+### Changed
+- `run_start` no longer warns "does not look like a context-kit
+  project" when the landing page is the wizard — that warning fired
+  on the very first run by a beginner, contradicting the wizard's
+  whole purpose. Warning is preserved when the landing page is `/`
+  but the directory truly has no project markers.
+
+### Tests
+- 223 unit tests passing (was 202 in 0.5.0). +21 for the wizard
+  (project-state detection, path safety against 5 attack patterns,
+  live-server integration covering every route).
 
 ## [0.5.0] — 2026-04-25
 
