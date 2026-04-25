@@ -16,6 +16,27 @@ worth more than a thousand impressions.
 
 ---
 
+## Post-publish flip checklist
+
+When `pip install context-kit` is live on real PyPI, search-and-replace
+the "coming soon" wording in these exact spots. All four can land in
+a single commit (suggested message: `docs: pip install context-kit is now live`).
+
+| File:line | Current | Change to |
+|---|---|---|
+| `examples/demo.sh:54` | `$ pip install context-kit         # (coming soon to PyPI)` | `$ pip install context-kit` (drop the comment) |
+| `docs/DISTRIBUTION_NOTES.md:~175-176` | "Whenever ready — PyPI publish. The tweet/post don't depend on it; 'coming soon to PyPI' is fine messaging." | Replace with: "PyPI publish is live (`pip install context-kit`). The tweet/post can lead with the real install command." |
+| `docs/DISTRIBUTION_NOTES.md:~59` | "Still on the punch list: PyPI publish, real public users, real dogfood reports." | "Still on the punch list: real public users, real dogfood reports." |
+| `docs/DISTRIBUTION_NOTES.md:~185` | "Show HN. The repo is at v0.3.0 with one tagged release. Show HN is a swing once there's a real wheel install + a couple of public dogfood reports." | Bump to v0.4.0; the "real wheel install" half is now done — keep the "couple of public dogfood reports" gate. |
+| `00-START-NEXT-SESSION.md` (queued sections) | references to "PyPI publish" as queued work | Remove from queued list; PyPI is shipped. |
+
+The LinkedIn long-form draft and the Twitter/X thread already work
+either way (they don't reference "coming soon"). Once the install
+command is live, you may also want to add a one-line tweet:
+`pip install context-kit` is live on PyPI. github.com/clwest/context-kit
+
+---
+
 ## LinkedIn post — long-form follow-up
 
 Posted 4 days after the original announcement. Names the people whose
