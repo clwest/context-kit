@@ -191,6 +191,37 @@ class TestLiveWizardServer(unittest.TestCase):
         self.assertTrue(headers.get("Content-Type", "").startswith("text/html"))
         self.assertIn("context-kit", body)
 
+    def test_wizard_step3_uses_friendly_beginner_copy(self):
+        """Step 3 must read like a friendly conversation, not a tech form.
+
+        Locks in the user's exact wording so future edits don't quietly drift
+        back to technical labels.
+        """
+        _, body, _ = self._get("/wizard")
+        # Friendly intro framing
+        self.assertIn(
+            "describe your idea like you would to a friend",
+            body,
+            "Step 3 intro should use the conversational framing",
+        )
+        self.assertIn(
+            "You can leave most of this blank",
+            body,
+            "Step 3 should reassure the user that most fields are optional",
+        )
+        # Conversational field labels (not the canonical heading text)
+        self.assertIn("What do you want to build?", body)
+        self.assertIn("Who is this for?", body)
+        self.assertIn("Why do you want this?", body)
+        self.assertIn("What would a first simple version do?", body)
+        self.assertIn("Not sure about tech? Skip this.", body)
+        self.assertIn("Anything you're unsure about?", body)
+        # The required-field example is the medication-reminder dogfood case
+        self.assertIn(
+            'an app to remind my dad to take his medication',
+            body,
+        )
+
     # --- /api/state ---
 
     def test_api_state_returns_json(self):

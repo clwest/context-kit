@@ -155,6 +155,20 @@
     overflow-y: auto;
   }
   .hint { color: var(--muted); font-size: .85rem; }
+  .field-hint {
+    color: var(--muted);
+    font-size: .85rem;
+    margin: 0 0 .4rem;
+  }
+  .intro {
+    font-size: 1.02rem;
+    margin-bottom: .25rem;
+  }
+  .support {
+    color: var(--muted);
+    font-size: .9rem;
+    margin: 0 0 1.25rem;
+  }
   .status {
     margin-top: .75rem;
     padding: .5rem .75rem;
@@ -238,26 +252,33 @@
 <!-- ============================================================== -->
 <section class="step" data-step="3">
   <h2><span class="step-num">3.</span>What are you building?</h2>
-  <p class="hint">Be plain. The AI will read this verbatim. Skip anything
-  that doesn't apply.</p>
+  <p class="intro">Just describe your idea like you would to a friend.
+  Don't worry about getting it perfect — we'll turn this into a plan.</p>
+  <p class="support">You can leave most of this blank. Just start with your idea.</p>
 
-  <label for="ideaWhat">What are we building? <em>(required)</em></label>
-  <textarea id="ideaWhat" class="long" placeholder="A small app that…"></textarea>
+  <label for="ideaWhat">What do you want to build?</label>
+  <p class="field-hint">Example: "an app to remind my dad to take his medication"</p>
+  <textarea id="ideaWhat" class="long" placeholder=""></textarea>
 
-  <label for="ideaWho">Who is it for?</label>
-  <textarea id="ideaWho" placeholder="(optional)"></textarea>
+  <label for="ideaWho">Who is this for?</label>
+  <p class="field-hint">Example: "just me", "my kids", "my parents", "small business owners"</p>
+  <textarea id="ideaWho" placeholder=""></textarea>
 
-  <label for="ideaProblem">What problem does it solve?</label>
-  <textarea id="ideaProblem" placeholder="(optional)"></textarea>
+  <label for="ideaProblem">Why do you want this?</label>
+  <p class="field-hint">What's frustrating, missing, or hard today?</p>
+  <textarea id="ideaProblem" placeholder=""></textarea>
 
-  <label for="ideaMilestone">First milestone</label>
-  <textarea id="ideaMilestone" placeholder="(optional — what would 'v0 done' look like?)"></textarea>
+  <label for="ideaMilestone">What would a first simple version do?</label>
+  <p class="field-hint">Keep it small. Example: "track steps and show points"</p>
+  <textarea id="ideaMilestone" placeholder=""></textarea>
 
-  <label for="ideaStack">Tech stack <em>(skip if you're not sure — we'll suggest one)</em></label>
-  <textarea id="ideaStack" placeholder="(optional)"></textarea>
+  <label for="ideaStack">Not sure about tech? Skip this.</label>
+  <p class="field-hint">We can suggest a stack for you.</p>
+  <textarea id="ideaStack" placeholder=""></textarea>
 
-  <label for="ideaQuestions">Open questions</label>
-  <textarea id="ideaQuestions" placeholder="(optional — what you don't know yet)"></textarea>
+  <label for="ideaQuestions">Anything you're unsure about?</label>
+  <p class="field-hint">Questions, ideas, worries, or things you want the AI to consider.</p>
+  <textarea id="ideaQuestions" placeholder=""></textarea>
 
   <div class="status" id="step3Status"></div>
   <div class="row">
@@ -485,7 +506,8 @@ function confirmStep2() {
 function confirmStep3() {
   captureFieldsToState();
   if (!state.idea.what) {
-    setStatus("step3Status", "err", "“What are we building?” is required.");
+    setStatus("step3Status", "err",
+      "Add a sentence under “What do you want to build?” before continuing.");
     return;
   }
   setStatus("step3Status", "", "");
