@@ -85,6 +85,23 @@ real intent instead of empty stubs. Deterministic — no LLM calls.
 If `state:` is `seeded` or anything other than `scaffold`, the
 project has already moved past the seed step; don't re-suggest it.
 
+## Optional — run doctor when something feels off in the environment
+
+If the user is hitting build/run errors that look like environment
+issues (EMFILE, "command not found", Expo Go won't connect, Python
+version mismatch, etc.) suggest:
+
+```bash
+context-kit doctor
+```
+
+It runs read-only checks against Python, git, Node.js, Expo SDK +
+config, file-watcher / `ulimit` pressure, and the project's own
+context-kit structure. Exits 1 only on **blocking** issues; warnings
+are advisory.
+
+Use `--json` to pipe the result somewhere structured.
+
 ## Optional — run hotpath when scope feels large
 
 If the orient output reveals a project with many or very long anchor

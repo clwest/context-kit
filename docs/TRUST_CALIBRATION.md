@@ -34,6 +34,47 @@ Each entry:
 
 ## Entries
 
+## 2026-04-25 — real friction beats imagined feature specs
+
+**Type:** signal-source pattern (not a correction; a positive lesson)
+**Session:** SESSION_006_DOCTOR (`feat(doctor): add environment diagnostics`)
+**Context:** scoping `context-kit doctor`. The user supplied a list of
+checks anchored in concrete dogfood pain — Munchkin App's Metro
+EMFILE crash, Expo Go SDK 54 vs project SDK 51 mismatch, the
+`expo doctor` → `npx expo-doctor` CLI rename. Every check landed
+as a one-line spec; no design haggling needed.
+**What was striking:** the design conversation was the shortest of
+any feature so far (Sessions 1-5 had multi-paragraph back-and-forth
+on ownership, edge cases, and scope; Session 6's design was
+basically "here are the exact symptoms we hit, build checks for
+them"). That's because the symptoms had already done the
+specification work.
+**Lesson / pattern:** when designing a new feature, ask "what real
+friction has the human (or someone they trust) hit recently?" before
+asking "what should this feature do in the abstract?" Real friction
+constrains scope to the exact things that matter. Imagined friction
+sprawls.
+
+Practical rules going forward:
+
+- For new diagnostic / safety / quality features, **start with the
+  list of incidents the human can name from memory**. Each incident
+  becomes a check / guard / test. Skip features that don't trace
+  back to a remembered moment of pain.
+- When the human can't name specific incidents, that's a signal
+  the feature might be premature. Better to wait for the first real
+  failure than to build for hypothetical ones.
+- **Document the provenance** in the feature's commit message,
+  changelog entry, and handoff. "This came from the Munchkin App
+  EMFILE crash" is more durable than "this catches file-watcher
+  issues." Future maintainers can reason about the spec by tracing
+  back to the incident.
+
+This isn't a correction (no judgment was wrong this session); it's
+the principle being made explicit for future sessions.
+
+---
+
 ## 2026-04-25 — even AI-paced estimates can be too high when design is locked
 
 **Type:** estimation-too-high (in the safer direction)

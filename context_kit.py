@@ -213,6 +213,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print what would change; don't write any files",
     )
 
+    # doctor
+    doctor = sub.add_parser(
+        "doctor",
+        help="Read-only environment + setup diagnostics",
+        description=(
+            "Run a fixed set of read-only checks: Python version, git, "
+            "context-kit project structure, Node.js, Expo SDK + config, "
+            "file-watcher / ulimit pressure, and inventory freshness. "
+            "Exits 1 only if a blocking issue is found; warnings never "
+            "affect the exit code."
+        ),
+    )
+    doctor.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON to stdout",
+    )
+
     return parser
 
 
@@ -258,6 +281,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "seed":
         from cli.seed import run_seed
         return run_seed(args)
+
+    if args.command == "doctor":
+        from cli.doctor import run_doctor
+        return run_doctor(args)
 
     parser.print_help()
     return 1

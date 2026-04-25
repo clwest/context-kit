@@ -134,6 +134,7 @@ Commands:
   orient               Print the assembled session-start orientation report
   hotpath              Show the largest files most likely to dominate AI context
   inventory            Generate a runtime-derived inventory of the project
+  doctor               Read-only environment + setup diagnostics
 
 Run `python3 context_kit.py <command> --help` for per-command options.
 ```
@@ -221,6 +222,20 @@ claude  # or your AI tool of choice
 | `--write` | off | Update the managed block in `docs/CONTEXT_KIT_INVENTORY.md` |
 | `--check` | off | Exit 0 only if the managed block is current; 1 if stale |
 | `--json` | off | Print machine-readable JSON to stdout (read-only) |
+
+**`doctor` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--project DIR` | `cwd` | Project root to diagnose |
+| `--json` | off | Print machine-readable JSON to stdout |
+
+`doctor` runs a fixed set of read-only checks: Python version, git,
+context-kit project structure, Node.js, Expo SDK + config,
+file-watcher / `ulimit` pressure, and inventory freshness. Exits `1`
+only if a **blocking** issue is found; warnings never affect the exit
+code. Specifically tuned for the EMFILE / Expo Go SDK mismatch /
+deprecated `expo-cli` friction we hit when dogfooding on Munchkin App.
 
 `inventory` generates runtime-derived counts (CLI subcommands, guide
 docs, templates, tests, package metadata, hot-path summary, etc.)

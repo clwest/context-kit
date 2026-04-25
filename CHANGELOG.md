@@ -9,6 +9,20 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `context-kit doctor` — read-only environment + setup diagnostics
+  with 7 checks: Python version, git availability, context-kit
+  project structure, Node.js version (against a `KNOWN_STABLE_NODE_MAJORS`
+  range), Expo SDK detection + config check, file-watcher /
+  `ulimit -n` pressure (with the EMFILE-from-Metro pattern called out
+  as blocking), and inventory freshness. Exits `1` only on blocking
+  issues; warnings never affect the exit code. Human + JSON output.
+  No file mutations. Bundled into `RUNTIME_COPY` so generated projects
+  ship the command standalone. Specific checks driven directly by
+  real Munchkin App dogfood friction (EMFILE under Metro, Expo Go
+  SDK mismatches, `expo-cli` deprecation drift) — see
+  `docs/handoffs/SESSION_006_DOCTOR.md`.
+
 ## [0.4.2] — 2026-04-25
 
 First public release with the full `init` / `seed` / `orient` loop.

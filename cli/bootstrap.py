@@ -36,6 +36,7 @@ RUNTIME_COPY = (
     ("cli/hotpath.py", "cli/hotpath.py"),
     ("cli/inventory.py", "cli/inventory.py"),
     ("cli/seed.py", "cli/seed.py"),
+    ("cli/doctor.py", "cli/doctor.py"),
 )
 
 # The bundled Claude skill lives at ``cli/_skills/context-kit/`` inside
