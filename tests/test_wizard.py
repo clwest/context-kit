@@ -392,10 +392,17 @@ class TestLiveWizardServer(unittest.TestCase):
         the agent at BUILD_PLAN.md before it writes anything.
         """
         _, body, _ = self._get("/wizard")
+        # Locks the full strengthened prompt verbatim. The exact wording
+        # matters: the "Summarize the project, confirm the stack" step
+        # forces the agent to *demonstrate* it read the docs before
+        # writing code, and "Do not change the stack without asking"
+        # closes the divergence loophole that caused the original bug.
         self.assertIn(
-            "Read BUILD_PLAN.md and WHAT_IT_IS.md, then begin implementing version 1.",
+            "Read CLAUDE.md, docs/BUILD_PLAN.md, and docs/*_WHAT_IT_IS.md.",
             body,
         )
+        self.assertIn("Summarize the project, confirm the stack", body)
+        self.assertIn("Do not change the stack without asking.", body)
         # Beginner-friendly framing of *why* the prompt matters — not
         # just dropped on them as a magic incantation.
         self.assertIn("source of truth for your", body)
