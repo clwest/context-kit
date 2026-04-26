@@ -299,6 +299,53 @@ def _detect_project_state(cwd: Path) -> str:
     return "scaffold"
 
 
+def _scan_for_projects(cwd: Path) -> list:
+    """Find immediate child dirs of ``cwd`` that look like context-kit projects.
+
+    A directory qualifies when it contains ``00-START-NEXT-SESSION.md``
+    (the marker every ``context-kit init`` writes). For each match we
+    report which milestone files exist plus a ``suggested_step`` so a
+    fresh browser tab opened by ``context-kit start`` can offer to
+    resume from disk instead of forcing the user back to Step 1.
+
+    Hidden dirs and common build/dependency folders are skipped to keep
+    the wizard's "we found a project" prompt signal-only.
+    """
+    cwd = cwd.resolve()
+    projects: list = []
+    skip_names = {
+        "node_modules", "__pycache__", "venv", ".venv",
+        "dist", "build", ".git", ".idea", ".vscode",
+    }
+    try:
+        entries = sorted(cwd.iterdir())
+    except OSError:
+        return projects
+    for child in entries:
+        if not child.is_dir():
+            continue
+        if child.name.startswith(".") or child.name in skip_names:
+            continue
+        start_doc = child / "00-START-NEXT-SESSION.md"
+        if not start_doc.is_file():
+            continue
+        has_idea = (child / "idea.md").is_file()
+        has_build_plan = (child / "docs" / "BUILD_PLAN.md").is_file()
+        # Map filesystem milestones to wizard step numbers:
+        #   BUILD_PLAN.md present  -> seed has run -> land on doctor (step 8)
+        #   only init has run      -> land on recommend-stack/seed (step 6)
+        suggested = 8 if has_build_plan else 6
+        projects.append({
+            "folder": child.name,
+            "path": str(child),
+            "has_idea_md": has_idea,
+            "has_start_doc": True,
+            "has_build_plan": has_build_plan,
+            "suggested_step": suggested,
+        })
+    return projects
+
+
 def _safe_project_path(cwd: Path, requested: str) -> Path:
     """Resolve ``requested`` relative to ``cwd``; reject traversal.
 
@@ -403,6 +450,7 @@ class _OnboardingHandler(http.server.BaseHTTPRequestHandler):
             "cwd": str(cwd),
             "project_state": state,
             "suggested_step": suggested,
+            "detected_projects": _scan_for_projects(cwd),
         })
 
     def _handle_api_idea(self) -> None:

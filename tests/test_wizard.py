@@ -304,6 +304,96 @@ class TestLiveWizardServer(unittest.TestCase):
         data = json.loads(body)
         for key in ("cwd", "project_state"):
             self.assertIn(key, data)
+        # detected_projects was added so a fresh browser tab opened by
+        # a restart of ``context-kit start`` can recover a project from
+        # disk instead of dropping the user at Step 1.
+        self.assertIn("detected_projects", data)
+        self.assertIsInstance(data["detected_projects"], list)
+
+    def test_api_state_detects_seeded_child_project_with_step_8(self):
+        """Mirrors the dogfood report: oreos-app under cwd has both
+        ``00-START-NEXT-SESSION.md`` and ``docs/BUILD_PLAN.md`` because
+        the user already ran init + seed in a prior session. /api/state
+        must surface it as a resume candidate that lands on Step 8.
+        """
+        proj = self.cwd / "oreos-app"
+        (proj / "docs").mkdir(parents=True, exist_ok=True)
+        (proj / "00-START-NEXT-SESSION.md").write_text("inited", encoding="utf-8")
+        (proj / "docs" / "BUILD_PLAN.md").write_text("# plan\n", encoding="utf-8")
+        (proj / "idea.md").write_text("# idea\n", encoding="utf-8")
+        try:
+            _, body, _ = self._get("/api/state")
+            data = json.loads(body)
+            match = next(
+                (p for p in data["detected_projects"] if p["folder"] == "oreos-app"),
+                None,
+            )
+            self.assertIsNotNone(match, f"oreos-app not in {data['detected_projects']}")
+            self.assertTrue(match["has_start_doc"])
+            self.assertTrue(match["has_build_plan"])
+            self.assertTrue(match["has_idea_md"])
+            # Seed has run -> land on the final "you're ready" step.
+            self.assertEqual(match["suggested_step"], 8)
+        finally:
+            (proj / "docs" / "BUILD_PLAN.md").unlink(missing_ok=True)
+            (proj / "00-START-NEXT-SESSION.md").unlink(missing_ok=True)
+            (proj / "idea.md").unlink(missing_ok=True)
+            (proj / "docs").rmdir()
+            proj.rmdir()
+
+    def test_api_state_detects_scaffold_child_project_with_step_6(self):
+        """init has run but seed hasn't. The wizard should resume into
+        the recommend-stack/seed area (Step 6), not the very end.
+        """
+        proj = self.cwd / "scaffold-only"
+        proj.mkdir(exist_ok=True)
+        (proj / "00-START-NEXT-SESSION.md").write_text("inited", encoding="utf-8")
+        try:
+            _, body, _ = self._get("/api/state")
+            data = json.loads(body)
+            match = next(
+                (p for p in data["detected_projects"] if p["folder"] == "scaffold-only"),
+                None,
+            )
+            self.assertIsNotNone(match)
+            self.assertTrue(match["has_start_doc"])
+            self.assertFalse(match["has_build_plan"])
+            self.assertEqual(match["suggested_step"], 6)
+        finally:
+            (proj / "00-START-NEXT-SESSION.md").unlink(missing_ok=True)
+            proj.rmdir()
+
+    def test_api_state_skips_hidden_and_noise_directories(self):
+        """node_modules, .git, .venv, etc. should never show up as resume
+        candidates even if they (somehow) contain a 00-START doc.
+        """
+        for noise in ("node_modules", ".git", ".venv", "__pycache__"):
+            d = self.cwd / noise
+            d.mkdir(exist_ok=True)
+            (d / "00-START-NEXT-SESSION.md").write_text("noise", encoding="utf-8")
+        try:
+            _, body, _ = self._get("/api/state")
+            data = json.loads(body)
+            folders = {p["folder"] for p in data["detected_projects"]}
+            for noise in ("node_modules", ".git", ".venv", "__pycache__"):
+                self.assertNotIn(noise, folders)
+        finally:
+            for noise in ("node_modules", ".git", ".venv", "__pycache__"):
+                (self.cwd / noise / "00-START-NEXT-SESSION.md").unlink(missing_ok=True)
+                (self.cwd / noise).rmdir()
+
+    def test_wizard_includes_fresh_tab_recovery_copy(self):
+        """The discovery card copy must ship in the served HTML so a
+        future refactor can't quietly remove the fresh-tab recovery
+        path that motivated this whole change.
+        """
+        _, body, _ = self._get("/wizard")
+        self.assertIn("We found an existing project", body)
+        # Single-project copy is built dynamically in JS — assert the
+        # template fragment is present in the inline script so the
+        # wiring stays intact.
+        self.assertIn("Continue from there", body)
+        self.assertIn("Start fresh", body)
 
     # --- POST /api/idea ---
 

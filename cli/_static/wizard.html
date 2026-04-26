@@ -228,6 +228,20 @@
      it). Stays beginner-friendly — no technical state language. -->
 <div class="status" id="resumeBanner" style="display:none"></div>
 
+<!-- Discovery card: shown on a *fresh* tab (no useful localStorage)
+     when /api/state reports detected_projects under cwd. Lets a user
+     who reopened the wizard in a new browser window resume an
+     existing project instead of being dropped at Step 1. Populated
+     from JS (offerExistingProjects). -->
+<section class="step discovery" id="discoveryCard" style="display:none">
+  <h2>We found an existing project</h2>
+  <p id="discoveryBody">…</p>
+  <div id="discoveryChoices"></div>
+  <div class="row">
+    <button class="secondary" id="discoveryDeclineBtn" type="button">Start fresh</button>
+  </div>
+</section>
+
 <!-- ============================================================== -->
 <section class="step" data-step="1">
   <h2><span class="step-num">1.</span>Welcome</h2>
@@ -528,6 +542,103 @@ async function fetchJsonSafe(url, init) {
     return { ok: resp.ok, status: resp.status, data, networkError: false };
   } catch (err) {
     return { ok: false, status: 0, data: null, networkError: true };
+  }
+}
+
+// True iff the user has actually started filling in the wizard.
+// Used to decide whether a fresh tab should offer to resume a
+// disk-detected project (we only offer when the browser side is empty).
+function hasUserProgress() {
+  return Boolean(state.appName) || Boolean(state.idea && state.idea.what);
+}
+
+// Renders the "we found an existing project" card and lets the user
+// resume into it. Called from bootstrap when /api/state surfaces
+// detected_projects AND localStorage doesn't already point at a
+// project the user is mid-wizard on. See the dogfood report: a
+// restart of ``context-kit start`` opens the wizard in a *new* tab
+// where localStorage is empty, and without this the user landed at
+// Step 1 even though their project files were sitting right there.
+function offerExistingProjects(projects) {
+  const card = document.getElementById("discoveryCard");
+  const body = document.getElementById("discoveryBody");
+  const choices = document.getElementById("discoveryChoices");
+  if (!card || !projects || !projects.length) return false;
+  choices.innerHTML = "";
+  if (projects.length === 1) {
+    const p = projects[0];
+    body.textContent =
+      "We found an existing project: " + p.folder + ". Continue from there?";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Continue from there";
+    btn.addEventListener("click", () => acceptDiscoveredProject(p));
+    choices.appendChild(btn);
+  } else {
+    body.textContent =
+      "We found multiple existing projects under this folder. " +
+      "Pick one to continue:";
+    projects.forEach(p => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "secondary";
+      btn.style.marginRight = ".5rem";
+      btn.style.marginBottom = ".5rem";
+      btn.textContent = p.folder;
+      btn.addEventListener("click", () => acceptDiscoveredProject(p));
+      choices.appendChild(btn);
+    });
+  }
+  document.querySelectorAll("section.step").forEach(s => {
+    s.classList.remove("visible");
+  });
+  card.classList.add("visible");
+  card.style.display = "block";
+  const declineBtn = document.getElementById("discoveryDeclineBtn");
+  if (declineBtn && !declineBtn._wired) {
+    declineBtn.addEventListener("click", declineDiscoveredProject);
+    declineBtn._wired = true;
+  }
+  return true;
+}
+
+function acceptDiscoveredProject(p) {
+  state.projectDir = p.folder;
+  // Best-effort: derive a human-friendly app name from the folder slug
+  // so Step 5's command preview still reads sensibly if the user
+  // navigates back. Won't match the original casing perfectly, but
+  // it's better than blank.
+  if (!state.appName) {
+    state.appName = p.folder.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  }
+  state.step = p.suggested_step || 5;
+  state._resumed = true;
+  save();
+  hideDiscoveryCard();
+  showOnly(state.step);
+  // Show the standard resume banner so the user knows we picked up
+  // from disk on purpose, not by accident.
+  const banner = document.getElementById("resumeBanner");
+  if (banner) {
+    banner.className = "status ok";
+    banner.style.display = "block";
+    banner.textContent =
+      "Resumed " + p.folder + " — picking up where you left off.";
+  }
+}
+
+function declineDiscoveredProject() {
+  hideDiscoveryCard();
+  state.step = 1;
+  save();
+  showOnly(1);
+}
+
+function hideDiscoveryCard() {
+  const card = document.getElementById("discoveryCard");
+  if (card) {
+    card.classList.remove("visible");
+    card.style.display = "none";
   }
 }
 
@@ -869,16 +980,33 @@ async function bootstrap() {
   });
 
   // Surface the cwd from /api/state so users see where files will land.
+  // Also collects detected_projects so a fresh tab can offer to resume
+  // an existing project on disk (see offerExistingProjects).
+  let detectedProjects = [];
   const stateRes = await fetchJsonSafe("/api/state");
   if (stateRes.ok && stateRes.data) {
     const data = stateRes.data;
     document.getElementById("cwdLabel").textContent = "cwd: " + data.cwd;
     document.getElementById("cwdFooter").textContent = "cwd: " + data.cwd;
+    detectedProjects = Array.isArray(data.detected_projects)
+      ? data.detected_projects
+      : [];
     if (data.project_state === "scaffold" && state.step < 5) {
       // If they've already init'd, jump them ahead — but only if they
       // hadn't already progressed past step 5 themselves.
       state.step = Math.max(state.step, 5);
     }
+  }
+
+  // Fresh-tab recovery: if the user has no in-progress wizard state
+  // (empty localStorage, or just a step counter and no real fields),
+  // and the filesystem already has at least one initialized project
+  // under cwd, offer to resume from disk instead of dropping them at
+  // Step 1. Skip when localStorage already names a project the user
+  // has been working on — that case is handled by the reconciler.
+  if (!hasUserProgress() && detectedProjects.length > 0) {
+    const offered = offerExistingProjects(detectedProjects);
+    if (offered) return;  // wait for the user to accept or decline
   }
 
   // Source-of-truth check: localStorage says where the user *was*, but
