@@ -1128,6 +1128,18 @@ language is this?" and silently dropped what they couldn't answer.
 v0.2 asks "what's *here*?" and reports everything, classifying
 only what it can.
 
+**Per-ecosystem detection is deferred.** Visibility-first must make
+unknown-but-important structure visible *before* classification
+gets smarter. Adding Solidity / Move / Anchor / Cadence / Foundry /
+Hardhat / Brownie / Truffle / Reflex / Flutter manifest detectors
+is correct work, but it's a refinement on top of §19 — not a
+substitute. The dogfood inventory (Appendix C) shows what
+ecosystem variety we'd otherwise need to support indefinitely.
+Visibility-first sidesteps that treadmill: every new ecosystem
+shows up in the "Unknown but present" section automatically, with
+the user (or the AI session) filling in what it means until and
+unless we choose to classify it.
+
 ### What v0.2 must add
 
 A **fallback scan** that runs after the existing root + recognized-
@@ -1458,3 +1470,209 @@ new section.
 | Generator: CLAUDE.md augment block renders likewise | string assert |
 | Generator: section is omitted when `unclassified_subdirs` is empty (no extra noise on clean projects) | negative assert |
 | Regression: ai-content-studio (single-stack root) still works | classification unchanged, no new section |
+
+## 20. v0.2 fixture: tornado-core (legacy Solidity / Truffle)
+
+A real project at `/Users/donkeyking/development/apps/tornado-core`
+that v0.1 confidently misclassifies — possibly the most consequential
+mistake in the dogfood inventory. The repo is the original Tornado
+Cash core: zk-SNARK Ethereum mixer contracts plus the Truffle
+deployment tooling around them. v0.1 sees only the Truffle tooling
+and reports "JavaScript / Node.js", giving an AI session reading
+the docs no signal that it's looking at Solidity smart contracts
+or zk-SNARK circuits.
+
+This is the canonical EVM smart-contract fixture — every Hardhat,
+Truffle, and Foundry project shares the same shape (tooling
+manifest at root, contracts hidden in a non-recognized subdir).
+A v0.2 ship that handles this fixture handles the whole EVM
+ecosystem the same day.
+
+### What's actually there
+
+- **Root manifests:** `package.json`, `truffle-config.js`, `yarn.lock`.
+  Both `package.json` and `truffle-config.js` are real signals;
+  `truffle-config.js` is the actual project-defining file but v0.1
+  has never heard of it.
+- **`contracts/`** contains 11 `.sol` files — `Tornado.sol`,
+  `cTornado.sol`, `ETHTornado.sol`, `ERC20Tornado.sol`,
+  `MerkleTreeWithHistory.sol`, `Verifier.sol`, plus a `Mocks/`
+  subdir. This is the heart of the project.
+- **`circuits/`** contains 2 `.circom` files (`merkleTree.circom`,
+  `withdraw.circom`). zk-SNARK circuits compiled by Circom into
+  the Solidity Verifier above. First `.circom` files we've seen
+  in the dogfood inventory.
+- **`migrations/`** contains 4 numbered Truffle deploy scripts
+  (`2_deploy_hasher.js` through `5_deploy_erc20_tornado.js`).
+- Other directories: `src/`, `test/`, `scripts/`, `docs/`.
+  No `CLAUDE.md`, no `README.md` at root.
+
+### Current v0.1 behavior (silent misclassification)
+
+Run on 2026-04-26 with v0.1 at commit `62ce043`:
+
+```
+Detected stack: JavaScript / Node.js (detected from package.json)
+
+Plan:
+  would create   docs/BUILD_PLAN.md
+  would create   docs/PROJECT_WHAT_IT_IS.md
+  would create   00-START-NEXT-SESSION.md
+  would create   CLAUDE.md
+```
+
+The detection line names a stack with no qualification. The
+generated BUILD_PLAN's `## Tech stack` section would read
+"JavaScript / Node.js (detected from package.json)" with zero
+mention of Solidity, smart contracts, or zk-SNARKs. An AI session
+loaded into these docs would propose Node.js solutions for what
+is fundamentally a Solidity DeFi protocol with cryptographic
+circuits. **This failure mode is worse than dbao-studio's:** there
+isn't even an existing CLAUDE.md to compensate for the wrong
+classification.
+
+### Desired §19 behavior
+
+When §19 ships, this same dry-run should produce:
+
+```
+Detected stack: JavaScript / Node.js (detected from package.json)
+
+Unknown but present (depth 1):
+  contracts/  source: 11 .sol files (e.g. contracts/Tornado.sol)
+              note:   .sol files suggest Solidity / EVM smart contracts;
+                      verify with user
+  circuits/   source: 2 .circom files (e.g. circuits/withdraw.circom)
+              note:   .circom files suggest zk-SNARK circuits (Circom);
+                      verify with user
+  migrations/ source: 4 .js files (numbered deploy scripts —
+                                   typical of Truffle)
+```
+
+The classification line stays unchanged (no per-ecosystem detection;
+JavaScript is what `package.json` actually says). What changes is
+that the user — and any AI session reading the generated docs —
+can no longer miss that Solidity contracts and Circom circuits
+are present. The "(e.g. contracts/Tornado.sol)" example path lets
+both the human and the agent open the actual file with one click.
+
+### Why this matters
+
+Smart-contract projects can look like JavaScript tooling projects
+unless the source structure is visible. The classification surface
+of EVM tooling (Truffle, Hardhat, even Foundry's Solidity testing
+harness) is JavaScript / TypeScript by file count and manifest
+shape; the *meaningful* surface is Solidity. v0.1 reports the
+former and silently drops the latter. §19's visibility-first
+fallback fixes this **without adding a single line of EVM-specific
+detection code** — `.sol` is in the `NOTABLE_EXTENSIONS` data
+table and reports itself. The same mechanism handles `.move`,
+`.cairo`, `.fc` (Tact / TON), and any other smart-contract
+language we eventually want to surface.
+
+### Acceptance criteria for "v0.2 handles tornado-core"
+
+- [ ] `detect_stack(tornado_core_path).language` is still
+      `"javascript"` (root classification unchanged — v0.2 is not
+      claiming to know what Truffle is).
+- [ ] `detect_stack(...).unclassified_subdirs` contains
+      `contracts/` (with `.sol` listed in `notable_extensions`)
+      and `circuits/` (with `.circom` listed).
+- [ ] BUILD_PLAN.md's `## Tech stack` section gains an "Unknown
+      but present" subsection naming both directories, the file
+      counts, and one example path each.
+- [ ] CLAUDE.md (created fresh, since none exists at root) carries
+      the same "Unknown but present" content, so an AI session
+      reading the entry-point doc sees the contracts immediately.
+- [ ] The "(suggest X; verify with user)" hint lines appear for
+      `.sol` (Solidity) and `.circom` (zk-SNARK / Circom) — these
+      are data table entries, not code paths.
+
+### Which v0.2 backlog items this fixture exercises
+
+- **§19 (visibility-first fallback scan)** — primary and
+  sufficient driver. Item #19 alone closes this fixture.
+- **#5 (framework detection inside manifests)** — would add
+  "Truffle" to the JavaScript label by reading the root
+  `truffle-config.js` filename, e.g. `JavaScript / Node.js
+  (Truffle)`. Nice-to-have; not required.
+
+A v0.2 release that ships §19 would handle this fixture cleanly.
+Item #5 would tighten the root classification but is independent
+of the load-bearing fix.
+
+### How to use this fixture during v0.2 implementation
+
+Manual (dry-run, safe — never touches source):
+
+```bash
+python3 context_kit.py adopt /Users/donkeyking/development/apps/tornado-core
+```
+
+Compare against the "Desired §19 behavior" block above. The two
+load-bearing changes to look for: (1) the `Unknown but present`
+section names both `contracts/` and `circuits/`, and (2) the
+classification line for the root remains "JavaScript / Node.js" —
+§19 is *additive*, not corrective.
+
+For automated coverage, lift a stripped-down fixture under
+`tests/fixtures/adopt/tornado_shape/` containing a one-line
+`package.json`, a one-line `truffle-config.js`, an empty
+`contracts/Tornado.sol`, and an empty `circuits/withdraw.circom`.
+The test asserts the dry-run output contains both directory
+names, both extensions, and the suggest/verify hint lines for
+each — closing the silent-EVM-misclassification gap with no
+EVM-specific code.
+
+## Appendix C: Dogfood fixture inventory
+
+Snapshot of candidate projects scanned across `/development/` and
+`/development/apps/` on 2026-04-26 (134 entries surveyed, 47 of
+them nested wrappers). Only the top-10 most useful for `adopt`
+testing are listed here. Already-tested fixtures (focus-flow,
+dealflowtracker, contract-concierge, norman-handyman-mvp,
+ai-content-studio) and the four that earned full sections (§17
+dbao-studio, §18 donkey_betz_world, §20 tornado-core, plus the
+clarity-timelock and flow-name-service cases that motivated §19)
+are excluded from this table to keep it curated.
+
+| # | Path | Interesting shape | Failure mode | Why useful |
+|---|---|---|---|---|
+| 1 | `apps/reflex-project` | Python full-stack: `requirements.txt` + `rxconfig.py`, no JS at all | v0.1 says "Python" but misses that this is Reflex (compiles to React) | Tests narrowness of recognized manifests; `rxconfig.py` is the real defining file |
+| 2 | `donkey_betz_visualizer` | True 3-part split: `backend/` + `frontend/` + `mobile/` (Flutter), no existing CLAUDE.md | mobile/ silently dropped (donkey_betz_world repeat, no CLAUDE.md) | Cleaner 3-part split fixture than donkey_betz_world; tests fresh-create on three-stack repos |
+| 3 | `apps/stacks-course/stacks-token-streaming` | Wrapper layout (single child) + Clarinet + `package.json` | Wrapper hides project AND `Clarinet.toml` unrecognized | Two failure modes in one fixture; Stacks ecosystem |
+| 4 | `donkey-betz-agent-orchestra` | 5 root manifests (JS+Py+Docker+Make), 282 .py vs 4 .js, existing CLAUDE.md | dbao-studio shape "turned up to 11" — most extreme misclassification we've seen | Stress test for §19 + #5 framework detection; augment-mode on real CLAUDE.md |
+| 5 | `apps/LangChain-Udemy-Course` | No manifests; numbered course dirs (`01_*/` … `19_*/`) full of notebooks | v0.1 returns "Unknown" with zero useful info | Tests §19's per-subdir reporting on notebook-only projects |
+| 6 | `apps/3d-course` | Multiple unrecognized peer demo subdirs (`three-js-animation/`, `three-js-sample/`, `three-js-webpack/`) | All four sibling demos invisible | Tests "wrapper without the wrapper" — sibling mini-apps |
+| 7 | `mentorforge` | Recognized split (`backend/` + `frontend/`) PLUS 4 unrecognized peer dirs (`analysis/`, `financial/`, `reports/`, `research/`) | v0.1 reports only backend+frontend; the four domain dirs silently dropped | Tests §19's "merge classified + unclassified in one report" requirement |
+| 8 | `compliancesentinel` / `ironwood-protocol` / `pitchdeckforge` (cluster) | Identical empty-root + `render.yaml` + `start.sh` + `backend/` + `frontend/` shape | Detection works (focus-flow shape), but `render.yaml` invisible at root | Tests whether §19 reports notable root-level non-manifest files |
+| 9 | `flutter` (the SDK) | ~5 GB Flutter SDK source tree, ~50 subdirs, no recognized manifests, thousands of `.dart` files | Stress test — does the depth-2 walk + file caps hold? | Performance/cost fixture distinct from classification fixtures |
+| 10 | `apps/Donkey Betz` *(literal space in name)* | Mixed root + 387 .py vs 6 .js + space in directory name | Same dbao-studio shape; whitespace-in-path edge case | Whitespace-safety smoke test on adopt's path handling |
+
+Honorable mentions worth knowing about (not in the top 10):
+
+- **`apps/totk_companion`** — `pubspec.yaml` at root + `backend/` subdir. Inverted shape: root has *some* manifest-shaped file so §19's recognized-subdir scan doesn't fire on `backend/`.
+- **`apps/working_reflex/reflex-project`** — nested wrapper containing a real Reflex app. Tests wrapper detection AND Reflex recognition in one go.
+- **`court_evidence_apps`** — meta-project: `01_deliverables_from_database/`, `02_app_source_evidence/`, `00_OVERVIEW_START_HERE.md`. Different conceptual shape from anything else here.
+- **`apps/tornado-core/circuits/`** — first `.circom` (zk-SNARK / cryptography) ecosystem we've seen; baked into the `NOTABLE_EXTENSIONS` table by §20's acceptance criteria.
+
+Empty/dead candidates (skip): `SuperClaude`, `founder-toolkit`,
+`apps/buffet_project`, `apps/crewai_test`, `apps/eleven-labs-tutorial`,
+`nicolas`, `apps/Donkey_Betz_Server`, `apps/api_playground`,
+`apps/chatterbot`, `apps/donkey_workspace`, `apps/aidentifier`,
+`apps/ner_labels`, `apps/3js-app`, `apps/realtime_api`,
+`apps/twillo_text`, `apps/tailwind_udemy`, `apps/reddit-testing`,
+`apps/three-js-next-app`, `apps/r3f-animated-book-slider-starter`,
+`apps/Nextjs-Creative-Portfolio-Starter-Code-Files`,
+`apps/testing-front-end`,
+`apps/Car-rental-app-with-AB-testing-and-personalisation`. Some are
+just `app.py` + nothing; others are starter-repo clones with
+`package.json` only.
+
+This appendix is a snapshot. Re-running the survey scanner over
+`/development/` will surface different projects as the directory
+evolves; the value here is the *failure-mode coverage* — together
+the top 10 above plus the five fixtures with full sections (§17,
+§18, §20, plus clarity-timelock and flow-name-service in §19's
+worked examples) cover every distinct way v0.1 fails that we've
+documented to date.
