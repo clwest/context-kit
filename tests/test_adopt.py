@@ -19,14 +19,28 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from cli.adopt import (  # noqa: E402
+    FAILURE_IDEMPOTENCY_RISK,
+    FAILURE_MISLEADING_CLASSIFICATION,
+    FAILURE_MISSING_FRAMEWORK_DETECTION,
+    FAILURE_NOISE_DIRECTORY_POLLUTION,
+    FAILURE_ROOT_SIGNAL_OVERRIDE,
+    FAILURE_SEVERITIES,
+    FAILURE_SILENT_SUBDIR_DROP,
+    FAILURE_STRUCTURE_UNDERREPRESENTED,
+    FAILURE_SURFACE_AREAS,
+    FAILURE_TYPES,
+    FAILURE_UNRECOGNIZED_ECOSYSTEM,
+    FAILURE_WRAPPER_DIRECTORY_INVISIBILITY,
     MAX_FILES_PER_SUBDIR,
     AdoptionInputs,
     END_MARKER,
+    FailureRecord,
     START_MARKER,
     _default_html_path,
     _is_data_only_subdir,
     _is_noise_dir,
     _manifest_hint,
+    analyze_failures,
     apply_plan,
     detect_stack,
     generate_build_plan,
@@ -1305,6 +1319,266 @@ class TestManifestHintInRenders(unittest.TestCase):
         # The badge appears in the always-visible summary.
         self.assertIn("hint-badge", html)
         self.assertIn("Vite + Tailwind", html)
+
+
+# ---------------------------------------------------------------------------
+# v0.2.x: failure taxonomy (analyze_failures)
+# ---------------------------------------------------------------------------
+
+
+class TestFailureTaxonomy(unittest.TestCase):
+    """The taxonomy is fixed and closed — additions require code change."""
+
+    def test_taxonomy_has_exactly_nine_types(self):
+        self.assertEqual(len(FAILURE_TYPES), 9)
+        for t in (FAILURE_ROOT_SIGNAL_OVERRIDE,
+                  FAILURE_UNRECOGNIZED_ECOSYSTEM,
+                  FAILURE_SILENT_SUBDIR_DROP,
+                  FAILURE_WRAPPER_DIRECTORY_INVISIBILITY,
+                  FAILURE_NOISE_DIRECTORY_POLLUTION,
+                  FAILURE_IDEMPOTENCY_RISK,
+                  FAILURE_MISLEADING_CLASSIFICATION,
+                  FAILURE_MISSING_FRAMEWORK_DETECTION,
+                  FAILURE_STRUCTURE_UNDERREPRESENTED):
+            self.assertIn(t, FAILURE_TYPES)
+
+    def test_severity_and_surface_area_enums(self):
+        # Locked sets — adopt code only emits FailureRecord with these
+        # severity / surface_area values.
+        self.assertEqual(FAILURE_SEVERITIES, ("low", "medium", "high"))
+        self.assertEqual(
+            FAILURE_SURFACE_AREAS,
+            ("classification", "visibility", "safety", "UX"),
+        )
+
+
+def _failure_types(failures):
+    return {f.failure_type for f in failures}
+
+
+class TestFailureDetectorsRequiredCases(unittest.TestCase):
+    """The four required dogfood cases from the spec — each fixture
+    mirrors a real /development/ project's shape in miniature so the
+    test doesn't depend on /development/ paths.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self):
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        return analyze_failures(self.repo, stack, plan)
+
+    def test_dbao_studio_shape_emits_root_signal_override(self):
+        # Mixed root manifests + a backend/ with stronger framework
+        # signal (Django via manage.py). The hallmark dbao-studio case.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "requirements.txt").write_text("django\n", encoding="utf-8")
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# d\n", encoding="utf-8")
+        for n in range(5):  # enough .py to read as Python content
+            (self.repo / "backend" / f"x{n}.py").write_text("# x\n", encoding="utf-8")
+        types = _failure_types(self._run())
+        self.assertIn(FAILURE_ROOT_SIGNAL_OVERRIDE, types,
+                      f"expected ROOT_SIGNAL_OVERRIDE in {types!r}")
+
+    def test_donkey_betz_world_shape_emits_silent_subdir_drop(self):
+        # Recognized subdir name (mobile) holds Flutter — pubspec.yaml
+        # is not in adopt's classification manifest set, so the dir
+        # silently dropped without visibility-first.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# d\n", encoding="utf-8")
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "mobile").mkdir()
+        (self.repo / "mobile" / "pubspec.yaml").write_text("name: x\n", encoding="utf-8")
+        (self.repo / "mobile" / "lib").mkdir()
+        (self.repo / "mobile" / "lib" / "main.dart").write_text(
+            "void main() {}\n", encoding="utf-8")
+        types = _failure_types(self._run())
+        self.assertIn(FAILURE_SILENT_SUBDIR_DROP, types,
+                      f"expected SILENT_SUBDIR_DROP in {types!r}")
+
+    def test_clarity_timelock_shape_emits_wrapper_directory_invisibility(self):
+        # Empty root, single non-recognized child carrying the project.
+        (self.repo / "timelocked-wallet").mkdir()
+        (self.repo / "timelocked-wallet" / "Clarinet.toml").write_text(
+            "[project]\n", encoding="utf-8")
+        (self.repo / "timelocked-wallet" / "contracts").mkdir()
+        (self.repo / "timelocked-wallet" / "contracts" / "wallet.clar").write_text(
+            ";; clar\n", encoding="utf-8")
+        types = _failure_types(self._run())
+        self.assertIn(FAILURE_WRAPPER_DIRECTORY_INVISIBILITY, types,
+                      f"expected WRAPPER_DIRECTORY_INVISIBILITY in {types!r}")
+
+    def test_unified_donkey_betz_shape_emits_idempotency_and_pollution(self):
+        # A Django root + an existing 00-START doc (no adopt markers)
+        # + many "data-only" subdirs (config / docs / data files).
+        (self.repo / "manage.py").write_text("# d\n", encoding="utf-8")
+        (self.repo / "00-START-NEXT-SESSION.md").write_text(
+            "# Hand-written start\n", encoding="utf-8")
+        # Five+ data-only subdirs (just .json / .md content).
+        for n in ("docs", "config", "audits", "logs", "reports", "campaigns"):
+            (self.repo / n).mkdir()
+            for i in range(2):
+                (self.repo / n / f"f{i}.json").write_text("{}", encoding="utf-8")
+        types = _failure_types(self._run())
+        self.assertIn(FAILURE_IDEMPOTENCY_RISK, types,
+                      f"expected IDEMPOTENCY_RISK in {types!r}")
+        self.assertIn(FAILURE_NOISE_DIRECTORY_POLLUTION, types,
+                      f"expected NOISE_DIRECTORY_POLLUTION in {types!r}")
+
+
+class TestFailureRecordShape(unittest.TestCase):
+    """Every emitted FailureRecord must have the documented fields."""
+
+    def test_emitted_records_use_valid_enum_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "package.json").write_text("{}", encoding="utf-8")
+            (repo / "requirements.txt").write_text("django\n", encoding="utf-8")
+            (repo / "backend").mkdir()
+            (repo / "backend" / "manage.py").write_text("# d\n", encoding="utf-8")
+            inputs = AdoptionInputs(project_description="x", next_step="y")
+            stack = detect_stack(repo)
+            plan = plan_files(repo, stack, inputs)
+            records = analyze_failures(repo, stack, plan)
+            self.assertGreater(len(records), 0)
+            for r in records:
+                self.assertIsInstance(r, FailureRecord)
+                self.assertIn(r.failure_type, FAILURE_TYPES)
+                self.assertIn(r.severity, FAILURE_SEVERITIES)
+                self.assertIn(r.surface_area, FAILURE_SURFACE_AREAS)
+                self.assertTrue(r.description.strip())
+                self.assertTrue(r.detected_in.strip())
+                self.assertTrue(r.example.strip())
+
+
+class TestFailureDetectorEdgeCases(unittest.TestCase):
+    """A few edge cases worth locking in beyond the four required."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self):
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        return analyze_failures(self.repo, stack, plan)
+
+    def test_unrecognized_ecosystem_fires_for_clarinet(self):
+        # Same as the wrapper case — Clarity is an unrecognized
+        # ecosystem AND wrapped — both labels should fire.
+        (self.repo / "timelocked-wallet").mkdir()
+        (self.repo / "timelocked-wallet" / "Clarinet.toml").write_text(
+            "[project]\n", encoding="utf-8")
+        types = _failure_types(self._run())
+        self.assertIn(FAILURE_UNRECOGNIZED_ECOSYSTEM, types)
+
+    def test_misleading_classification_fires_for_truffle_at_root(self):
+        # tornado-core shape: package.json + truffle-config.js at root.
+        # Adopt classifies as plain JavaScript — label undersells.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "truffle-config.js").write_text("// t\n", encoding="utf-8")
+        types = _failure_types(self._run())
+        self.assertIn(FAILURE_MISLEADING_CLASSIFICATION, types)
+
+    def test_clean_classified_project_emits_no_failures(self):
+        # backend + frontend cleanly split. No idempotency risk (fresh
+        # project), no missed signals, no excessive noise. Should yield
+        # zero failures.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# d\n", encoding="utf-8")
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+        # No data-only dirs; no recognized subdirs without manifests;
+        # no existing files without markers.
+        records = self._run()
+        # Allow zero or strictly low-severity informational hits, but
+        # the load-bearing assertion: no high-severity failures.
+        high = [r for r in records if r.severity == "high"]
+        self.assertEqual(
+            high, [],
+            f"clean classified project should have no high-severity "
+            f"failures; got {[(r.failure_type, r.detected_in) for r in high]!r}",
+        )
+
+
+class TestFailureRendering(unittest.TestCase):
+    """Failures must surface in HTML and CLI output."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        # Set up a project that will trigger ROOT_SIGNAL_OVERRIDE.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "requirements.txt").write_text("django\n", encoding="utf-8")
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# d\n", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_html_includes_detected_issues_section(self):
+        explicit = self.repo / "report.html"
+        run_adopt(argparse.Namespace(
+            command="adopt", path=str(self.repo), write=False,
+            html=False, html_out=str(explicit), no_browser=True,
+            description="x", next_step="y",
+        ))
+        body = explicit.read_text(encoding="utf-8")
+        self.assertIn("Detected issues", body)
+        self.assertIn("ROOT_SIGNAL_OVERRIDE", body)
+        # Severity badge class fires for the high-severity case.
+        self.assertIn("sev-high", body)
+        # Surface-area annotation visible in the summary line.
+        self.assertIn("classification", body)
+
+    def test_cli_dryrun_includes_compact_failure_summary(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        buf = StringIO()
+        with redirect_stdout(buf):
+            run_adopt(argparse.Namespace(
+                command="adopt", path=str(self.repo), write=False,
+                html=False, html_out=None, no_browser=True,
+                description="x", next_step="y",
+            ))
+        out = buf.getvalue()
+        self.assertIn("Detected issues", out)
+        self.assertIn("ROOT_SIGNAL_OVERRIDE", out)
+        # High-severity surfaces with its severity tag.
+        self.assertIn("high", out)
+
+    def test_html_omits_detected_issues_when_no_failures(self):
+        # A clean classified project: no failures should produce no
+        # "Detected issues" card. Visual hygiene.
+        with tempfile.TemporaryDirectory() as clean:
+            cp = Path(clean)
+            (cp / "backend").mkdir()
+            (cp / "backend" / "manage.py").write_text("# d\n", encoding="utf-8")
+            (cp / "frontend").mkdir()
+            (cp / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+            explicit = cp / "report.html"
+            run_adopt(argparse.Namespace(
+                command="adopt", path=str(cp), write=False,
+                html=False, html_out=str(explicit), no_browser=True,
+                description="x", next_step="y",
+            ))
+            body = explicit.read_text(encoding="utf-8")
+            # Either no failures section at all, OR a section that
+            # doesn't claim "Detected issues" as a header.
+            self.assertNotIn("Detected issues", body)
 
 
 if __name__ == "__main__":

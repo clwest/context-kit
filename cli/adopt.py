@@ -122,6 +122,63 @@ class AdoptionInputs:
     next_step: str
 
 
+# ---------------------------------------------------------------------------
+# Failure taxonomy (v0.2.x)
+# ---------------------------------------------------------------------------
+#
+# Each detected issue during an adopt run is classified into one of a
+# fixed set of failure types. The taxonomy is intentionally small and
+# closed — additions require a code change. No dynamic categories, no
+# AI-generated labels, no confidence scoring. Detectors are
+# deterministic rules over StackProfile + plan and live in
+# ``analyze_failures``. See SESSION_009_ADOPT.md §15 for the dogfood
+# evidence each category was distilled from.
+
+FAILURE_ROOT_SIGNAL_OVERRIDE = "ROOT_SIGNAL_OVERRIDE"
+FAILURE_UNRECOGNIZED_ECOSYSTEM = "UNRECOGNIZED_ECOSYSTEM"
+FAILURE_SILENT_SUBDIR_DROP = "SILENT_SUBDIR_DROP"
+FAILURE_WRAPPER_DIRECTORY_INVISIBILITY = "WRAPPER_DIRECTORY_INVISIBILITY"
+FAILURE_NOISE_DIRECTORY_POLLUTION = "NOISE_DIRECTORY_POLLUTION"
+FAILURE_IDEMPOTENCY_RISK = "IDEMPOTENCY_RISK"
+FAILURE_MISLEADING_CLASSIFICATION = "MISLEADING_CLASSIFICATION"
+FAILURE_MISSING_FRAMEWORK_DETECTION = "MISSING_FRAMEWORK_DETECTION"
+FAILURE_STRUCTURE_UNDERREPRESENTED = "STRUCTURE_UNDERREPRESENTED"
+
+FAILURE_TYPES = frozenset({
+    FAILURE_ROOT_SIGNAL_OVERRIDE,
+    FAILURE_UNRECOGNIZED_ECOSYSTEM,
+    FAILURE_SILENT_SUBDIR_DROP,
+    FAILURE_WRAPPER_DIRECTORY_INVISIBILITY,
+    FAILURE_NOISE_DIRECTORY_POLLUTION,
+    FAILURE_IDEMPOTENCY_RISK,
+    FAILURE_MISLEADING_CLASSIFICATION,
+    FAILURE_MISSING_FRAMEWORK_DETECTION,
+    FAILURE_STRUCTURE_UNDERREPRESENTED,
+})
+
+FAILURE_SEVERITIES = ("low", "medium", "high")
+FAILURE_SURFACE_AREAS = ("classification", "visibility", "safety", "UX")
+
+
+@dataclass
+class FailureRecord:
+    """One labeled issue detected during an adopt run.
+
+    Pure metadata — emitting a FailureRecord doesn't change adopt's
+    classification or written output. The records surface in the
+    "Detected Issues" section of the HTML report and a compact CLI
+    summary so a reviewer can spot patterns without re-deriving them
+    from the dry-run text every time.
+    """
+
+    failure_type: str       # one of FAILURE_TYPES
+    severity: str           # one of FAILURE_SEVERITIES
+    surface_area: str       # one of FAILURE_SURFACE_AREAS
+    description: str        # 1-2 sentence summary
+    detected_in: str        # subdir name or "root"
+    example: str            # short concrete pointer (filename / path / name)
+
+
 @dataclass
 class PlannedFile:
     """One file the adopt run intends to create or augment.
@@ -1103,7 +1160,8 @@ def _esc(s: str) -> str:
 def render_adopt_html(repo: Path, stack: StackProfile,
                       inputs: AdoptionInputs,
                       plan: list,
-                      write_mode: bool) -> str:
+                      write_mode: bool,
+                      failures: Optional[list] = None) -> str:
     """Build the full self-contained HTML report.
 
     Six sections per §21:
@@ -1276,6 +1334,46 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             unknown_html.append('  </details>')
         unknown_html.append('</section>')
 
+    # ---- Section 4.5: detected issues (v0.2.x failure taxonomy) ----
+    # Pure metadata — adopt's classification, plan, and writes are
+    # unchanged. The section is silently omitted on clean projects.
+    failures = failures or []
+    failures_html: list[str] = []
+    if failures:
+        # Severity -> CSS class for the badge color.
+        sev_class = {"high": "sev-high", "medium": "sev-medium", "low": "sev-low"}
+        failures_html = [
+            '<section class="card card-warn">',
+            '  <h2>Detected issues</h2>',
+            f'  <p class="meta">{len(failures)} labeled signal'
+            f"{'s' if len(failures) != 1 else ''} from adopt's failure "
+            f"taxonomy. Each is metadata only — classification, plan, "
+            f"and writes are unchanged.</p>",
+        ]
+        # Order: high severity first, then by failure_type for stable
+        # rendering across runs.
+        ordered = sorted(failures, key=lambda f: (
+            {"high": 0, "medium": 1, "low": 2}.get(f.severity, 3),
+            f.failure_type,
+            f.detected_in,
+        ))
+        for f in ordered:
+            cls = sev_class.get(f.severity, "sev-low")
+            failures_html.append(
+                f'  <details class="failure"><summary>'
+                f'<span class="badge {cls}">{_esc(f.severity)}</span> '
+                f'<code>{_esc(f.failure_type)}</code> '
+                f'<span class="dim">— {_esc(f.detected_in)} '
+                f'<span class="surface">[{_esc(f.surface_area)}]</span></span>'
+                f'</summary>'
+                f'    <div class="failure-body">'
+                f'      <p>{_esc(f.description)}</p>'
+                f'      <p class="dim">Example: <code>{_esc(f.example)}</code></p>'
+                f'    </div>'
+                f'  </details>'
+            )
+        failures_html.append('</section>')
+
     # ---- Section 5: plan with previews ----
     plan_html = ['<section class="card">', '  <h2>What adopt would write</h2>']
     verb_prefix = "Will " if write_mode else "Would "
@@ -1422,6 +1520,16 @@ def render_adopt_html(repo: Path, stack: StackProfile,
       font-size: .75rem; font-weight: 600; letter-spacing: .01em;
       background: rgba(251, 191, 36, .18); color: var(--warn-strong);
     }
+    .sev-high   { background: rgba(248, 113, 113, .18); color: var(--danger); }
+    .sev-medium { background: rgba(251, 191, 36, .18); color: var(--warn-strong); }
+    .sev-low    { background: var(--border); color: var(--muted); }
+    details.failure {
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: .55rem .85rem; margin: .5rem 0;
+    }
+    details.failure summary { cursor: pointer; user-select: none; font-size: .95rem; }
+    .failure-body { margin-top: .55rem; padding-top: .5rem; border-top: 1px solid var(--border); font-size: .9rem; }
+    .surface { color: var(--muted); font-size: .8rem; font-style: italic; }
     .cta h2 { font-size: 1.25rem; }
     .cmd {
       background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
@@ -1467,6 +1575,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     out.extend(detection_html)
     out.extend(parts_html)
     out.extend(unknown_html)
+    out.extend(failures_html)
     out.extend(plan_html)
     out.extend(cta_html)
     out.append(
@@ -1689,6 +1798,311 @@ def collect_inputs(
 
 
 # ---------------------------------------------------------------------------
+# Failure detection (v0.2.x)
+# ---------------------------------------------------------------------------
+#
+# Deterministic rules over StackProfile + plan that emit FailureRecord
+# entries from the fixed taxonomy. Pure additive metadata — does NOT
+# change classification, plan, or any written output. Each detector is
+# a small predicate; multiple detectors can fire for the same project.
+
+# Manifest filenames that imply an ECOSYSTEM adopt's classifier doesn't
+# yet handle (different language family entirely). Distinct from
+# ``_FRAMEWORK_MANIFESTS`` below which are framework names *within* a
+# language we DO classify.
+_ECOSYSTEM_MANIFESTS = {
+    "Clarinet.toml":     "Clarity / Stacks",
+    "foundry.toml":      "Foundry / Solidity",
+    "Anchor.toml":       "Anchor / Solana",
+    "Move.toml":         "Move (Sui/Aptos)",
+    "flow.json":         "Flow blockchain",
+    "pubspec.yaml":      "Flutter / Dart",
+    "Cargo.toml":        "Rust",
+    "go.mod":            "Go",
+    "Gemfile":           "Ruby",
+}
+
+# Manifest filenames that imply a SPECIFIC FRAMEWORK on a language adopt
+# already classifies. Their presence means the classifier's label
+# undersells the project (e.g. Truffle reads as plain "JavaScript").
+_FRAMEWORK_MANIFESTS = {
+    "truffle-config.js":     "Truffle",
+    "hardhat.config.js":     "Hardhat",
+    "hardhat.config.ts":     "Hardhat",
+    "hardhat.config.mjs":    "Hardhat",
+    "hardhat.config.cjs":    "Hardhat",
+    "brownie-config.yaml":   "Brownie",
+    "rxconfig.py":           "Reflex",
+    "manage.py":             "Django",
+}
+
+# Combined "strong framework signal" set — a subdir containing any of
+# these has stronger evidence than a generic root package.json /
+# requirements.txt. Used for ROOT_SIGNAL_OVERRIDE.
+_STRONG_FRAMEWORK_MANIFESTS = (
+    frozenset(_ECOSYSTEM_MANIFESTS) | frozenset(_FRAMEWORK_MANIFESTS)
+)
+
+# Threshold for NOISE_DIRECTORY_POLLUTION — projects with this many
+# data-only dirs are noisy enough to flag as a UX concern even after
+# the v0.2.x grouping (35 in unified-donkey-betz; 1 in tornado-core).
+_NOISE_POLLUTION_THRESHOLD = 5
+
+# Threshold for STRUCTURE_UNDERREPRESENTED — number of signal subdirs
+# (manifests or notable extensions) before the classification line is
+# considered to undersell the project's surface area.
+_STRUCTURE_UNDERREPRESENTED_THRESHOLD = 3
+
+
+def analyze_failures(repo: Path, stack: StackProfile,
+                     plan: list) -> list[FailureRecord]:
+    """Apply the deterministic detection rules; return the failure set.
+
+    Pure function — no I/O, no mutation. Caller passes the already-
+    computed ``stack`` and ``plan``; analyzer reads, never modifies.
+    Multiple FailureRecord entries can fire for the same project; the
+    same failure_type can appear at most once per ``detected_in``
+    target so a 70-subdir repo doesn't get 70 cards of the same type.
+    """
+    out: list[FailureRecord] = []
+
+    # ROOT_SIGNAL_OVERRIDE — root won classification but a subdir has
+    # a strictly stronger framework manifest (manage.py, foundry.toml,
+    # Clarinet.toml, etc.). dbao-studio is the canonical case.
+    if stack.signals and not stack.parts:
+        for u in stack.unclassified_subdirs:
+            strong = next(
+                (m for m in u.manifest_files
+                 if m in _STRONG_FRAMEWORK_MANIFESTS),
+                None,
+            )
+            if strong:
+                out.append(FailureRecord(
+                    failure_type=FAILURE_ROOT_SIGNAL_OVERRIDE,
+                    severity="high",
+                    surface_area="classification",
+                    description=(
+                        f"Root manifest won classification "
+                        f"({_lang_label(stack.language)}), but "
+                        f"{u.name}/ contains {strong} — a stronger "
+                        f"framework signal. The primary stack label "
+                        f"may be misleading."
+                    ),
+                    detected_in=u.name,
+                    example=f"{u.name}/{strong}",
+                ))
+                break  # one card is enough; no need to spam per-subdir
+
+    # UNRECOGNIZED_ECOSYSTEM — a subdir has a manifest from an entire
+    # language family adopt doesn't classify. clarity-timelock,
+    # donkey_betz_world (mobile/), tornado-core, etc.
+    seen_eco_dirs: set[str] = set()
+    for u in stack.unclassified_subdirs:
+        for m in u.manifest_files:
+            if m in _ECOSYSTEM_MANIFESTS and u.name not in seen_eco_dirs:
+                out.append(FailureRecord(
+                    failure_type=FAILURE_UNRECOGNIZED_ECOSYSTEM,
+                    severity="medium",
+                    surface_area="classification",
+                    description=(
+                        f"{u.name}/{m} indicates "
+                        f"{_ECOSYSTEM_MANIFESTS[m]}, an ecosystem "
+                        f"adopt's classifier doesn't yet handle. "
+                        f"Visibility-first surfaces it; classification "
+                        f"label stays generic."
+                    ),
+                    detected_in=u.name,
+                    example=f"{u.name}/{m}",
+                ))
+                seen_eco_dirs.add(u.name)
+                break
+
+    # SILENT_SUBDIR_DROP — a recognized subdir name (backend, frontend,
+    # web, mobile, api, client, server) appears in unclassified_subdirs
+    # with content. Classification scan saw the name but couldn't
+    # classify the manifests inside. donkey_betz_world's mobile/.
+    for u in stack.unclassified_subdirs:
+        if (u.name in RECOGNIZED_SUBDIRS
+                and (u.notable_extensions or u.manifest_files)):
+            example = (
+                u.manifest_files[0] if u.manifest_files
+                else next(iter(u.notable_extensions), "")
+            )
+            out.append(FailureRecord(
+                failure_type=FAILURE_SILENT_SUBDIR_DROP,
+                severity="high",
+                surface_area="visibility",
+                description=(
+                    f"Recognized subdir {u.name}/ has content "
+                    f"({u.total_file_count} files) but adopt's classifier "
+                    f"didn't pick it up — visibility-first is the only "
+                    f"reason it appears in this report at all."
+                ),
+                detected_in=u.name,
+                example=f"{u.name}/{example}",
+            ))
+
+    # WRAPPER_DIRECTORY_INVISIBILITY — root has nothing AND the
+    # actual project lives one level down under a NON-recognized name.
+    # clarity-timelock's timelocked-wallet/.
+    if stack.language == "unknown":
+        signal_subs = [
+            u for u in stack.unclassified_subdirs
+            if (not _is_data_only_subdir(u)
+                and not u.is_empty
+                and u.name not in RECOGNIZED_SUBDIRS
+                and (u.manifest_files or u.notable_extensions))
+        ]
+        if len(signal_subs) == 1:
+            u = signal_subs[0]
+            example = (
+                u.manifest_files[0] if u.manifest_files
+                else next(iter(u.example_paths.values()), u.name)
+            )
+            out.append(FailureRecord(
+                failure_type=FAILURE_WRAPPER_DIRECTORY_INVISIBILITY,
+                severity="high",
+                surface_area="visibility",
+                description=(
+                    f"Root has no classifier signal and the actual "
+                    f"project lives under {u.name}/. Adopt's depth-1 "
+                    f"scan surfaces the contents but classification "
+                    f"can't reach inside the wrapper."
+                ),
+                detected_in=u.name,
+                example=f"{u.name}/{example}" if "/" not in example else example,
+            ))
+
+    # NOISE_DIRECTORY_POLLUTION — many data-only subdirs even after
+    # the v0.2.x grouping. unified-donkey-betz had 35.
+    data_only = [u for u in stack.unclassified_subdirs
+                 if _is_data_only_subdir(u)]
+    if len(data_only) >= _NOISE_POLLUTION_THRESHOLD:
+        out.append(FailureRecord(
+            failure_type=FAILURE_NOISE_DIRECTORY_POLLUTION,
+            severity="low",
+            surface_area="UX",
+            description=(
+                f"{len(data_only)} directories contain files but no "
+                f"recognized source extensions. They're already grouped "
+                f"into a single collapsible, but the volume itself "
+                f"signals a project where reviewing the report needs "
+                f"care."
+            ),
+            detected_in="root",
+            example=", ".join(u.name + "/" for u in data_only[:3]),
+        ))
+
+    # IDEMPOTENCY_RISK — any plan item is "skip" (file exists without
+    # adopt markers; we won't touch it). Surfaces user-content safety.
+    for p in plan:
+        if p.kind != "skip":
+            continue
+        try:
+            rel = str(p.path.relative_to(repo))
+        except ValueError:
+            rel = str(p.path)
+        out.append(FailureRecord(
+            failure_type=FAILURE_IDEMPOTENCY_RISK,
+            severity="medium",
+            surface_area="safety",
+            description=(
+                f"{p.path.name} already exists without adopt's managed "
+                f"markers. Adopt will skip it to protect your hand-"
+                f"written content; the doc's content also won't appear "
+                f"in your AI-session entry-points until you let adopt "
+                f"manage the file."
+            ),
+            detected_in="root",
+            example=rel,
+        ))
+
+    # MISLEADING_CLASSIFICATION — root classified as plain JS/Python
+    # but root contains a more specific framework config file
+    # (truffle, hardhat, foundry, brownie, rxconfig). Label undersells.
+    # Note: stack.signals only carries the four classifier-recognized
+    # manifests, so we scan the root directly here for framework files
+    # the classifier doesn't track.
+    if stack.language in ("javascript", "python") and not stack.parts:
+        framework_in_root: Optional[str] = None
+        try:
+            for entry in repo.iterdir():
+                if entry.is_file() and entry.name in _FRAMEWORK_MANIFESTS:
+                    framework_in_root = entry.name
+                    break
+        except OSError:
+            pass
+        if framework_in_root:
+            out.append(FailureRecord(
+                failure_type=FAILURE_MISLEADING_CLASSIFICATION,
+                severity="medium",
+                surface_area="classification",
+                description=(
+                    f"Classification reads as plain "
+                    f"{_lang_label(stack.language)}, but root contains "
+                    f"{framework_in_root} ("
+                    f"{_FRAMEWORK_MANIFESTS[framework_in_root]}). "
+                    f"The label undersells the project's actual stack."
+                ),
+                detected_in="root",
+                example=framework_in_root,
+            ))
+
+    # MISSING_FRAMEWORK_DETECTION — any framework manifest is present
+    # but adopt doesn't extract the framework name into its label.
+    # Differs from MISLEADING_CLASSIFICATION: this fires for SUBDIR
+    # framework manifests too, not just root.
+    seen_fw_dirs: set[str] = set()
+    for u in stack.unclassified_subdirs:
+        for m in u.manifest_files:
+            if m in _FRAMEWORK_MANIFESTS and u.name not in seen_fw_dirs:
+                out.append(FailureRecord(
+                    failure_type=FAILURE_MISSING_FRAMEWORK_DETECTION,
+                    severity="low",
+                    surface_area="classification",
+                    description=(
+                        f"{u.name}/{m} is a framework manifest "
+                        f"({_FRAMEWORK_MANIFESTS[m]}) adopt doesn't "
+                        f"yet read. Framework name doesn't appear in "
+                        f"BUILD_PLAN's stack section."
+                    ),
+                    detected_in=u.name,
+                    example=f"{u.name}/{m}",
+                ))
+                seen_fw_dirs.add(u.name)
+                break
+
+    # STRUCTURE_UNDERREPRESENTED — classifier produced 0 or 1 parts
+    # but ≥3 unclassified subdirs carry real signal. The Detection
+    # line significantly understates the project's surface area.
+    signal_subdirs = [
+        u for u in stack.unclassified_subdirs
+        if u.notable_extensions or u.manifest_files
+    ]
+    if (len(signal_subdirs) >= _STRUCTURE_UNDERREPRESENTED_THRESHOLD
+            and len(stack.parts) <= 1):
+        out.append(FailureRecord(
+            failure_type=FAILURE_STRUCTURE_UNDERREPRESENTED,
+            severity="medium",
+            surface_area="visibility",
+            description=(
+                f"{len(signal_subdirs)} subdirs carry real signal "
+                f"(manifests or source files), but only "
+                f"{len(stack.parts)} appear in the primary "
+                f"classification. An AI session reading just the "
+                f"Detection line would underestimate the project's "
+                f"surface."
+            ),
+            detected_in="root",
+            example="; ".join(
+                u.name + "/" for u in signal_subdirs[:3]
+            ),
+        ))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -1708,6 +2122,7 @@ def run_adopt(args: argparse.Namespace) -> int:
 
     write = bool(getattr(args, "write", False))
     actions = apply_plan(plan, dry_run=not write)
+    failures = analyze_failures(repo, stack, plan)
 
     print(f"context-kit adopt — {'WRITE' if write else 'DRY RUN'}")
     print(f"target: {repo}")
@@ -1725,6 +2140,22 @@ def run_adopt(args: argparse.Namespace) -> int:
     print("Plan:")
     for line in actions:
         print(line)
+    # v0.2.x: compact failure summary at the end of the dry-run.
+    # Pure metadata — additive, not a behavior change. Silent when
+    # no failures detected. Detail lives in --html.
+    if failures:
+        print()
+        print(f"Detected issues ({len(failures)}):")
+        # Stable order: high severity first, then by failure_type.
+        ordered = sorted(failures, key=lambda f: (
+            {"high": 0, "medium": 1, "low": 2}.get(f.severity, 3),
+            f.failure_type, f.detected_in,
+        ))
+        for f in ordered:
+            print(
+                f"  {f.severity:<6} {f.failure_type:<34} "
+                f"{f.detected_in}  ({f.example})"
+            )
     print()
     if not write:
         print("Re-run with --write to apply this plan.")
@@ -1743,7 +2174,8 @@ def run_adopt(args: argparse.Namespace) -> int:
         try:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(
-                render_adopt_html(repo, stack, inputs, plan, write_mode=write),
+                render_adopt_html(repo, stack, inputs, plan,
+                                  write_mode=write, failures=failures),
                 encoding="utf-8",
             )
         except OSError as exc:
