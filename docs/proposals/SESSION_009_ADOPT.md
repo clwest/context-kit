@@ -1933,3 +1933,260 @@ other changes). The visibility-first scan (§19) in v0.2 produced
 the data; this section proposes how to make that data scannable.
 It's orthogonal to the rest of the v0.2 backlog (§15 items #3 –
 #9): independent ship, doesn't block any of them.
+
+## 22. Proposed v0.3 failure label: MONOREPO_DEPTH_LIMIT
+
+> **Status:** design proposal, not yet implemented. Added 2026-04-26
+> after the first batch of `context-kit-dogfood-repos` (5 cloned
+> open-source projects: expo-monorepo-example, flutter-monorepo-example,
+> fns-monorepo, solidity-template, turborepo-next-django-starter)
+> exposed a category the v0.2.x failure taxonomy doesn't cover.
+> No code in this commit.
+
+### Origin
+
+Three of the five clones (expo, fns, turborepo-next-django) are
+Turborepo / pnpm-workspace shapes where the actual project boundaries
+live at depth 2 under `apps/<name>/` or `packages/<name>/`. Adopt's
+depth-1 scan can see the parent `apps/` directory and (via the
+depth-2 source-extension walk) can count files inside, but it
+cannot see that `apps/forge/` is a Foundry Solidity project and
+`apps/next/` is a Next.js app — those project boundaries collapse
+into a single `apps/` aggregate.
+
+The most damning case: **fns-monorepo emits 0 failure records**
+even though it contains 29 Solidity files plus a Foundry config
+buried at `apps/forge/foundry.toml`. None of the existing v0.2.x
+labels (ROOT_SIGNAL_OVERRIDE, MISLEADING_CLASSIFICATION,
+MISSING_FRAMEWORK_DETECTION, etc.) fire because every detector
+operates on data populated by the depth-1 scan, and `apps/forge/`
+is depth 2.
+
+This is the failure-taxonomy equivalent of §15 backlog item #3
+(apps/<name>/ Turborepo walking). The two need to ship together:
+backlog #3 surfaces the child workspaces in StackProfile;
+MONOREPO_DEPTH_LIMIT labels the gap until they're surfaced, and
+also stays useful afterward for monorepo shapes that exceed
+whatever depth limit v0.3 picks.
+
+### Proposed label spec
+
+| Field | Value |
+|---|---|
+| `failure_type` | `MONOREPO_DEPTH_LIMIT` |
+| `severity` | `high` |
+| `surface_area` | `visibility` |
+| Trigger | A non-noise depth-1 subdir whose name is in the workspace-container set (`apps`, `packages`, `services`, `crates`, `members`, `workspaces`) AND has substantial content (≥10 source files via the existing depth-2 walk OR ≥1 manifest visible at depth 2) AND adopt has not classified anything inside it. |
+| Description template | `<name>/` is a workspace container with N child projects adopt's depth-1 scan can't enter. Real classification is hidden behind one or more `<name>/<sub>/` manifest files. |
+| `detected_in` | the workspace container's name (`apps`, `packages`, etc.) |
+| `example` | one example child path adopt found (e.g. `apps/forge/foundry.toml`) |
+
+The detector should fire **once per workspace-container subdir**, not
+once per child project, to avoid the 70-card explosion problem.
+
+### Primary fixture: fns-monorepo
+
+A real project at `/Users/donkeyking/development/context-kit-dogfood-repos/fns-monorepo`.
+The Filecoin Name Service Turborepo: a Solidity Foundry contracts
+project and a Next.js dApp frontend coexisting in one workspace.
+
+**What's actually there:**
+
+```
+fns-monorepo/
+├── package.json          ← root (Turborepo orchestration)
+├── pnpm-workspace.yaml
+├── turbo.json
+├── apps/
+│   ├── forge/
+│   │   ├── package.json     ← Node tooling for Foundry
+│   │   └── foundry.toml     ← THE Solidity project manifest
+│   └── next/
+│       └── package.json     ← Next.js / React dApp
+└── ens-contracts/        ← uninitialized git submodule (empty)
+```
+
+29 `.sol` files live under `apps/forge/` and 7+ `.tsx`/`.ts` files
+live under `apps/next/`. Everything load-bearing is at depth 2.
+
+**Current adopt v0.2.x behavior (zero failure labels):**
+
+```
+Detected stack: JavaScript / Node.js (detected from package.json)
+
+Unknown but present (depth 1):
+  apps/  source: 29 .sol files (e.g. apps/forge/flattened/...Flattened.sol)
+                 7 .tsx files (e.g. apps/next/components/DomainSelect.tsx)
+                 3 .js files (e.g. apps/next/tailwind.config.js)
+                 3 .ts files (e.g. apps/next/lib/testkeys.ts)
+         note:   .sol files suggest Solidity / EVM smart contracts; verify with user
+  ens-contracts/  empty
+```
+
+The `.sol` hint fires (visibility-first works), but no FailureRecord
+labels the depth-2 invisibility. An AI session reading this would
+have no structured signal that there's a complete Foundry project
+and a complete Next.js app inside `apps/`.
+
+**Desired v0.3 behavior with MONOREPO_DEPTH_LIMIT:**
+
+```
+Detected stack: JavaScript / Node.js (detected from package.json)
+
+Unknown but present (depth 1):
+  apps/  ... [same as today] ...
+
+Detected issues (1):
+  high   MONOREPO_DEPTH_LIMIT   apps  (apps/forge/foundry.toml)
+```
+
+Description text in the report:
+> `apps/` is a workspace container with at least 2 child projects
+> adopt's depth-1 scan can't enter. Real classification is hidden
+> behind `apps/forge/foundry.toml` and `apps/next/package.json`.
+> Plan to ship §15 backlog item #3 (apps/<name>/ walking) to
+> classify each child project individually.
+
+### Other v0.3 fixture targets from the same dogfood batch
+
+**`expo-monorepo-example`** — Turborepo + Expo. `apps/example/` is a
+real Expo app with `package.json` + `app.config.*`. Same depth-2
+invisibility as fns-monorepo but with only one child workspace.
+v0.2.x emits **0 failure labels**. v0.3 should emit
+MONOREPO_DEPTH_LIMIT for `apps/`.
+
+**`turborepo-next-django-starter`** — Turborepo + Django + Next.js.
+v0.2.x correctly emits SILENT_SUBDIR_DROP for `server/` (Django
+backend at `server/backend/manage.py` — recognized subdir name
+catches it). But `apps/web/` and `apps/docs/` are both real Next.js
+apps invisible behind the `apps/` aggregate. v0.3 should emit
+MONOREPO_DEPTH_LIMIT for `apps/` AND keep the existing
+SILENT_SUBDIR_DROP for `server/`.
+
+**`flutter-monorepo-example`** — Melos-based Flutter monorepo.
+`apps/buyer_app/` and `apps/seller_app/` are two complete Flutter
+apps with their own `pubspec.yaml` files, invisible behind `apps/`.
+v0.3 should emit MONOREPO_DEPTH_LIMIT here too. Currently emits
+only one label: `UNRECOGNIZED_ECOSYSTEM` for `shared/pubspec.yaml`.
+
+### Related backlog note: root-level UNRECOGNIZED_ECOSYSTEM gap
+
+The flutter-monorepo case also exposed a smaller, distinct gap in
+the existing `UNRECOGNIZED_ECOSYSTEM` detector: it only fires for
+**subdir** manifests (entries in `unclassified_subdirs[*].manifest_files`),
+never for **root-level** ecosystem manifests like `melos.yaml`.
+
+Concrete: `flutter-monorepo-example/melos.yaml` at root is a
+Dart-ecosystem monorepo manifest. Adopt sees it (it matches the
+manifest-shaped pattern), but classification doesn't recognize it
+and the failure detector doesn't label it because the detector
+loop is `for u in stack.unclassified_subdirs: for m in
+u.manifest_files: ...` — root-level manifest_files aren't checked.
+
+**Proposed minor extension to the existing detector** (not a new
+label): also scan root for filenames in `_ECOSYSTEM_MANIFESTS` and
+emit `UNRECOGNIZED_ECOSYSTEM` with `detected_in="root"` when found.
+Same severity/surface as the existing rule. Would catch:
+- `melos.yaml` (Dart/Flutter)
+- A future root-level `pubspec.yaml` for a single-package Dart project
+- Root `Cargo.toml` in a single-crate Rust project that adopt also doesn't classify
+
+This is a one-liner change plus a small data-table consideration
+(`melos.yaml` would need to enter `_ECOSYSTEM_MANIFESTS`). Tracked
+here so it ships alongside or before the MONOREPO_DEPTH_LIMIT work.
+
+### Acceptance criteria for v0.3 MONOREPO_DEPTH_LIMIT
+
+- [ ] `analyze_failures` emits at least one MONOREPO_DEPTH_LIMIT
+      record for fns-monorepo, with `detected_in="apps"` and
+      `example` naming a real depth-2 file (foundry.toml,
+      package.json, or a .sol path).
+- [ ] Same label fires for expo-monorepo-example,
+      turborepo-next-django-starter, and flutter-monorepo-example.
+- [ ] Label does NOT fire when a workspace-container subdir
+      (`apps/`, `packages/`) is present but EMPTY (e.g. an
+      uninitialized `apps/` placeholder dir). Threshold prevents
+      false positives.
+- [ ] Label fires AT MOST ONCE per workspace-container subdir
+      (no per-child explosion on a 20-app Turborepo).
+- [ ] Existing labels keep firing as before — MONOREPO_DEPTH_LIMIT
+      is additive, not a replacement.
+- [ ] HTML "Detected issues" section renders the new label with
+      severity badge `sev-high` (red).
+- [ ] CLI compact summary shows it with severity `high`.
+- [ ] When v0.3 ALSO ships §15 #3 (apps/<name>/ walking), the
+      classifier should populate child workspaces into
+      `StackProfile.parts`; MONOREPO_DEPTH_LIMIT then keeps firing
+      only when the workspace contains content the deeper walk
+      itself didn't reach (genuinely deeper-than-2 layouts).
+
+### Implementation sketch
+
+Detector fits the same shape as the other rules in
+`analyze_failures`:
+
+```python
+_WORKSPACE_CONTAINERS = frozenset({
+    "apps", "packages", "services", "crates", "members", "workspaces",
+})
+_MONOREPO_DEPTH_FILE_THRESHOLD = 10  # same shape as STRUCTURE_UNDERREPRESENTED
+
+for u in stack.unclassified_subdirs:
+    if u.name not in _WORKSPACE_CONTAINERS:
+        continue
+    # Substantial content threshold: either the depth-2 walk found
+    # ≥10 source files (collapsed across children), or it found at
+    # least one example_path that looks like a child manifest.
+    has_files = sum(u.notable_extensions.values()) >= _MONOREPO_DEPTH_FILE_THRESHOLD
+    has_child_manifest = any(
+        "/" in path  # depth-2 path implies a child subdir
+        for path in u.example_paths.values()
+    )
+    if not (has_files or has_child_manifest):
+        continue
+    example = next(iter(u.example_paths.values()), u.name + "/")
+    out.append(FailureRecord(
+        failure_type=FAILURE_MONOREPO_DEPTH_LIMIT,
+        severity="high",
+        surface_area="visibility",
+        description=(
+            f"{u.name}/ is a workspace container — adopt's depth-1 "
+            f"scan saw the directory and (via the depth-2 source walk) "
+            f"counted files inside, but the individual child projects "
+            f"under {u.name}/<name>/ are invisible to classification. "
+            f"Likely to contain real package.json / foundry.toml / "
+            f"pubspec.yaml manifests adopt cannot reach yet."
+        ),
+        detected_in=u.name,
+        example=example,
+    ))
+```
+
+Code cost: ~30 LOC + the constant. Tests: ~5 (one per fixture
+shape, plus a negative test for empty `apps/`).
+
+### Why a new label vs. extending an existing one
+
+Considered extending `STRUCTURE_UNDERREPRESENTED` to also fire on
+this case. Rejected because the two failure modes are
+qualitatively different:
+
+- `STRUCTURE_UNDERREPRESENTED` — many subdirs at depth 1 with real
+  signal, but few classified into `parts`. The fix is "classify
+  more of them at depth 1."
+- `MONOREPO_DEPTH_LIMIT` — one or two depth-1 subdirs whose REAL
+  content lives at depth 2 inside a known workspace shape. The fix
+  is "walk one level deeper inside known workspace containers."
+
+Different causes, different remedies, different scopes. Worth a
+distinct label so the user / AI session reading the report knows
+which gap the project hits.
+
+### Current taxonomy after this addition
+
+If MONOREPO_DEPTH_LIMIT ships, the v0.3 taxonomy goes from 9 types
+to 10. Same closed-set pattern; ``FAILURE_TYPES`` frozenset gains
+one entry; no other changes to the core data structures.
+
+The other v0.2.x labels stay at their current severity / surface
+assignments. No reorganization needed.
