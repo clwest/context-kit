@@ -361,6 +361,53 @@ class TestLiveWizardServer(unittest.TestCase):
         data = json.loads(body)
         self.assertFalse(data.get("satisfied"))
 
+    def test_api_check_init_satisfied_in_slugged_subdir(self):
+        """The user-reported friction: ``context-kit init "stress test"``
+        creates ``./stress-test/`` (per cli/placeholders._slugify), and the
+        wizard must verify the start doc inside *that* folder, not the
+        wizard's cwd. This locks down the slugged-subdir polling path.
+        """
+        slug_dir = self.cwd / "stress-test"
+        slug_dir.mkdir(exist_ok=True)
+        (slug_dir / "00-START-NEXT-SESSION.md").write_text(
+            "scaffolded by stress-test init", encoding="utf-8",
+        )
+        try:
+            status, body, _ = self._get(
+                "/api/check?step=init&project_dir=stress-test"
+            )
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertTrue(
+                data.get("satisfied"),
+                f"expected satisfied=true; got reason={data.get('reason')!r}",
+            )
+            # Reason should name the resolved folder so the user can spot
+            # any mismatch immediately on the wizard page.
+            self.assertIn("stress-test", data.get("reason", ""))
+            self.assertIn(str(slug_dir), data.get("reason", ""))
+        finally:
+            (slug_dir / "00-START-NEXT-SESSION.md").unlink(missing_ok=True)
+            slug_dir.rmdir()
+
+    def test_api_check_failure_reason_includes_resolved_path(self):
+        """When the check fails, the reason must include the exact folder
+        path that was inspected. Without this, a user whose wizard polled
+        the wrong project_dir (e.g., from stale localStorage) has no way
+        to see *which* folder failed — they just see a generic message
+        and assume init didn't run.
+        """
+        status, body, _ = self._get(
+            "/api/check?step=init&project_dir=does-not-exist"
+        )
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertFalse(data.get("satisfied"))
+        reason = data.get("reason", "")
+        self.assertIn("00-START-NEXT-SESSION.md", reason)
+        # Resolved absolute path of the folder we tried to inspect.
+        self.assertIn(str(self.cwd / "does-not-exist"), reason)
+
     def test_api_check_unknown_step_returns_400(self):
         status, _, _ = self._get("/api/check?step=bogus&project_dir=.")
         self.assertEqual(status, 400)

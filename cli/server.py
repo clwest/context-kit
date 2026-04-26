@@ -454,13 +454,21 @@ class _OnboardingHandler(http.server.BaseHTTPRequestHandler):
             self._send_error_json(400, str(exc))
             return
         if step == "init":
-            satisfied = (target_dir / "00-START-NEXT-SESSION.md").is_file()
-            reason = "00-START-NEXT-SESSION.md present" if satisfied \
-                else "00-START-NEXT-SESSION.md not found in project_dir"
+            target_file = target_dir / "00-START-NEXT-SESSION.md"
+            satisfied = target_file.is_file()
+            reason = (
+                f"00-START-NEXT-SESSION.md present in {target_dir}"
+                if satisfied
+                else f"00-START-NEXT-SESSION.md not found in {target_dir}"
+            )
         elif step == "seed":
-            satisfied = (target_dir / "docs" / "BUILD_PLAN.md").is_file()
-            reason = "docs/BUILD_PLAN.md present" if satisfied \
-                else "docs/BUILD_PLAN.md not found in project_dir"
+            target_file = target_dir / "docs" / "BUILD_PLAN.md"
+            satisfied = target_file.is_file()
+            reason = (
+                f"docs/BUILD_PLAN.md present in {target_dir}"
+                if satisfied
+                else f"docs/BUILD_PLAN.md not found in {target_dir}"
+            )
         else:
             self._send_error_json(400, f"unknown step: {step!r} (expected init|seed)")
             return

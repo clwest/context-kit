@@ -444,6 +444,15 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (raw) Object.assign(state, JSON.parse(raw));
   } catch (e) { /* ignore */ }
+  // Defeat stale localStorage: if a prior session left projectDir set
+  // to something that no longer matches the current appName's slug,
+  // drop it. Without this, a user who reused the wizard with a new
+  // project name would get their old folder slug poll-checked, and
+  // the "I ran it" check on Step 5 would fail against the wrong dir.
+  if (state.appName) {
+    const expected = slugify(state.appName);
+    if (state.projectDir !== expected) state.projectDir = expected;
+  }
 }
 
 function save() {
@@ -477,8 +486,13 @@ function captureFieldsToState() {
   save();
 }
 
+// Mirror cli/placeholders._slugify so the folder we tell the user to
+// expect matches the folder ``context-kit init`` actually creates.
+// Insert a hyphen at camelCase transitions BEFORE lowercasing so
+// "MyApp" -> "my-app", not "myapp".
 function slugify(s) {
   return (s || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
@@ -507,6 +521,18 @@ function showOnly(stepNum) {
   if (stepNum === 4) renderPreview();
   if (stepNum === 5) {
     const name = state.appName || "My App";
+    // Belt-and-suspenders: the project_dir we'll poll-check MUST match
+    // the slug ``context-kit init "<name>"`` will create. If anything
+    // upstream left state.projectDir out of sync with the current
+    // appName's slug, fix it here so /api/check looks at the right
+    // folder when the user clicks "I ran it".
+    const expected = slugify(name);
+    if (expected && state.projectDir !== expected) {
+      state.projectDir = expected;
+      const folderField = fieldMap.projectDir();
+      if (folderField) folderField.value = expected;
+      save();
+    }
     document.getElementById("initCmd").textContent =
       'context-kit init "' + name + '"';
     document.getElementById("initFallbackCmd").textContent =
@@ -762,12 +788,22 @@ async function bootstrap() {
   const aiHelpBtn = document.getElementById("aiHelpBtn");
   if (aiHelpBtn) aiHelpBtn.addEventListener("click", copyAiHelpPrompt);
 
-  // Auto-derive project dir from app name when project dir is empty,
-  // and live-warn on very short or generic project names.
+  // Auto-derive project dir from app name unless the user has explicitly
+  // typed something different in the folder field this session. We track
+  // the "previous slug" so we know whether the field's current value is
+  // still the auto-derived one (safe to overwrite) or a manual override
+  // (preserve). Stale localStorage from prior sessions is reconciled in
+  // load(), so on first input the previous slug reflects current appName.
+  let prevAppNameSlug = slugify(state.appName);
   fieldMap.appName().addEventListener("input", () => {
-    if (!fieldMap.projectDir().value.trim()) {
-      fieldMap.projectDir().value = slugify(fieldMap.appName().value);
+    const oldSlug = prevAppNameSlug;
+    const newSlug = slugify(fieldMap.appName().value);
+    const folderField = fieldMap.projectDir();
+    const fieldVal = folderField.value.trim();
+    if (!fieldVal || fieldVal === oldSlug) {
+      folderField.value = newSlug;
     }
+    prevAppNameSlug = newSlug;
     refreshStep2Warning();
   });
 

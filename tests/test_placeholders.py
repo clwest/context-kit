@@ -34,6 +34,14 @@ class TestDerivePlaceholders(unittest.TestCase):
         self.assertEqual(p["APP_UPPER"], "DONKEY_BETZ")
         self.assertEqual(p["APP_TITLE"], "Donkey Betz")
 
+    def test_two_words_lowercase_with_space_become_hyphenated_slug(self):
+        # The user-reported wizard verification bug hinged on "stress test"
+        # producing the folder ``stress-test``. Lock that exact mapping in
+        # so any future slug refactor that breaks it fails loudly here, and
+        # so the wizard's mirror of this rule has a name to match against.
+        p = derive_placeholders("stress test")
+        self.assertEqual(p["APP_SLUG"], "stress-test")
+
     def test_camel_case_splits_at_boundary(self):
         p = derive_placeholders("MyApp")
         self.assertEqual(p["APP_SLUG"], "my-app")
