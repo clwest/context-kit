@@ -313,6 +313,12 @@
     <button class="copy" data-copy-target="initCmd">Copy</button>
   </div>
   <p class="field-hint">If you're using VS Code:<br>Click "Terminal" → "New Terminal"</p>
+  <p>If that says <code>command not found</code>, try:</p>
+  <div class="cmd">
+    <span id="initFallbackCmd">python3 -m context_kit init "…"</span>
+    <button class="copy" data-copy-target="initFallbackCmd">Copy</button>
+  </div>
+  <p class="field-hint">This can happen when a new terminal does not have the same Python environment active.</p>
   <p class="hint">After it finishes, click below. We'll verify the project files exist.</p>
   <div class="status" id="step5Status"></div>
   <div class="row">
@@ -483,8 +489,13 @@ function showOnly(stepNum) {
   save();
   // Re-render dynamic content for the step we just landed on.
   if (stepNum === 4) renderPreview();
-  if (stepNum === 5) document.getElementById("initCmd").textContent =
-    'context-kit init "' + (state.appName || "My App") + '"';
+  if (stepNum === 5) {
+    const name = state.appName || "My App";
+    document.getElementById("initCmd").textContent =
+      'context-kit init "' + name + '"';
+    document.getElementById("initFallbackCmd").textContent =
+      'python3 -m context_kit init "' + name + '"';
+  }
   if (stepNum === 6) document.getElementById("recCmd").textContent =
     'context-kit recommend-stack ' + state.projectDir + '/idea.md';
   if (stepNum === 7) document.getElementById("seedCmd").textContent =

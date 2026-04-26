@@ -265,12 +265,21 @@ class TestLiveWizardServer(unittest.TestCase):
         ``context-kit start`` is busy serving this page, and beginners do
         not intuit that they need a second one — they try to type in the
         running server's terminal and get nothing.
+
+        Also asserts the fallback command path: a fresh terminal often
+        loses the venv that ``pip install contextkit-ai`` lived in, so we
+        offer ``python3 -m context_kit init`` as the recovery command.
         """
         _, body, _ = self._get("/wizard")
         self.assertIn("Keep this page open", body)
         self.assertIn("In a new terminal", body)
         # VS Code helper — exact menu path so users can follow it verbatim.
         self.assertIn('"Terminal" → "New Terminal"', body)
+        # Fallback for the "command not found" case after a fresh terminal
+        # loses the active venv.
+        self.assertIn("command not found", body)
+        self.assertIn("python3 -m context_kit init", body)
+        self.assertIn("same Python environment", body)
 
     # --- /api/state ---
 
