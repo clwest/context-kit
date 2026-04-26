@@ -23,11 +23,13 @@ from cli.adopt import (  # noqa: E402
     AdoptionInputs,
     END_MARKER,
     START_MARKER,
+    _default_html_path,
     apply_plan,
     detect_stack,
     generate_build_plan,
     generate_claude_block,
     plan_files,
+    render_adopt_html,
     run_adopt,
     scan_unclassified_subdirs,
 )
@@ -635,6 +637,290 @@ class TestVisibilityFirstScan(unittest.TestCase):
             "Test",
         )
         self.assertNotIn("Unknown but present", block)
+
+
+# ---------------------------------------------------------------------------
+# §21: --html static review report
+# ---------------------------------------------------------------------------
+
+
+def _ns_html(path: Path, *, write=False, html=False, html_out=None,
+             no_browser=True, description="A demo project",
+             next_step="ship v1") -> argparse.Namespace:
+    """Namespace builder for --html tests. ``no_browser`` defaults True
+    so tests never actually pop a browser window."""
+    return argparse.Namespace(
+        command="adopt",
+        path=str(path),
+        write=write,
+        html=html,
+        html_out=str(html_out) if html_out else None,
+        no_browser=no_browser,
+        description=description,
+        next_step=next_step,
+    )
+
+
+class TestAdoptHtmlReport(unittest.TestCase):
+    """§21: ``adopt --html`` produces a single self-contained HTML file.
+
+    Hard contracts under test (matched to the design spec):
+    - Static HTML, no server, no HTTP.
+    - Default destination outside the project tree (system temp).
+    - --html-out PATH overrides the default.
+    - --no-browser suppresses webbrowser.open() (so tests are silent).
+    - CLI dry-run stdout is byte-equal with or without --html.
+    - HTML escapes user-supplied content.
+    - Re-runs against the same project overwrite the same file.
+    - The "Unknown but present" section is rendered as the visual focus
+      when there's anything to surface, and silently omitted otherwise.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        # A minimal project with one classified subdir + one unclassified
+        # one. Matches the donkey_betz_world dogfood shape in miniature.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "contracts").mkdir()
+        for n in ("Foo.sol", "Bar.sol", "Baz.sol"):
+            (self.repo / "contracts" / n).write_text("// sol\n", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # --- default destination + overwrite + auto-open suppression ---
+
+    def test_default_html_path_is_under_system_tempdir(self):
+        # The "source tree untouched by default" contract: default
+        # destination must NOT be inside the repo. Using
+        # tempfile.gettempdir() makes this cross-platform (returns
+        # /var/folders/... on macOS, /tmp on Linux, etc).
+        out = _default_html_path(self.repo)
+        self.assertEqual(out.parent, Path(tempfile.gettempdir()))
+        self.assertTrue(out.name.startswith("contextkit-adopt-report-"))
+        self.assertTrue(out.name.endswith(".html"))
+        # Different cwds yield different filenames so two projects
+        # don't collide on the same /tmp file.
+        with tempfile.TemporaryDirectory() as other_tmp:
+            other_path = _default_html_path(Path(other_tmp))
+            self.assertNotEqual(out.name, other_path.name)
+
+    def test_default_html_path_is_stable_for_same_repo(self):
+        # Same project re-run must produce the same filename so re-runs
+        # overwrite in place rather than accumulating files.
+        a = _default_html_path(self.repo)
+        b = _default_html_path(self.repo)
+        self.assertEqual(a, b)
+
+    def test_html_flag_writes_file_and_returns_zero(self):
+        rc = run_adopt(_ns_html(self.repo, html=True))
+        self.assertEqual(rc, 0)
+        out = _default_html_path(self.repo)
+        self.assertTrue(out.is_file(), f"expected HTML at {out}")
+        # Cleanup so we don't leak the test artifact.
+        out.unlink()
+
+    def test_html_out_writes_to_explicit_path(self):
+        explicit = self.repo / "report.html"  # inside repo to test override
+        rc = run_adopt(_ns_html(self.repo, html_out=explicit))
+        self.assertEqual(rc, 0)
+        self.assertTrue(explicit.is_file())
+        # Default path should NOT also exist when explicit was used.
+        # (We can't check default path didn't exist *before* this run —
+        # other tests may have left one — so we just confirm the
+        # explicit one was the destination.)
+        self.assertGreater(explicit.stat().st_size, 0)
+
+    def test_html_out_implies_html(self):
+        # The design says --html-out implies --html. Check by passing
+        # html_out without html=True.
+        explicit = self.repo / "implicit.html"
+        rc = run_adopt(_ns_html(self.repo, html=False, html_out=explicit))
+        self.assertEqual(rc, 0)
+        self.assertTrue(explicit.is_file())
+
+    def test_rerun_overwrites_default_path_in_place(self):
+        run_adopt(_ns_html(self.repo, html=True))
+        out = _default_html_path(self.repo)
+        first_mtime = out.stat().st_mtime_ns
+        # Mtime resolution can be coarse — sleep briefly so the second
+        # write definitely produces a newer mtime, OR just check that
+        # the file is still the only contextkit-adopt-report-* in the
+        # tempdir for our repo's hash.
+        run_adopt(_ns_html(self.repo, html=True, description="Updated desc"))
+        # Same path, still exactly one file matching the hash pattern.
+        matches = list(out.parent.glob(out.name))
+        self.assertEqual(len(matches), 1)
+        # Content updated (the new description appears).
+        self.assertIn("Updated desc", out.read_text(encoding="utf-8"))
+        out.unlink()
+
+    # --- additivity: CLI stdout unchanged with or without --html ---
+
+    def test_html_does_not_change_cli_stdout(self):
+        # The "additivity" contract: running with --html should produce
+        # the same dry-run stdout as running without it (modulo a single
+        # extra "HTML report: ..." line at the end). Capture both runs
+        # and assert the meaningful body is identical.
+        explicit = self.repo / "report.html"
+        from io import StringIO
+        from contextlib import redirect_stdout
+        buf_a, buf_b = StringIO(), StringIO()
+        with redirect_stdout(buf_a):
+            run_adopt(_ns_html(self.repo))
+        with redirect_stdout(buf_b):
+            run_adopt(_ns_html(self.repo, html=True, html_out=explicit))
+        # Strip the trailing "HTML report: ..." line from buf_b before
+        # comparing — that's the documented additive line, not a
+        # change to the existing flow.
+        b_lines = buf_b.getvalue().rstrip().splitlines()
+        if b_lines and b_lines[-1].startswith("HTML report:"):
+            b_lines = b_lines[:-1]
+            # Trailing blank line printed before the HTML report line.
+            if b_lines and b_lines[-1] == "":
+                b_lines = b_lines[:-1]
+        a_lines = buf_a.getvalue().rstrip().splitlines()
+        self.assertEqual(
+            a_lines, b_lines,
+            "CLI stdout differs when --html is added; additivity contract violated",
+        )
+
+    # --- content / safety / structure ---
+
+    def test_html_contains_project_name_and_classification_and_subdirs(self):
+        explicit = self.repo / "report.html"
+        run_adopt(_ns_html(self.repo, html_out=explicit))
+        body = explicit.read_text(encoding="utf-8")
+        # The Tempdir.name basename varies; just assert the directory
+        # path appears somewhere in the report.
+        self.assertIn(str(self.repo), body)
+        # Root-classified as JavaScript.
+        self.assertIn("JavaScript", body)
+        # contracts/ surfaces in unknown-but-present.
+        self.assertIn("contracts/", body)
+        self.assertIn("Solidity", body)
+        # All four planned files appear.
+        for rel in ("BUILD_PLAN.md", "PROJECT_WHAT_IT_IS.md",
+                    "00-START-NEXT-SESSION.md", "CLAUDE.md"):
+            self.assertIn(rel, body, f"missing planned file in report: {rel}")
+
+    def test_html_escapes_user_supplied_content(self):
+        # XSS-safety: the description and next_step come from user input
+        # (interactive prompt). They MUST be escaped before going into
+        # the HTML so a description like "<script>alert('x')</script>"
+        # can't execute when the report opens in the browser.
+        evil = '<script>alert("xss")</script>'
+        explicit = self.repo / "report.html"
+        # description contains the payload (next_step kept benign).
+        run_adopt(_ns_html(
+            self.repo, html_out=explicit,
+            description=evil, next_step="ok",
+        ))
+        body = explicit.read_text(encoding="utf-8")
+        # The literal payload tag must NOT appear unescaped anywhere.
+        self.assertNotIn(evil, body)
+        # The escaped form should appear (the user's input is still
+        # surfaced — it's just rendered as text, not executed).
+        self.assertIn("&lt;script&gt;", body)
+
+    def test_html_omits_unknown_but_present_when_classifier_covers_everything(self):
+        # Clean classified projects (no leftover subdirs) must NOT have
+        # the "Unknown but present" section. The visual focus is dynamic;
+        # silent on tidy projects so it doesn't add noise.
+        with tempfile.TemporaryDirectory() as clean:
+            clean_path = Path(clean)
+            (clean_path / "backend").mkdir()
+            (clean_path / "backend" / "manage.py").write_text(
+                "# d\n", encoding="utf-8",
+            )
+            (clean_path / "frontend").mkdir()
+            (clean_path / "frontend" / "package.json").write_text(
+                "{}", encoding="utf-8",
+            )
+            explicit = clean_path / "report.html"
+            run_adopt(_ns_html(clean_path, html_out=explicit))
+            body = explicit.read_text(encoding="utf-8")
+            self.assertNotIn("Unknown but present", body)
+            # And the classified parts card IS present.
+            self.assertIn("Classified parts", body)
+
+    def test_cta_warns_when_user_inputs_empty(self):
+        # The "Fill in description and next step before --write" CTA
+        # fires when either input was left empty. Beginner safety.
+        explicit = self.repo / "report.html"
+        run_adopt(_ns_html(
+            self.repo, html_out=explicit,
+            description="", next_step="",
+        ))
+        body = explicit.read_text(encoding="utf-8")
+        self.assertIn("Fill in description and next step", body)
+        # And the "Looks good" CTA must NOT also appear.
+        self.assertNotIn("Looks good", body)
+
+    def test_cta_says_looks_good_when_inputs_present_and_dry_run(self):
+        explicit = self.repo / "report.html"
+        run_adopt(_ns_html(
+            self.repo, html_out=explicit,
+            description="real description", next_step="real next step",
+        ))
+        body = explicit.read_text(encoding="utf-8")
+        self.assertIn("Looks good", body)
+        self.assertIn("--write", body)
+
+    def test_no_browser_flag_suppresses_webbrowser_open(self):
+        # When --no-browser is set, webbrowser.open MUST NOT be called.
+        # We monkey-patch the module-level reference so we can detect.
+        import cli.adopt as adopt_module
+        calls = []
+        original = adopt_module.webbrowser
+        class _StubBrowser:
+            def open(self, url):  # noqa: D401
+                calls.append(url)
+        adopt_module.webbrowser = _StubBrowser()
+        try:
+            explicit = self.repo / "report.html"
+            run_adopt(_ns_html(self.repo, html_out=explicit, no_browser=True))
+            self.assertEqual(calls, [], "webbrowser.open called despite --no-browser")
+        finally:
+            adopt_module.webbrowser = original
+
+
+class TestRenderAdoptHtmlPure(unittest.TestCase):
+    """Direct tests on render_adopt_html without going through run_adopt.
+
+    Lets us exercise edge cases (e.g., empty stack, write_mode=True)
+    without wiring full plan + I/O each time.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_render_in_write_mode_uses_will_badges_and_done_cta(self):
+        stack = detect_stack(self.repo)
+        inputs = AdoptionInputs(project_description="x", next_step="y")
+        plan = plan_files(self.repo, stack, inputs)
+        html = render_adopt_html(self.repo, stack, inputs, plan, write_mode=True)
+        # "Will create" instead of "Would create" — write_mode intent.
+        self.assertIn("Will create", html)
+        self.assertNotIn("Would create", html)
+        # "Done" CTA replaces the run-with-write CTA. The literal
+        # primer prompt — the same one the wizard's Step 8 hands the
+        # user — must appear so the AI session has a clear opener.
+        self.assertIn("Done", html)
+        self.assertIn(
+            "Read CLAUDE.md, docs/BUILD_PLAN.md, and docs/*_WHAT_IT_IS.md.",
+            html,
+        )
+        self.assertIn("Do not change the stack without asking.", html)
+        # Self-contained: no external <link> or <script src=>.
+        self.assertNotIn("<link", html)
+        self.assertNotIn("<script src=", html)
 
 
 if __name__ == "__main__":

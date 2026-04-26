@@ -14,8 +14,12 @@ release. Source code is never modified; only docs are written.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import html as _html
 import os
 import sys
+import tempfile
+import webbrowser
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -904,6 +908,370 @@ def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title:
 
 
 # ---------------------------------------------------------------------------
+# Layer 2.5: HTML renderer (SESSION_009_ADOPT.md §21)
+# ---------------------------------------------------------------------------
+#
+# A single self-contained HTML report for adopt's dry-run output.
+# Pure function from (StackProfile, AdoptionInputs, plan, repo) -> str.
+# All disk writes and webbrowser.open() calls happen in run_adopt; the
+# renderer itself touches nothing.
+#
+# Hard contracts (locked in §21):
+# - inline CSS, vanilla JS only (collapse via <details>, copy via tiny
+#   handler). Same constraint as cli/_static/wizard.html.
+# - no server, no HTTP endpoints, no edit/apply actions.
+# - source tree untouched by default (run_adopt picks /tmp by default).
+# - additive — CLI dry-run stdout is byte-equal with or without --html.
+
+
+def _default_html_path(repo: Path) -> Path:
+    """Stable temp path keyed to the repo's resolved cwd.
+
+    Same project -> same filename -> overwrite in place. Different
+    projects on the same machine don't collide. /tmp keeps the
+    project's source tree untouched (the load-bearing rule from §21).
+    """
+    digest = hashlib.sha1(str(repo.resolve()).encode("utf-8")).hexdigest()[:8]
+    return Path(tempfile.gettempdir()) / f"contextkit-adopt-report-{digest}.html"
+
+
+def _esc(s: str) -> str:
+    """HTML-escape user-supplied content (description, next_step, paths)."""
+    return _html.escape(s, quote=True)
+
+
+def render_adopt_html(repo: Path, stack: StackProfile,
+                      inputs: AdoptionInputs,
+                      plan: list,
+                      write_mode: bool) -> str:
+    """Build the full self-contained HTML report.
+
+    Six sections per §21:
+      1. Header band
+      2. Detection summary card
+      3. Classified parts card (only when parts non-empty)
+      4. Unknown but present (main visual focus, collapsible items)
+      5. What adopt would write (with expand-to-preview per file)
+      6. Suggested next action CTA
+    """
+    title = derive_project_title(repo)
+    when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # ---- Section 2: detection summary ----
+    if stack.parts:
+        det_label = "Split monorepo"
+        det_color = "ok"
+    elif stack.language == "unknown":
+        det_label = "Unknown stack"
+        det_color = "warn"
+    else:
+        det_label = _lang_label(stack.language)
+        det_color = "ok"
+    detection_html = [
+        f'<section class="card card-{det_color}">',
+        f'  <h2>Detection</h2>',
+        f'  <p class="lede">{_esc(det_label)}</p>',
+    ]
+    if stack.signals:
+        sig_html = ", ".join(f"<code>{_esc(s)}</code>" for s in stack.signals)
+        detection_html.append(f"  <p class=\"meta\">Signals: {sig_html}</p>")
+    if stack.notes:
+        for note in stack.notes:
+            detection_html.append(f"  <p class=\"note\">{_esc(note)}</p>")
+    detection_html.append("</section>")
+
+    # ---- Section 3: classified parts (only when split) ----
+    parts_html: list[str] = []
+    if stack.parts:
+        parts_html = [
+            '<section class="card">',
+            '  <h2>Classified parts</h2>',
+            '  <ul class="parts">',
+        ]
+        for sub, lang in stack.parts.items():
+            sig = stack.part_signals.get(sub)
+            from_clause = (
+                f' <span class="dim">(<code>{_esc(sub)}/{_esc(sig)}</code>)</span>'
+                if sig else ""
+            )
+            parts_html.append(
+                f'    <li><strong>{_esc(sub.capitalize())}:</strong> '
+                f'{_esc(_lang_label(lang))}{from_clause}</li>'
+            )
+        parts_html += ['  </ul>', '</section>']
+
+    # ---- Section 4: unknown but present (THE main focus) ----
+    unknown_html: list[str] = []
+    if stack.unclassified_subdirs:
+        unknown_html = [
+            '<section class="card card-warn">',
+            '  <h2>Unknown but present</h2>',
+            '  <p class="meta">Directories adopt found but couldn\'t classify. '
+            'Click each to expand. The hint lines are *suggestions* — '
+            'verify with what you know about the project.</p>',
+        ]
+        for u in stack.unclassified_subdirs:
+            # One <details> block per subdir. Native collapse, no JS.
+            summary_bits: list[str] = []
+            if u.manifest_files:
+                summary_bits.append(
+                    f"manifests: {', '.join(_esc(m) for m in u.manifest_files)}"
+                )
+            domain_exts = sorted(
+                [e for e in u.notable_extensions if e in DOMAIN_HINTS],
+                key=lambda e: (-u.notable_extensions[e], e)
+            )
+            generic_exts = sorted(
+                [e for e in u.notable_extensions if e in GENERIC_EXTENSIONS],
+                key=lambda e: (-u.notable_extensions[e], e)
+            )
+            for ext in domain_exts + generic_exts:
+                summary_bits.append(f"{u.notable_extensions[ext]}{_esc(ext)}")
+            if u.is_empty:
+                summary_bits.append("empty")
+            elif not summary_bits and u.total_file_count > 0:
+                summary_bits.append(f"{u.total_file_count} files (no recognized source extensions)")
+            summary = " · ".join(summary_bits) if summary_bits else "(no signals)"
+            unknown_html.append(
+                f'  <details class="unc"><summary>'
+                f'<code class="dirname">{_esc(u.name)}/</code> '
+                f'<span class="dim">{summary}</span>'
+                f'</summary>'
+            )
+            # Body contents.
+            unknown_html.append('    <div class="unc-body">')
+            if u.manifest_files:
+                m_str = ", ".join(f"<code>{_esc(m)}</code>" for m in u.manifest_files)
+                unknown_html.append(f'      <p><strong>Manifest files:</strong> {m_str}</p>')
+            if domain_exts or generic_exts:
+                unknown_html.append('      <p><strong>Source extensions:</strong></p>')
+                unknown_html.append('      <ul>')
+                for ext in domain_exts + generic_exts:
+                    count = u.notable_extensions[ext]
+                    example = u.example_paths.get(ext)
+                    ex_part = (
+                        f' — example: <code>{_esc(example)}</code>'
+                        if example else ""
+                    )
+                    unknown_html.append(
+                        f'        <li>{count} <code>{_esc(ext)}</code> file'
+                        f'{"s" if count != 1 else ""}{ex_part}</li>'
+                    )
+                unknown_html.append('      </ul>')
+            elif u.total_file_count > 0:
+                unknown_html.append(
+                    f'      <p class="dim">{u.total_file_count} files in scanned tree, '
+                    f'but none with extensions adopt categorizes (likely config / data / docs).</p>'
+                )
+            elif u.is_empty:
+                unknown_html.append('      <p class="dim">Directory exists but contains no files.</p>')
+            if u.note:
+                unknown_html.append(f'      <p class="hint">{_esc(u.note)}</p>')
+            unknown_html.append('    </div>')
+            unknown_html.append('  </details>')
+        unknown_html.append('</section>')
+
+    # ---- Section 5: plan with previews ----
+    plan_html = ['<section class="card">', '  <h2>What adopt would write</h2>']
+    verb_prefix = "Will " if write_mode else "Would "
+    for p in plan:
+        rel_path = str(p.path.relative_to(repo)) if p.path.is_relative_to(repo) else str(p.path)
+        badge_cls = "badge-create" if p.kind == "create" else "badge-augment"
+        badge_text = f"{verb_prefix}{p.kind}"
+        plan_html.append(
+            f'  <details class="planfile"><summary>'
+            f'<span class="badge {badge_cls}">{_esc(badge_text)}</span> '
+            f'<code>{_esc(rel_path)}</code>'
+            f'</summary>'
+            f'<pre class="preview"><code>{_esc(p.content)}</code></pre>'
+            f'</details>'
+        )
+    plan_html.append('</section>')
+
+    # ---- Section 6: suggested next action ----
+    needs_inputs = (not inputs.project_description.strip()) or (not inputs.next_step.strip())
+    if write_mode:
+        cta_class = "card-ok"
+        cta_title = "Done — files written."
+        cta_body = (
+            '<p>Open your AI tool against this project. If you use Claude '
+            'Code, run <code>claude</code> in this folder, then paste:</p>'
+            '<div class="cmd"><span id="primer">'
+            'Read CLAUDE.md, docs/BUILD_PLAN.md, and docs/*_WHAT_IT_IS.md. '
+            'Summarize the project, confirm the stack, then begin implementing '
+            'version 1. Do not change the stack without asking.</span>'
+            '<button class="copy" data-copy-target="primer">Copy</button></div>'
+        )
+    elif needs_inputs:
+        cta_class = "card-warn"
+        cta_title = "Fill in description and next step before --write"
+        cta_body = (
+            '<p>One or both of the prompts adopt asked you ("What is this '
+            'project?" / "What are you trying to do next?") was empty. The '
+            'generated docs would land mostly as placeholder text. Re-run '
+            'with non-empty answers, then add <code>--write</code> when '
+            'the report looks right.</p>'
+        )
+    else:
+        cmd = f"context-kit adopt {repo} --write"
+        cta_class = "card-ok"
+        cta_title = "Looks good — run with --write"
+        cta_body = (
+            '<p>The plan above looks ready. Run this in your terminal '
+            'to apply it:</p>'
+            f'<div class="cmd"><span id="cta-cmd">{_esc(cmd)}</span>'
+            '<button class="copy" data-copy-target="cta-cmd">Copy</button></div>'
+            '<p class="dim">After it writes, the generated docs will '
+            'contain a few <code>[adopt: please describe]</code> hints '
+            'where adopt couldn\'t infer details (the project\'s "why" '
+            'and audience). Fill those in before running an AI session '
+            'against the project.</p>'
+        )
+    cta_html = [
+        f'<section class="card cta {cta_class}">',
+        f'  <h2>{_esc(cta_title)}</h2>',
+        f'  {cta_body}',
+        '</section>',
+    ]
+
+    # ---- Header band ----
+    header_html = [
+        '<header>',
+        f'  <h1>{_esc(title)}</h1>',
+        f'  <p class="cwd"><code>{_esc(str(repo))}</code></p>',
+        f'  <p class="meta">Generated by <code>context-kit adopt</code> · {_esc(when)}</p>',
+        '</header>',
+    ]
+
+    # ---- Inline styles + JS (no external assets) ----
+    style = """
+    :root {
+      --bg: #0f1117; --panel: #151822; --panel-2: #1c2030;
+      --border: #262a35; --text: #e5e7eb; --muted: #9ca3af;
+      --accent: #6ee7b7; --accent-strong: #10b981;
+      --warn: #fbbf24; --warn-strong: #b45309;
+      --danger: #f87171;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #fafbfc; --panel: #ffffff; --panel-2: #f3f4f6;
+        --border: #e5e7eb; --text: #111827; --muted: #6b7280;
+        --accent: #059669; --accent-strong: #047857;
+        --warn: #b45309; --warn-strong: #92400e;
+        --danger: #dc2626;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg); color: var(--text);
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+    header { margin-bottom: 1.5rem; }
+    header h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -0.01em; }
+    header .cwd { color: var(--muted); font-size: .9rem; margin: .25rem 0; }
+    header .meta { color: var(--muted); font-size: .85rem; margin: .25rem 0; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--border);
+      border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1rem;
+    }
+    .card-ok { border-left-color: var(--accent-strong); }
+    .card-warn { border-left-color: var(--warn); }
+    .card-danger { border-left-color: var(--danger); }
+    h2 { font-size: 1.15rem; margin: 0 0 .75rem; }
+    .lede { font-size: 1.1rem; margin: .25rem 0 .5rem; }
+    .meta { color: var(--muted); font-size: .9rem; margin: .25rem 0; }
+    .note { color: var(--muted); font-size: .9rem; margin: .35rem 0; font-style: italic; }
+    .dim { color: var(--muted); }
+    .hint { color: var(--warn-strong); font-size: .9rem; margin: .5rem 0; }
+    code { font-family: var(--mono); background: var(--border); padding: .1rem .35rem; border-radius: 4px; font-size: .9em; }
+    .parts { padding-left: 1.25rem; margin: .25rem 0; }
+    .parts li { margin: .25rem 0; }
+    details.unc, details.planfile {
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: .55rem .85rem; margin: .5rem 0;
+    }
+    details.unc summary, details.planfile summary {
+      cursor: pointer; user-select: none; font-size: .95rem;
+    }
+    details.unc summary code.dirname { font-weight: 600; }
+    .unc-body { margin-top: .75rem; padding-top: .5rem; border-top: 1px solid var(--border); font-size: .9rem; }
+    .unc-body ul { padding-left: 1.25rem; margin: .25rem 0; }
+    pre.preview {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: .85rem 1rem; font-family: var(--mono); font-size: .82rem;
+      overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+      max-height: 24rem; overflow-y: auto; margin: .75rem 0 0;
+    }
+    .badge {
+      display: inline-block; padding: .1rem .55rem; border-radius: 4px;
+      font-size: .75rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase;
+      margin-right: .5rem;
+    }
+    .badge-create { background: rgba(16, 185, 129, .15); color: var(--accent-strong); }
+    .badge-augment { background: rgba(251, 191, 36, .18); color: var(--warn-strong); }
+    .cta h2 { font-size: 1.25rem; }
+    .cmd {
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+      padding: .65rem .85rem; font-family: var(--mono); font-size: .9rem;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: .5rem; margin: .75rem 0;
+    }
+    .cmd .copy {
+      flex-shrink: 0; background: var(--border); color: var(--text);
+      padding: .25rem .55rem; font-size: .8rem; font-weight: 400;
+      border: none; border-radius: 4px; cursor: pointer; font: inherit;
+    }
+    footer { color: var(--muted); font-size: .8rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    """
+
+    js = """
+    document.body.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.copy');
+      if (!btn) return;
+      const targetId = btn.getAttribute('data-copy-target');
+      if (!targetId) return;
+      const el = document.getElementById(targetId);
+      if (!el) return;
+      try {
+        await navigator.clipboard.writeText(el.textContent);
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1200);
+      } catch (err) { /* ignore */ }
+    });
+    """
+
+    out = [
+        '<!doctype html>',
+        '<html lang="en"><head>',
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        f'<title>{_esc(title)} · adopt review</title>',
+        f'<style>{style}</style>',
+        '</head><body><div class="wrap">',
+    ]
+    out.extend(header_html)
+    out.extend(detection_html)
+    out.extend(parts_html)
+    out.extend(unknown_html)
+    out.extend(plan_html)
+    out.extend(cta_html)
+    out.append(
+        '<footer>'
+        'Static review report from <code>context-kit adopt --html</code>. '
+        'Read-only — to apply this plan or change inputs, re-run the CLI. '
+        'Re-runs against the same project overwrite this file in place.'
+        '</footer>'
+    )
+    out.append('</div>')
+    out.append(f'<script>{js}</script>')
+    out.append('</body></html>')
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Layer 3: materializer (the only thing that touches disk)
 # ---------------------------------------------------------------------------
 
@@ -1061,4 +1429,30 @@ def run_adopt(args: argparse.Namespace) -> int:
     else:
         print("Done. Review the [adopt: please describe] sections before")
         print("running your AI tool against this project.")
+
+    # ---- §21: --html static review report (purely additive) ----
+    # The CLI dry-run output above is byte-identical with or without
+    # --html. Generation happens after, never displaces or modifies
+    # the existing flow.
+    html_requested = bool(getattr(args, "html", False)) or bool(getattr(args, "html_out", None))
+    if html_requested:
+        explicit_out = getattr(args, "html_out", None)
+        out_path = Path(explicit_out) if explicit_out else _default_html_path(repo)
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                render_adopt_html(repo, stack, inputs, plan, write_mode=write),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            sys.stderr.write(f"context-kit: failed to write HTML report: {exc}\n")
+            # Don't fail the whole run — the CLI output already succeeded.
+            return 0
+        print()
+        print(f"HTML report: {out_path}")
+        if not getattr(args, "no_browser", False):
+            try:
+                webbrowser.open(out_path.as_uri())
+            except Exception:  # noqa: BLE001 — browser open is best-effort
+                pass
     return 0

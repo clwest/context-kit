@@ -281,6 +281,31 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Apply the plan; without this, adopt prints what would happen",
     )
+    adopt.add_argument(
+        "--html",
+        action="store_true",
+        help=(
+            "Also generate a static HTML review report (single file, no "
+            "server). Default destination is /tmp; pass --html-out PATH to "
+            "override. Auto-opens in the browser unless --no-browser is set."
+        ),
+    )
+    adopt.add_argument(
+        "--html-out",
+        dest="html_out",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Explicit destination for the HTML report (implies --html). "
+            "Default keeps the source tree untouched by writing to /tmp."
+        ),
+    )
+    adopt.add_argument(
+        "--no-browser",
+        dest="no_browser",
+        action="store_true",
+        help="Don't auto-open the HTML report in the browser (tests / headless / CI).",
+    )
 
     return parser
 
