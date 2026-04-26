@@ -222,6 +222,12 @@
   <span data-progress="7"></span>
 </div>
 
+<!-- Resume banner: shown when reconcileProgressFromFilesystem detects
+     that the user has already completed a step (idea.md, init, seed)
+     in a prior session (e.g., the local server died and they restarted
+     it). Stays beginner-friendly — no technical state language. -->
+<div class="status" id="resumeBanner" style="display:none"></div>
+
 <!-- ============================================================== -->
 <section class="step" data-step="1">
   <h2><span class="step-num">1.</span>Welcome</h2>
@@ -499,6 +505,60 @@ function slugify(s) {
     || "my-app";
 }
 
+// Shown whenever a fetch to the local server fails (TypeError /
+// "Failed to fetch"). The most common cause for a beginner is that
+// the terminal running ``context-kit start`` was closed, killed, or
+// crashed (Oreo the dog stepped on it during dogfood). The phrasing
+// avoids the words "network" or "TypeError" — those are scary and
+// not actionable. The recovery is always the same: restart the CLI
+// and refresh.
+const RECOVERY_MSG = "The local context-kit server may have stopped. Go back to the terminal running context-kit start. If it stopped, run context-kit start again, then refresh this page.";
+
+// Wraps fetch + .json() so callers don't have to repeat the same
+// try/catch shape. Returns a normalized envelope:
+//   { ok, status, data, networkError }
+// On a TypeError from fetch (server down, refused connection, etc.)
+// returns ``networkError: true`` and the caller is expected to
+// surface RECOVERY_MSG in whichever status panel triggered the call.
+async function fetchJsonSafe(url, init) {
+  try {
+    const resp = await fetch(url, init);
+    let data = null;
+    try { data = await resp.json(); } catch (_) { /* not JSON */ }
+    return { ok: resp.ok, status: resp.status, data, networkError: false };
+  } catch (err) {
+    return { ok: false, status: 0, data: null, networkError: true };
+  }
+}
+
+// On page load (or restart of context-kit start), reconcile the
+// browser's localStorage step against what's actually on disk.
+// localStorage is the primary state, but disk wins when they
+// disagree — so a user who completed ``seed`` in a prior session
+// (or before the server died) lands on the next real step instead
+// of being asked to re-run a CLI command they've already run.
+async function reconcileProgressFromFilesystem() {
+  if (!state.projectDir) return;
+  const projectQS = "&project_dir=" + encodeURIComponent(state.projectDir);
+  // Check seed first; if seed satisfied, init is implied. Use the
+  // safe fetcher so a temporarily-down server doesn't blow up bootstrap
+  // — later user actions will surface the recovery message.
+  const seedRes = await fetchJsonSafe("/api/check?step=seed" + projectQS);
+  if (seedRes.networkError) return;
+  if (seedRes.ok && seedRes.data && seedRes.data.satisfied) {
+    if (state.step < 8) {
+      state.step = 8;
+      state._resumed = true;
+    }
+    return;
+  }
+  const initRes = await fetchJsonSafe("/api/check?step=init" + projectQS);
+  if (initRes.ok && initRes.data && initRes.data.satisfied && state.step < 6) {
+    state.step = 6;
+    state._resumed = true;
+  }
+}
+
 function setStatus(elId, kind, msg) {
   const el = document.getElementById(elId);
   if (!el) return;
@@ -689,49 +749,50 @@ function renderPreview() {
 async function saveIdea() {
   const content = buildIdeaMd();
   setStatus("step4Status", "", "Writing…");
-  try {
-    const resp = await fetch("/api/idea", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        project_dir: state.projectDir,
-        content: content,
-      }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      setStatus("step4Status", "err", "Failed: " + (data.error || resp.status));
-      return;
-    }
-    setStatus("step4Status", "ok", "Wrote " + data.path);
-    setTimeout(() => advance(5), 600);
-  } catch (e) {
-    setStatus("step4Status", "err", "Network error: " + e.message);
+  const res = await fetchJsonSafe("/api/idea", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      project_dir: state.projectDir,
+      content: content,
+    }),
+  });
+  if (res.networkError) {
+    setStatus("step4Status", "warn", RECOVERY_MSG);
+    return;
   }
+  if (!res.ok) {
+    const errMsg = (res.data && res.data.error) || res.status;
+    setStatus("step4Status", "err", "Failed: " + errMsg);
+    return;
+  }
+  setStatus("step4Status", "ok", "Wrote " + (res.data && res.data.path));
+  setTimeout(() => advance(5), 600);
 }
 
 async function checkAndAdvance(step, fromStep, toStep) {
   const statusId = "step" + fromStep + "Status";
   setStatus(statusId, "", "Checking…");
-  try {
-    const url = "/api/check?step=" + encodeURIComponent(step) +
-                "&project_dir=" + encodeURIComponent(state.projectDir);
-    const resp = await fetch(url);
-    const data = await resp.json();
-    if (!resp.ok) {
-      setStatus(statusId, "err", "Check failed: " + (data.error || resp.status));
-      return;
-    }
-    if (data.satisfied) {
-      setStatus(statusId, "ok", "OK: " + data.reason);
-      setTimeout(() => advance(toStep), 600);
-    } else {
-      setStatus(statusId, "warn",
-        "Doesn't look like that worked yet. " + data.reason +
-        ". Run the command from your project's parent directory and try again.");
-    }
-  } catch (e) {
-    setStatus(statusId, "err", "Network error: " + e.message);
+  const url = "/api/check?step=" + encodeURIComponent(step) +
+              "&project_dir=" + encodeURIComponent(state.projectDir);
+  const res = await fetchJsonSafe(url);
+  if (res.networkError) {
+    setStatus(statusId, "warn", RECOVERY_MSG);
+    return;
+  }
+  if (!res.ok) {
+    const errMsg = (res.data && res.data.error) || res.status;
+    setStatus(statusId, "err", "Check failed: " + errMsg);
+    return;
+  }
+  const data = res.data || {};
+  if (data.satisfied) {
+    setStatus(statusId, "ok", "Looks like this step is already done.");
+    setTimeout(() => advance(toStep), 600);
+  } else {
+    setStatus(statusId, "warn",
+      "Doesn't look like that worked yet. " + data.reason +
+      ". Run the command from your project's parent directory and try again.");
   }
 }
 
@@ -808,9 +869,9 @@ async function bootstrap() {
   });
 
   // Surface the cwd from /api/state so users see where files will land.
-  try {
-    const resp = await fetch("/api/state");
-    const data = await resp.json();
+  const stateRes = await fetchJsonSafe("/api/state");
+  if (stateRes.ok && stateRes.data) {
+    const data = stateRes.data;
     document.getElementById("cwdLabel").textContent = "cwd: " + data.cwd;
     document.getElementById("cwdFooter").textContent = "cwd: " + data.cwd;
     if (data.project_state === "scaffold" && state.step < 5) {
@@ -818,9 +879,28 @@ async function bootstrap() {
       // hadn't already progressed past step 5 themselves.
       state.step = Math.max(state.step, 5);
     }
-  } catch (e) { /* ignore */ }
+  }
+
+  // Source-of-truth check: localStorage says where the user *was*, but
+  // the filesystem says what they've actually completed. After a server
+  // restart (or any reload) we reconcile the two so a user who already
+  // ran ``seed`` doesn't get bounced back to "I ran it" on the init step.
+  await reconcileProgressFromFilesystem();
+  save();
 
   showOnly(state.step || 1);
+
+  if (state._resumed) {
+    const banner = document.getElementById("resumeBanner");
+    if (banner) {
+      banner.className = "status ok";
+      banner.style.display = "block";
+      banner.textContent =
+        "Looks like this step is already done — picking up where you left off.";
+    }
+    state._resumed = false;
+    save();
+  }
 }
 
 bootstrap();

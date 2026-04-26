@@ -390,6 +390,64 @@ class TestLiveWizardServer(unittest.TestCase):
             (slug_dir / "00-START-NEXT-SESSION.md").unlink(missing_ok=True)
             slug_dir.rmdir()
 
+    def test_api_check_seed_satisfied_when_build_plan_present(self):
+        """The reconcile-on-load logic depends on /api/check?step=seed
+        returning ``satisfied=true`` when ``docs/BUILD_PLAN.md`` exists
+        inside the selected project_dir. Lock that contract here so the
+        wizard's "you already ran seed, jumping to step 8" path stays
+        wired up — this is the exact failure mode that kicked off the
+        recovery work (server died after seed, user lost progress).
+        """
+        slug_dir = self.cwd / "stress-test-seed"
+        (slug_dir / "docs").mkdir(parents=True, exist_ok=True)
+        (slug_dir / "docs" / "BUILD_PLAN.md").write_text(
+            "# Plan\n\nseeded\n", encoding="utf-8",
+        )
+        try:
+            status, body, _ = self._get(
+                "/api/check?step=seed&project_dir=stress-test-seed"
+            )
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertTrue(
+                data.get("satisfied"),
+                f"expected satisfied=true; got reason={data.get('reason')!r}",
+            )
+            self.assertIn("BUILD_PLAN.md", data.get("reason", ""))
+            self.assertIn(str(slug_dir), data.get("reason", ""))
+        finally:
+            (slug_dir / "docs" / "BUILD_PLAN.md").unlink(missing_ok=True)
+            (slug_dir / "docs").rmdir()
+            slug_dir.rmdir()
+
+    def test_wizard_includes_server_recovery_message_and_helpers(self):
+        """The recovery copy + JS helpers must ship in the HTML so a
+        beginner whose terminal got Oreo'd (dog walked across keyboard,
+        killing context-kit start) sees an actionable message instead of
+        "Network error: Failed to fetch", and so the page reconciles
+        progress against disk on the next reload.
+
+        Locks the user-facing copy AND the named helper functions so a
+        future refactor can't quietly delete the recovery pathway.
+        """
+        _, body, _ = self._get("/wizard")
+        # The recovery message itself — exact phrasing matters because
+        # it tells a beginner what to do, not what went wrong.
+        self.assertIn(
+            "The local context-kit server may have stopped",
+            body,
+        )
+        self.assertIn(
+            "run context-kit start again, then refresh this page",
+            body,
+        )
+        # Resume banner copy.
+        self.assertIn("picking up where you left off", body)
+        # Helper function names live in the inline JS — assert by name
+        # so the wiring can't be silently removed.
+        self.assertIn("fetchJsonSafe", body)
+        self.assertIn("reconcileProgressFromFilesystem", body)
+
     def test_api_check_failure_reason_includes_resolved_path(self):
         """When the check fails, the reason must include the exact folder
         path that was inspected. Without this, a user whose wizard polled
