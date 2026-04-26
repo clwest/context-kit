@@ -26,9 +26,12 @@ init  →  recommend-stack  →  seed  →  doctor  →  orient
 | **`context-kit doctor`** | Catches environment / setup blockers before they bite |
 | **`context-kit orient`** | Loads the current context for the next AI session *(the bundled Claude Code skill calls this automatically)* |
 
-Plus `inventory --check` for CI drift detection and `hotpath` for
-file-size budget warnings. All read-only by default. All exit cleanly
-for an agent to parse.
+Plus `inventory --check` for CI drift detection, `hotpath` for
+file-size budget warnings, and **`adopt`** for retrofitting
+context-kit onto an *existing* project (the five-command loop above
+assumes you're starting fresh; `adopt` is the entry point when you
+already have code). All read-only by default. All exit cleanly for
+an agent to parse.
 
 Think `create-next-app`, but for the memory layer around your code.
 
@@ -165,6 +168,7 @@ context-kit COMMAND [options]
 
 Commands:
   init NAME            Scaffold a new project with the context-kit pattern
+  adopt [PATH]         Retrofit context-kit onto an EXISTING project (dry-run by default)
   seed PATH            Turn a structured idea file into project context (5 files)
   recommend-stack PATH Suggest a beginner-friendly v0 stack from an idea file
   start                Launch the onboarding server for the current project
@@ -185,6 +189,40 @@ Run `python3 context_kit.py <command> --help` for per-command options.
 | `--with-scaffold` | off | Include optional Python scaffold |
 | `--force` | off | Overwrite existing files at the target |
 | `--quiet` | off | Suppress per-file output |
+
+**`adopt` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| *positional* `PATH` | `.` | Project root to adopt |
+| `--write` | off | Apply the plan; without this, adopt prints what would happen |
+
+`adopt` is the entry point when you have an *existing* project and
+want context-kit's docs layer wrapped around it. It detects basic
+stack signals (JavaScript / Python / unknown) from manifest files
+at the repo root and one level deep into seven recognized subdirs
+(`backend`, `frontend`, `web`, `mobile`, `api`, `client`,
+`server`). It then asks two beginner-friendly prompts — what the
+project is, what you're trying to do next — and generates
+`docs/BUILD_PLAN.md`, `docs/PROJECT_WHAT_IT_IS.md`,
+`00-START-NEXT-SESSION.md`, plus a fresh or augment-only
+`CLAUDE.md`. **Source code is never modified.**
+
+The CLAUDE.md augment-mode is byte-safe: existing CLAUDE.md content
+outside `<!-- context-kit:adopt:start --> / :end -->` markers is
+preserved verbatim, and re-running `adopt --write` updates the
+managed block in place rather than stacking duplicates. The
+generated docs surface the framework's load-bearing rule —
+"Always read `docs/BUILD_PLAN.md` before choosing a stack or
+writing code" — so an AI session loaded into the adopted project
+treats the detected stack as authoritative.
+
+`adopt` is dry-run by default. Pass `--write` only when the
+preview looks right. Designed in
+`docs/proposals/SESSION_009_ADOPT.md`; v0 + v0.1 are shipped, the
+v0.2 backlog (deeper-than-1 monorepo layouts, framework-level
+detection inside the manifests, `[adopt: please describe]`
+`doctor` checks, wizard branch) is tracked there.
 
 **`start` options**
 

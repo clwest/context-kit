@@ -1,20 +1,34 @@
 ---
 title: "Session 009 — adopt (retrofit context-kit onto an existing project)"
 date: 2026-04-26
-status: design
+status: partially-shipped
+shipped:
+  - v0  (cea6327): minimal adopt command
+  - v0.1 (3f45087): split-layout detection (depth-1 subdir scan)
+deferred:
+  - v0.2: deeper-than-1 layouts (apps/<name>/, microservices), confidence scoring, [adopt: please describe] doctor checks, recommend-stack integration, wizard branch
 authors: chris@donkeybetz.com, claude (claude-opus-4-7)
 ---
 
 # Session 009 — `context-kit adopt`
 
-**Status:** design proposal, not yet implemented. Written for joint
-review with ChatGPT and dogfood against existing projects under
-`/development/` before implementation.
+**Status:** v0 + v0.1 shipped; v0.2 designed but not yet
+implemented. The full release was deliberately broken into a series
+of small validating ships rather than one big "feature complete"
+landing — the v0 dogfood exposed split-monorepo as the highest-
+value next move (now shipped as v0.1), and the same pattern
+will let v0.2 be designed against real evidence rather than guess.
 
-> **Reviewers:** focus pushback on §3 (the detection ladder), §5
-> (managed-block strategy for non-empty repos), §7 (the
-> `[adopt: please describe]` placeholder contract), and §10 (test
-> strategy). The other sections are mostly mechanical.
+**What's live today:** `context-kit adopt [PATH] [--write]` works
+against single-stack root-managed projects (e.g. `ai-content-studio`)
+and against `backend/` + `frontend/` style split monorepos with up
+to one level of subdirectory depth. See §15 for the v0.2 backlog
+and §16 for what each shipped session actually delivered vs. the
+original design.
+
+> **Reviewers (now):** §15 (v0.2 backlog) is the live design
+> question. §3, §5, and §10 are largely shipped — see the
+> "shipped vs. deferred" annotations inline.
 
 ---
 
@@ -120,6 +134,19 @@ subdir — likely two projects in one repo, refuse to guess).
 
 ## 3. The detection ladder
 
+> **Shipped (v0 + v0.1):** root-first scan with depth-1 fallback
+> into seven recognized subdirs (`backend`, `frontend`, `web`,
+> `mobile`, `api`, `client`, `server`). No confidence scoring yet
+> (binary detection only). Backend wins when picking the primary
+> for split repos. Mixed JS+Python at root returns javascript with
+> an honest "v0 doesn't multi-stack yet" note. See `cli/adopt.py`
+> `detect_stack()` for the live behavior.
+>
+> **Deferred to v0.2:** the confidence-score table below, deeper-
+> than-1 layouts (`apps/<name>/...`, microservice monorepos),
+> framework-level detection beyond the four manifest filenames
+> (Next.js vs. Vite vs. CRA, Django vs. Flask vs. FastAPI).
+
 Every detector is a pure function returning a `StackProfile` with a
 confidence score. We run them all and pick the highest-confidence
 non-conflicting set. **This is the section that will get the most
@@ -188,6 +215,19 @@ section gets a corresponding rule that an agent must surface these
 gaps to the user before writing code that touches the topic.
 
 ## 5. Managed-block strategy for non-empty repos
+
+> **Shipped (v0):** `CLAUDE.md` augment-only with markers
+> `<!-- context-kit:adopt:start --> / :end -->`, idempotent re-run
+> (block replaces in place, doesn't stack), source bytes never
+> change outside markers. `BUILD_PLAN.md` / `PROJECT_WHAT_IT_IS.md` /
+> `00-START-NEXT-SESSION.md` are create-only in v0 — re-running
+> over an existing one would currently overwrite. Idempotent
+> create-or-augment for those three is on the v0.2 list.
+>
+> **Deferred to v0.2:** managed-block markers inside the three
+> create-only files so re-runs preserve human edits there too.
+> Currently a user who edits `BUILD_PLAN.md` and then re-runs
+> `adopt --write` would lose their edits.
 
 This is the section most likely to bite us if we get it wrong, so
 nailing the contract before code is written is worth the time.
@@ -361,6 +401,19 @@ CLI-only first and add a wizard branch in a follow-up release once
 we have real-user feedback on the bare command.
 
 ## 10. Test strategy
+
+> **Shipped (v0 + v0.1):** 20 focused tests in `tests/test_adopt.py`
+> across 5 classes — `TestDetectStack` (5), `TestSubdirDetection`
+> (6, v0.1), `TestPlanAndApply` (3), `TestClaudeMdAugmentation` (3),
+> `TestRunAdoptCli` (3). The suite is a small, fast, focused subset
+> of the ~50 tests this section originally proposed; the larger
+> set lands as fixtures and assertions are added in v0.2 work.
+>
+> Real-world dogfood (manual, dry-run only) covered all 6 listed
+> projects: focus-flow, dealflowtracker, contract-concierge,
+> norman-handyman-mvp, ai-content-studio, and (held in reserve) the
+> Flutter project. All five tested projects produce usable plans on
+> first try.
 
 This is harder than `recommend_stack` because real projects are
 large and varied. The pattern:
@@ -578,5 +631,90 @@ gaps where the CLI can't infer.
 
 ---
 
-*End of design proposal. Ready for ChatGPT review and joint
-sign-off before implementation.*
+*End of original design proposal. Sections 15–16 below were added
+after v0 + v0.1 shipped to track what landed and what's next.*
+
+---
+
+## 15. v0.2 backlog (post-v0.1)
+
+Ordered by "expected payoff per unit of work", informed by the
+five-project dogfood at the close of v0.1:
+
+1. **`apps/<name>/` Turborepo / monorepo shapes.** The current
+   depth-1 limit returns "unknown" for Nx, Turborepo, and
+   microservice monorepos that put each component under
+   `apps/api`, `apps/web`, etc. v0.1's `_detect_in_dir()` is
+   already the right primitive — v0.2 adds a second fallback that
+   walks `apps/*/` (and maybe `packages/*/` and `services/*/`)
+   when the depth-1 scan returns empty.
+2. **Idempotent BUILD_PLAN / WHAT_IT_IS / START rewriting via
+   managed-block markers.** Currently these three files are
+   create-only — re-running `adopt --write` against a project
+   where they exist would either skip them or overwrite them
+   (depending on framework state). Wrap each in
+   `<!-- context-kit:adopt:start --> / :end -->` blocks so re-runs
+   refresh the auto-generated portions and preserve human edits.
+   Same pattern the CLAUDE.md augment block already uses.
+3. **Framework detection inside the four manifests.** Today we
+   know "JavaScript" but not "Next.js"; "Python" but not "Django"
+   (despite already detecting `manage.py` separately).
+   `package.json` parsing with a small dependency-name lookup
+   table (next, react, vue, svelte, vite, expo, react-native,
+   express, fastify) and `requirements.txt` / `pyproject.toml`
+   keyword grep (django, fastapi, flask) gets us most of the way.
+   Output line goes from "JavaScript / Node.js" to "Next.js
+   (React, App Router)".
+4. **`[adopt: please describe]` doctor check.** §7 of the original
+   design. `doctor` learns to grep the project's docs for the
+   marker and warn (not block) on each occurrence. Closes the
+   loop — adopt is honest about what it didn't infer, doctor
+   surfaces those gaps every run until they're filled in.
+5. **Wizard branch.** The current wizard assumes empty cwd. Add
+   a "fresh tab discovery" entry point: when `/api/state` reports
+   the cwd has no init markers but `adopt` would detect a usable
+   stack, the wizard offers "We found an existing project. Want
+   to adopt it instead of starting from scratch?". Lifts adopt
+   into the beginner flow without forcing it on existing CLI
+   users.
+6. **`recommend-stack` integration (read-only).** The current
+   adopt block hard-codes the "do not switch frameworks without
+   asking" rule. v0.2 could optionally invoke `recommend-stack`
+   on the *adopted* project's idea-equivalent (the user-supplied
+   description) and surface the diff: "You're using Flask;
+   recommend-stack would have suggested FastAPI for this idea —
+   here's why, but you've already shipped, so we're not changing
+   anything." Honest, advisory, never modifies the stack.
+7. **Confidence scoring.** §3's full table. Useful when v0.2
+   starts seeing genuinely ambiguous projects; not useful while
+   we're still operating on binary detection of four manifest
+   filenames.
+
+Items 1 and 2 are the highest-value pair — they unblock the next
+class of real-world projects and make adopt safely re-runnable.
+Items 3–4 close the "honest about what we don't know" loop.
+Items 5–7 are nice-to-haves once the core is solid.
+
+## 16. What shipped vs. what was designed
+
+Quick reference for cross-checking the original §1–§14 against the
+live code:
+
+| Section | Original design | v0 (cea6327) | v0.1 (3f45087) |
+|---|---|---|---|
+| §2 architecture | 3-layer (detect/generate/materialize) | ✓ shipped | ✓ preserved |
+| §3 detection ladder | Confidence scores, ~17 signals | Binary, 4 signals (root only) | Binary, 4 signals (root + 7 subdirs) |
+| §4 topic detection | `docs/topics/*.md` per detected topic | not shipped | not shipped |
+| §5 managed blocks | Augment-only on existing files | CLAUDE.md only | unchanged |
+| §6 sample dry-run | Detailed multi-section report | Compact 4-line plan | Adds split-stack summary |
+| §7 `[adopt: please describe]` | Placeholder + doctor integration | Placeholder text only | unchanged |
+| §8 `idea.md` shape | Generated draft | Replaced with two simple prompts | unchanged |
+| §9 workflow | adopt → seed → doctor → inventory | adopt only (others manual) | unchanged |
+| §10 test strategy | ~50 tests + fixtures | 14 tests | 20 tests (+6) |
+| §11 files this session | ~10 file changes + RUNTIME_COPY entry | 5 files, no RUNTIME_COPY | 3 files |
+| §12 open questions | 7 questions | (A) one command, (3) recommend-stack opt-out, (5) inventory not auto-invoked | unchanged |
+
+The pattern across v0 and v0.1: ship the smallest credible thing,
+let real projects expose the next limit, then design v0.2 against
+evidence. This is the same pattern that worked for `recommend-
+stack` (Session 7) and `doctor` (Session 6).

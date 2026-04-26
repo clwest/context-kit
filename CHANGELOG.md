@@ -9,6 +9,40 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`context-kit adopt`** — retrofit context-kit's docs layer onto an
+  existing project without touching source code. Detects basic stack
+  (JavaScript / Python / unknown) from manifest files at the repo
+  root and one level deep into seven recognized subdirs (`backend`,
+  `frontend`, `web`, `mobile`, `api`, `client`, `server`). Prompts
+  the user for two things — what the project is and what they're
+  trying to do next — then generates `docs/BUILD_PLAN.md`,
+  `docs/PROJECT_WHAT_IT_IS.md`, `00-START-NEXT-SESSION.md`, plus a
+  fresh or augment-only `CLAUDE.md`. Dry-run by default; `--write`
+  to apply. Augment-mode on existing CLAUDE.md preserves all human
+  content outside `<!-- context-kit:adopt:start --> / :end -->`
+  markers and is idempotent across re-runs. Designed in
+  `docs/proposals/SESSION_009_ADOPT.md`; v0 + v0.1 shipped, v0.2
+  backlog (deeper layouts, framework detection inside manifests,
+  `[adopt: please describe]` doctor checks, wizard branch) is
+  tracked there.
+- **Split-monorepo detection in `adopt`.** v0.1 walks one level
+  into seven recognized subdir names when the repo root has no
+  manifest. Backend wins as primary (the AI session's default
+  frame anchors where the domain logic lives); generators render a
+  per-subdir bullet table in BUILD_PLAN.md and the CLAUDE.md
+  augment block. Verified against `focus-flow`, `dealflowtracker`,
+  `contract-concierge`, `norman-handyman-mvp` (three-part split:
+  backend + web + mobile), and `ai-content-studio` (single-stack
+  root, regression-tested to confirm root still wins over a
+  same-named subdir).
+
+### Tests
+- 259 passing (was 239 in 0.6.1). +20 for `adopt`: 5 detection,
+  6 split-layout subdir scanning, 3 plan/dry-run/write,
+  3 CLAUDE.md augment + idempotency + BUILD_PLAN rule, 3 CLI
+  entry-point.
+
 ## [0.6.1] — 2026-04-26
 
 **Wizard polish, recovery, and a critical onboarding fix.** Driven
