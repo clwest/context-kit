@@ -257,6 +257,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print machine-readable JSON to stdout",
     )
 
+    # adopt (v0)
+    adopt = sub.add_parser(
+        "adopt",
+        help="Retrofit context-kit docs onto an existing project (v0)",
+        description=(
+            "Detect basic stack (JavaScript / Python / unknown) from "
+            "manifest files, ask two questions, and generate the "
+            "load-bearing docs (BUILD_PLAN.md, *_WHAT_IT_IS.md, "
+            "00-START-NEXT-SESSION.md, plus a CLAUDE.md augmentation). "
+            "Source code is never modified. Dry-run by default; "
+            "pass --write to actually create files."
+        ),
+    )
+    adopt.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Project root (default: current working directory)",
+    )
+    adopt.add_argument(
+        "--write",
+        action="store_true",
+        help="Apply the plan; without this, adopt prints what would happen",
+    )
+
     return parser
 
 
@@ -310,6 +335,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "recommend-stack":
         from cli.recommend_stack import run_recommend_stack
         return run_recommend_stack(args)
+
+    if args.command == "adopt":
+        from cli.adopt import run_adopt
+        return run_adopt(args)
 
     parser.print_help()
     return 1
