@@ -638,11 +638,23 @@ after v0 + v0.1 shipped to track what landed and what's next.*
 
 ## 15. v0.2 backlog (post-v0.1)
 
+> **Update (2026-04-26, after the clarity-timelock + flow-name-service
+> dogfood):** items #1 and #2 below are **superseded by §19**, which
+> consolidates them under a single core principle — *visibility
+> first, classification second*. The original items captured the
+> right symptoms (dbao-studio's misclassification, donkey_betz_world's
+> silent drop) but proposed ecosystem-by-ecosystem fixes that don't
+> generalize. §19's fallback-scan approach handles every fixture we've
+> logged so far, plus future Web3 / Solidity / Rust / Go projects we
+> haven't tested yet, with no per-ecosystem code. Items #3–#9 below
+> are unaffected and remain real backlog work.
+
 Ordered by "expected payoff per unit of work", informed by the
 five-project dogfood at the close of v0.1:
 
-1. **Root manifest should not automatically win when subdirs
-   contain stronger framework signals.** v0.1's "root wins"
+1. **[SUPERSEDED BY §19]** Root manifest should not automatically
+   win when subdirs contain stronger framework signals. v0.1's
+   "root wins"
    shortcut is correct for clean single-stack repos but wrong for
    "abandoned-shape" repos where the root carries weak/leftover
    manifests (e.g. a root `package.json` for tooling) and the
@@ -657,9 +669,9 @@ five-project dogfood at the close of v0.1:
    signals that outrank a generic root `package.json` /
    `requirements.txt` even when both are present. Pairs naturally
    with item #3 below (framework detection inside manifests).
-2. **Expand manifest recognition beyond JS/Python and report
-   scanned-but-unrecognized subdirs.** v0.1 only knows four
-   manifest filenames (`package.json`, `manage.py`,
+2. **[SUPERSEDED BY §19]** Expand manifest recognition beyond
+   JS/Python and report scanned-but-unrecognized subdirs. v0.1
+   only knows four manifest filenames (`package.json`, `manage.py`,
    `requirements.txt`, `pyproject.toml`). A subdir whose only
    manifest is something else (`pubspec.yaml`, `Cargo.toml`,
    `go.mod`, `Gemfile`, `*.xcodeproj`, `app/build.gradle`) is
@@ -727,17 +739,22 @@ five-project dogfood at the close of v0.1:
    we're still operating on binary detection of four manifest
    filenames.
 
-Items 1 and 2 are the "see what's actually there" pair — they
-close the two ways v0.1 misreads real projects (root-wins-when-it-
-shouldn't and silent-subdir-drop). Items 3 and 4 unblock the next
-class of layouts (Turborepo) and make adopt safely re-runnable.
-Item 5 closes the "honest about what we don't know" loop alongside
+Items 1 and 2 (now superseded by §19) covered the "see what's
+actually there" gap. Items 3 and 4 unblock the next class of
+layouts (Turborepo) and make adopt safely re-runnable. Item 5
+closes the "honest about what we don't know" loop alongside
 item 6. Items 7–9 are nice-to-haves once the core is solid.
 
-Specific fixture-to-item mapping:
-- **dbao-studio** (§17) is fixed by items #1 + #4 + #5.
-- **donkey_betz_world** (§18) is fixed by item #2 alone, though
-  item #5 would upgrade "Python" to "Django" in its BUILD_PLAN.
+Specific fixture-to-item mapping (post-§19):
+- **All four logged fixtures** (dbao-studio §17, donkey_betz_world
+  §18, plus the clarity-timelock and flow-name-service cases that
+  motivated §19) are addressed by §19's visibility-first design.
+- **dbao-studio** additionally benefits from item #5 (framework
+  detection inside manifests) — §19 makes mobile/ visible but
+  doesn't upgrade "Python" to "Django"; item #5 does.
+- **donkey_betz_world** likewise benefits from item #5.
+- All four fixtures benefit from item #4 (idempotent rewrites)
+  if the user hand-edits the generated docs and re-runs adopt.
 
 ## 16. What shipped vs. what was designed
 
@@ -875,18 +892,23 @@ And the generated BUILD_PLAN's `## Tech stack` heading should read:
 
 ### Which v0.2 backlog items this fixture exercises
 
-- **#1 (root vs subdir signal priority)** — primary driver. Without
-  this, v0.2 still misclassifies dbao-studio.
+- **§19 (visibility-first fallback scan)** — primary driver.
+  §19 supersedes the original items #1 and #2; it surfaces the
+  Django backend by reporting that `backend/` exists and contains
+  a recognized `manage.py` even when the root has its own
+  manifests, so the user no longer sees a misleading "JavaScript"
+  classification with the real backend invisible.
 - **#4 (idempotent BUILD_PLAN via managed markers)** — required
   for the "re-runnable after hand-edit" acceptance criterion.
-- **#5 (framework detection inside manifests)** — pairs with #1 to
-  upgrade "Python" to "Django" so the BUILD_PLAN reads the way
-  the existing CLAUDE.md does.
+- **#5 (framework detection inside manifests)** — upgrades
+  "Python" to "Django" so the BUILD_PLAN reads the way the
+  existing CLAUDE.md does. §19 alone makes the project visible;
+  #5 makes the labels accurate.
 
-A v0.2 release that ships items #1 + #4 + #5 would handle this
-fixture cleanly. The other backlog items (#2 manifest recognition,
-#3 Turborepo walking, #6 doctor placeholders, #7–9) are orthogonal —
-important on their own merits but not required to fix dbao-studio.
+A v0.2 release that ships §19 + items #4 + #5 would handle this
+fixture cleanly. The other backlog items (#3 Turborepo walking,
+#6 doctor placeholders, #7–9) are orthogonal — important on their
+own merits but not required to fix dbao-studio.
 
 ### How to use this fixture during v0.2 implementation
 
@@ -1040,17 +1062,22 @@ the silent-drop bug for any future-not-yet-recognized manifest.
 
 ### Which v0.2 backlog items this fixture exercises
 
-- **#2 (expand manifest recognition + report unrecognized
-  subdirs)** — primary and sufficient driver. Item #2 alone
-  closes this fixture.
+- **§19 (visibility-first fallback scan)** — primary and
+  sufficient driver. §19 supersedes the original item #2; its
+  fallback-scan approach surfaces `mobile/` because the subdir
+  exists and contains files (notably `pubspec.yaml` and a `lib/`
+  with `.dart` source) regardless of whether `pubspec.yaml` is
+  in any "recognized manifest" list. The "Unknown but present"
+  framing makes the omission impossible.
 - **#5 (framework detection inside manifests)** — would upgrade
   "Python" to "Django" and "JavaScript / Node.js" to "Next.js"
-  in the BUILD_PLAN, matching the depth of detail item #2 adds
-  for mobile.
+  in the BUILD_PLAN, matching the depth of detail §19 adds for
+  the mobile subdir.
 
-A v0.2 release that ships item #2 (even just the visibility
-half) would handle this fixture; pairing with #5 makes the
-output read consistently across all three subdirs.
+A v0.2 release that ships §19 alone handles this fixture's
+load-bearing requirement (mobile is no longer invisible);
+pairing with #5 makes the output read consistently across all
+three subdirs.
 
 ### How to use this fixture during v0.2 implementation
 
@@ -1073,3 +1100,361 @@ three subdir manifests (a one-line `manage.py`, a `{}`
 that `mobile/` appears in the report — either as a detected part
 or as a "scanned but not classified" entry — and never as a
 silent omission.
+
+## 19. Core principle for v0.2: visibility first, classification second
+
+> **Status:** authoritative for v0.2 design. Supersedes §15 items
+> #1 and #2. Added 2026-04-26 after the clarity-timelock and
+> flow-name-service dogfood made it clear that ecosystem-by-
+> ecosystem manifest recognition is a losing strategy — every new
+> ecosystem (Web3, Flutter, Rust, Go, Solidity, Move, Cadence, …)
+> would require its own carve-out and would silently miss anything
+> we hadn't pre-listed. The new principle inverts the design: the
+> CLI describes what's there, and the human or AI fills in what
+> it means.
+
+### The principle
+
+**Never allow real project structure to be invisible.**
+
+Classification is a nice-to-have. *Visibility* is load-bearing.
+A user (or an AI session reading the generated docs) must always
+be able to tell what subdirectories exist, what manifest-shaped
+files live in them, and what kinds of source files are present —
+even when adopt has no idea what any of it means.
+
+This rotates v0.2's center of gravity. v0 and v0.1 asked "what
+language is this?" and silently dropped what they couldn't answer.
+v0.2 asks "what's *here*?" and reports everything, classifying
+only what it can.
+
+### What v0.2 must add
+
+A **fallback scan** that runs after the existing root + recognized-
+subdir detection. The fallback is unconditional — it always runs,
+even when the recognized scan classifies everything — because its
+purpose is to surface *anything that wasn't classified*, not to
+replace classification.
+
+For each non-hidden depth-1 subdir of the repo:
+
+1. **Always list the subdir by name**, regardless of what's in it.
+2. **Report any "manifest-shaped" files** present, *whether or not*
+   adopt recognizes them. The presence list is generated from a
+   pattern set, not a name whitelist:
+   - filenames containing `config` (`hardhat.config.ts`,
+     `vite.config.js`, `next.config.mjs`)
+   - top-level `*.toml` files (`Clarinet.toml`, `Cargo.toml`,
+     `foundry.toml`, `Anchor.toml`, `Move.toml`, `pyproject.toml`)
+   - top-level `*.json` files matching common patterns (`package.json`,
+     `tsconfig.json`, `composer.json`, `flow.json`)
+   - top-level `*.yaml` / `*.yml` (`pubspec.yaml`, `docker-compose.yml`)
+   - Other well-known manifests by exact name (`manage.py`,
+     `Gemfile`, `Pipfile`, `Makefile`, `Dockerfile`)
+3. **Report representative source-file extensions** found in the
+   subdir's tree (depth-2 walk to keep cost bounded). For each
+   extension that appears more than N times (suggest N=3 to filter
+   noise), report a count and one example path:
+   - `.sol` → "Solidity" likely
+   - `.clar` → "Clarity / Stacks" likely
+   - `.cadence` → "Cadence / Flow" likely
+   - `.rs`, `.go`, `.rb`, `.swift`, `.kt`, `.dart`, etc.
+   - **Do not classify** based on these — just surface them.
+4. **Skip hidden dirs** (`.git`, `.venv`, `.cache`, etc.) and the
+   existing `RECOGNIZED_SUBDIRS_TO_SKIP` set (`node_modules`,
+   `__pycache__`, `dist`, `build`, `.idea`, `.vscode`).
+
+The result is a new `unclassified_subdirs` field on `StackProfile`:
+
+```python
+@dataclass
+class UnclassifiedSubdir:
+    name: str                        # "timelocked-wallet"
+    manifest_files: list[str]        # ["Clarinet.toml"]
+    notable_extensions: dict[str, int]  # {".clar": 2}
+    one_example_path: dict[str, str] # {".clar": "contracts/timelocked-wallet.clar"}
+```
+
+### How it surfaces in output
+
+**Dry-run report** gains an "Unknown but present" section:
+
+```
+Detected stack: Unknown stack — no manifest detected at root or in
+                recognized subdirs.
+
+Unknown but present (depth 1, not classified):
+  timelocked-wallet/  manifests: Clarinet.toml
+                      source:    2 .clar files
+                                 (e.g. contracts/timelocked-wallet.clar)
+```
+
+**BUILD_PLAN.md** gains an "Unknown but present" subsection under
+`## Tech stack` whenever `unclassified_subdirs` is non-empty:
+
+```markdown
+## Tech stack
+
+Unknown stack — adopt could not classify the project.
+
+### Unknown but present
+
+The following directories exist and contain notable files but
+adopt does not yet recognize their type. An AI session reading
+this should ask the user what these are before writing code that
+touches them.
+
+- **timelocked-wallet/** — contains `Clarinet.toml` and 2 `.clar`
+  files (example: `contracts/timelocked-wallet.clar`). The `.clar`
+  extension typically indicates Clarity (Stacks blockchain) smart
+  contracts; verify with the user.
+```
+
+**CLAUDE.md augment block** likewise gains a "Subdirs of unknown
+type" subsection so an AI session loaded into the project can't
+miss them.
+
+The "(e.g. contracts/...)" example paths are essential — they let
+the user one-keystroke navigate to the actual file and let an AI
+session glance at it to figure out the language.
+
+### How the existing fixtures look under §19
+
+Showing the same five projects we've dogfooded, with §19's expected
+behavior. None of the dry-run outputs below requires any per-
+ecosystem code — they all fall out of the visibility-first
+fallback scan.
+
+**focus-flow** (no change — already classified by v0.1):
+
+```
+Detected stack: Split monorepo — backend=Python, frontend=JavaScript / Node.js
+```
+
+**dbao-studio** (root wins for classification, but `backend/` is
+now also surfaced as a separate signal):
+
+```
+Detected stack: JavaScript / Node.js (detected from package.json)
+  note: Detected both JavaScript and Python manifests at root.
+
+Unknown but present (depth 1, also scanned):
+  backend/    manifests: manage.py, requirements.txt
+              source:    many .py files (e.g. backend/api/views.py)
+              note:      manage.py + .py files suggest Django; verify with user.
+```
+
+The misclassification at root remains, but the user (and AI
+session) now sees there's a Django backend that adopt's primary
+classification missed. Item #5 (framework detection inside
+manifests) would later upgrade root from "JavaScript" to
+"JavaScript (no detected framework)" or similar.
+
+**donkey_betz_world** (mobile/ now surfaces):
+
+```
+Detected stack: Split monorepo — backend=Python, frontend=JavaScript / Node.js
+
+Unknown but present (depth 1):
+  mobile/   manifests: pubspec.yaml
+            source:    many .dart files (e.g. mobile/lib/main.dart)
+            note:      pubspec.yaml + .dart files suggest Flutter / Dart;
+                       verify with user.
+```
+
+**clarity-timelock** (whole project surfaces from invisibility):
+
+```
+Detected stack: Unknown stack — no manifest detected at root or in
+                recognized subdirs.
+
+Unknown but present (depth 1):
+  timelocked-wallet/  manifests: Clarinet.toml
+                      source:    2 .clar files (e.g. contracts/timelocked-wallet.clar)
+                      note:      .clar files suggest Clarity / Stacks
+                                 smart contracts; verify with user.
+```
+
+**flow-name-service** (cadence/ surfaces; api/ surfaces as empty):
+
+```
+Detected stack: Split monorepo — web=JavaScript / Node.js
+
+Unknown but present (depth 1):
+  api/      empty
+  cadence/  source: 4 .cdc files (e.g. cadence/contracts/Domains.cdc)
+            note:   .cdc files suggest Cadence / Flow blockchain;
+                    verify with user.
+```
+
+### What §19 does NOT do
+
+- **Does not classify.** The `note:` lines say "suggest X; verify
+  with user" — they're hints for the human reader and the AI
+  session, not declarations adopt is staking a claim on. The
+  classification surface (`StackProfile.language`, `parts`) is
+  unchanged from v0.1.
+- **Does not parse manifests.** Just file presence. We don't
+  open `Clarinet.toml` to confirm it's well-formed; we just
+  report that a file by that name exists.
+- **Does not walk deep.** Manifest files: depth 1 (immediate
+  contents of each subdir). Source-extension counts: depth 2
+  (one level into typical contracts/ / src/ / lib/ patterns).
+  Going deeper would explode cost on large repos.
+- **Does not replace v0.1's existing detection.** Recognized
+  manifests at root or in recognized subdirs still produce the
+  primary classification. §19 is additive — it surfaces what
+  classification missed, never overrides what classification
+  found.
+
+### Acceptance criteria for §19
+
+- [ ] All four logged fixtures (dbao-studio, donkey_betz_world,
+      clarity-timelock, flow-name-service) produce dry-run output
+      where every non-hidden depth-1 subdir is named explicitly.
+- [ ] No regression for already-classified projects (focus-flow,
+      ai-content-studio, the test fixtures): existing classification
+      output is unchanged; the "Unknown but present" section
+      appears only when `unclassified_subdirs` is non-empty.
+- [ ] BUILD_PLAN.md and the CLAUDE.md augment block both carry
+      the "Unknown but present" content when applicable, so an AI
+      session reading from disk sees the same information the
+      dry-run shows the user.
+- [ ] No per-ecosystem code added: the manifest-shaped pattern
+      list and the source-extension report are both data, not
+      ecosystem-specific code paths. Adding Solidity / Move /
+      Anchor support later means adding rows to the data, not
+      writing detector functions.
+- [ ] Hidden dirs and noise dirs (`.git`, `.venv`, `node_modules`,
+      `__pycache__`, `dist`, `build`, `.idea`, `.vscode`) are
+      filtered out of the unknown-but-present scan.
+- [ ] Cost is bounded: the source-extension walk caps at depth 2
+      and at N files per subdir (suggest N=200 to bound on huge
+      monorepos).
+
+### Why this beats per-ecosystem detection
+
+Three reasons, in order of importance:
+
+1. **It scales to ecosystems we haven't seen.** Anything new
+   shows up in the "Unknown but present" section automatically.
+   The user (or the AI session) sees the manifest filename and
+   the representative file extensions and can fill in the gap
+   without an adopt update. Solidity, Move, Cadence, future
+   ecosystems we can't name yet — all visible without code
+   changes.
+2. **It's honest about uncertainty.** Per-ecosystem detection
+   risks confidently-wrong classifications when a project mixes
+   ecosystems or uses a non-canonical layout. "Suggest X; verify
+   with user" is a stronger contract than a flat label.
+3. **It's much smaller code.** §19 is roughly one new function
+   (`scan_unclassified_subdirs(repo)`), one dataclass
+   (`UnclassifiedSubdir`), and rendering changes in two
+   generators. The per-ecosystem alternative would be a function
+   per ecosystem indefinitely.
+
+Item #5 (framework detection inside the four manifests we already
+recognize) is still worth doing — it's how "JavaScript / Node.js"
+becomes "Next.js" — but it's a refinement on top of §19, not a
+replacement for it. Even with item #5 fully shipped, an
+unrecognized manifest still goes through §19's fallback path.
+
+### Why the manifest-shaped pattern list is not a slippery slope
+
+The original item #2 design was a manifest *whitelist* — adding
+each new format meant updating both the recognition list AND the
+classification logic. The §19 pattern list is just a **detector
+for "this file is probably a manifest of some kind"**: presence
+gets reported, classification doesn't. A new ecosystem requires
+zero adopt changes for visibility (the source-extension report
+catches it via `.sol` / `.move` / `.cdc` etc.) and exactly one
+data row per ecosystem when we later want to upgrade visibility
+to classification.
+
+This is the same shape as `inventory`'s "list everything; classify
+what you can" approach — the principle that worked in 2024 still
+works in 2026.
+
+### Implementation sketch
+
+A complete v0.2 implementation of §19 should be ~200 lines added
+to `cli/adopt.py`:
+
+```python
+# New constants
+NOISE_DIRS = {"node_modules", "__pycache__", ".git", ".venv",
+              "venv", "dist", "build", ".idea", ".vscode", ".cache"}
+NOTABLE_EXTENSIONS = {  # extension -> human label (purely descriptive)
+    ".sol": "Solidity",
+    ".clar": "Clarity / Stacks",
+    ".cdc": "Cadence / Flow",
+    ".cadence": "Cadence / Flow",
+    ".move": "Move (Sui/Aptos)",
+    ".dart": "Dart / Flutter",
+    ".rs": "Rust",
+    ".go": "Go",
+    ".rb": "Ruby",
+    ".swift": "Swift",
+    ".kt": "Kotlin",
+    ".scala": "Scala",
+    ".ex": "Elixir",
+    ".elm": "Elm",
+    # ... add freely; this is data, not code
+}
+MIN_SOURCE_FILES_TO_REPORT = 3
+MAX_FILES_PER_SUBDIR = 200  # cost bound
+
+@dataclass
+class UnclassifiedSubdir:
+    name: str
+    manifest_files: list[str]
+    notable_extensions: dict[str, int]
+    example_paths: dict[str, str]
+    note: str | None  # "suggest X; verify with user" or None
+
+def _looks_like_manifest(filename: str) -> bool:
+    """File-shape heuristic: anything that *could* be a manifest."""
+    # exact-match well-knowns + suffix patterns
+    ...
+
+def scan_unclassified_subdirs(repo: Path,
+                              already_classified: set[str]) -> list[UnclassifiedSubdir]:
+    """Walk depth 1; report what wasn't classified.
+    
+    ``already_classified`` is the set of subdir names that
+    detect_stack() populated into StackProfile.parts. Those are
+    excluded from the unknown-but-present report (they're already
+    classified). Everything else at depth 1 that isn't noise gets
+    described.
+    """
+    ...
+```
+
+`StackProfile` gains a single field:
+
+```python
+@dataclass
+class StackProfile:
+    ...
+    unclassified_subdirs: list[UnclassifiedSubdir] = field(default_factory=list)
+```
+
+Generators check `if stack.unclassified_subdirs` and render the
+new section.
+
+### Test strategy for §19
+
+~10 new tests in `tests/test_adopt.py`, fixture-driven:
+
+| Fixture | Asserts |
+|---|---|
+| `unknown_only/timelocked-wallet/Clarinet.toml + .clar files` | dir surfaces with manifest + extension |
+| `mixed_classified_and_unclassified/backend/manage.py + mobile/pubspec.yaml + .dart files` | mobile/ in unknown-but-present, backend/ not duplicated |
+| `empty_subdir/api/` (dir exists, no files) | `api/   empty` |
+| `noise_dirs_skipped/node_modules/* + .git/*` | not surfaced |
+| `extension_threshold/contracts/foo.sol + bar.sol` | 2 files < threshold of 3, not reported as notable |
+| `large_subdir/contracts/*.sol × 500` | capped at MAX_FILES_PER_SUBDIR |
+| Generator: BUILD_PLAN renders the new section when `unclassified_subdirs` is non-empty | string assert |
+| Generator: CLAUDE.md augment block renders likewise | string assert |
+| Generator: section is omitted when `unclassified_subdirs` is empty (no extra noise on clean projects) | negative assert |
+| Regression: ai-content-studio (single-stack root) still works | classification unchanged, no new section |
