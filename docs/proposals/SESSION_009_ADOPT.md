@@ -657,14 +657,35 @@ five-project dogfood at the close of v0.1:
    signals that outrank a generic root `package.json` /
    `requirements.txt` even when both are present. Pairs naturally
    with item #3 below (framework detection inside manifests).
-2. **`apps/<name>/` Turborepo / monorepo shapes.** The current
+2. **Expand manifest recognition beyond JS/Python and report
+   scanned-but-unrecognized subdirs.** v0.1 only knows four
+   manifest filenames (`package.json`, `manage.py`,
+   `requirements.txt`, `pyproject.toml`). A subdir whose only
+   manifest is something else (`pubspec.yaml`, `Cargo.toml`,
+   `go.mod`, `Gemfile`, `*.xcodeproj`, `app/build.gradle`) is
+   silently dropped — `_detect_in_dir()` returns `unknown` with
+   empty signals and the scanner skips the subdir entirely so it
+   never appears in the dry-run report. The donkey_betz_world
+   fixture (see §18) is the canonical example: the repo has a
+   real Flutter app under `mobile/` but v0.1's report mentions
+   only backend + frontend. v0.2 should: (a) extend the manifest
+   set to at minimum Flutter (`pubspec.yaml`), Rust
+   (`Cargo.toml`), Go (`go.mod`), Ruby (`Gemfile`), iOS
+   (`*.xcodeproj` / `Podfile`), and Android (`app/build.gradle`);
+   (b) when a recognized subdir name (`backend`/`frontend`/
+   `mobile`/etc.) exists but contains no recognized manifest,
+   surface it in the dry-run as `scanned mobile/, found
+   pubspec.yaml — adopt v0.2 doesn't recognize that format yet`
+   instead of silently omitting it. Honest-by-omission is worse
+   than misclassification: at least misclassification is visible.
+3. **`apps/<name>/` Turborepo / monorepo shapes.** The current
    depth-1 limit returns "unknown" for Nx, Turborepo, and
    microservice monorepos that put each component under
    `apps/api`, `apps/web`, etc. v0.1's `_detect_in_dir()` is
    already the right primitive — v0.2 adds a second fallback that
    walks `apps/*/` (and maybe `packages/*/` and `services/*/`)
    when the depth-1 scan returns empty.
-3. **Idempotent BUILD_PLAN / WHAT_IT_IS / START rewriting via
+4. **Idempotent BUILD_PLAN / WHAT_IT_IS / START rewriting via
    managed-block markers.** Currently these three files are
    create-only — re-running `adopt --write` against a project
    where they exist would either skip them or overwrite them
@@ -672,7 +693,7 @@ five-project dogfood at the close of v0.1:
    `<!-- context-kit:adopt:start --> / :end -->` blocks so re-runs
    refresh the auto-generated portions and preserve human edits.
    Same pattern the CLAUDE.md augment block already uses.
-4. **Framework detection inside the four manifests.** Today we
+5. **Framework detection inside the four manifests.** Today we
    know "JavaScript" but not "Next.js"; "Python" but not "Django"
    (despite already detecting `manage.py` separately).
    `package.json` parsing with a small dependency-name lookup
@@ -681,19 +702,19 @@ five-project dogfood at the close of v0.1:
    keyword grep (django, fastapi, flask) gets us most of the way.
    Output line goes from "JavaScript / Node.js" to "Next.js
    (React, App Router)".
-5. **`[adopt: please describe]` doctor check.** §7 of the original
+6. **`[adopt: please describe]` doctor check.** §7 of the original
    design. `doctor` learns to grep the project's docs for the
    marker and warn (not block) on each occurrence. Closes the
    loop — adopt is honest about what it didn't infer, doctor
    surfaces those gaps every run until they're filled in.
-6. **Wizard branch.** The current wizard assumes empty cwd. Add
+7. **Wizard branch.** The current wizard assumes empty cwd. Add
    a "fresh tab discovery" entry point: when `/api/state` reports
    the cwd has no init markers but `adopt` would detect a usable
    stack, the wizard offers "We found an existing project. Want
    to adopt it instead of starting from scratch?". Lifts adopt
    into the beginner flow without forcing it on existing CLI
    users.
-7. **`recommend-stack` integration (read-only).** The current
+8. **`recommend-stack` integration (read-only).** The current
    adopt block hard-codes the "do not switch frameworks without
    asking" rule. v0.2 could optionally invoke `recommend-stack`
    on the *adopted* project's idea-equivalent (the user-supplied
@@ -701,21 +722,22 @@ five-project dogfood at the close of v0.1:
    recommend-stack would have suggested FastAPI for this idea —
    here's why, but you've already shipped, so we're not changing
    anything." Honest, advisory, never modifies the stack.
-8. **Confidence scoring.** §3's full table. Useful when v0.2
+9. **Confidence scoring.** §3's full table. Useful when v0.2
    starts seeing genuinely ambiguous projects; not useful while
    we're still operating on binary detection of four manifest
    filenames.
 
-Items 1, 2, and 3 are the highest-value group — together they
-unblock the messy real-world cases (mixed-root projects, Turborepo
-shapes) and make adopt safely re-runnable. Items 4–5 close the
-"honest about what we don't know" loop. Items 6–8 are nice-to-haves
-once the core is solid.
+Items 1 and 2 are the "see what's actually there" pair — they
+close the two ways v0.1 misreads real projects (root-wins-when-it-
+shouldn't and silent-subdir-drop). Items 3 and 4 unblock the next
+class of layouts (Turborepo) and make adopt safely re-runnable.
+Item 5 closes the "honest about what we don't know" loop alongside
+item 6. Items 7–9 are nice-to-haves once the core is solid.
 
-Items 1 and 4 specifically pair against the dbao-studio fixture
-(§17) — together they would let v0.2 produce a correct BUILD_PLAN
-for that project where v0.1 currently misclassifies the stack as
-JavaScript.
+Specific fixture-to-item mapping:
+- **dbao-studio** (§17) is fixed by items #1 + #4 + #5.
+- **donkey_betz_world** (§18) is fixed by item #2 alone, though
+  item #5 would upgrade "Python" to "Django" in its BUILD_PLAN.
 
 ## 16. What shipped vs. what was designed
 
@@ -855,16 +877,16 @@ And the generated BUILD_PLAN's `## Tech stack` heading should read:
 
 - **#1 (root vs subdir signal priority)** — primary driver. Without
   this, v0.2 still misclassifies dbao-studio.
-- **#3 (idempotent BUILD_PLAN via managed markers)** — required
+- **#4 (idempotent BUILD_PLAN via managed markers)** — required
   for the "re-runnable after hand-edit" acceptance criterion.
-- **#4 (framework detection inside manifests)** — pairs with #1 to
+- **#5 (framework detection inside manifests)** — pairs with #1 to
   upgrade "Python" to "Django" so the BUILD_PLAN reads the way
   the existing CLAUDE.md does.
 
-A v0.2 release that ships items #1 + #3 + #4 would handle this
-fixture cleanly. The other backlog items (#2 Turborepo walking,
-#5 doctor placeholders, #6–8) are orthogonal — important on their
-own merits but not required to fix dbao-studio.
+A v0.2 release that ships items #1 + #4 + #5 would handle this
+fixture cleanly. The other backlog items (#2 manifest recognition,
+#3 Turborepo walking, #6 doctor placeholders, #7–9) are orthogonal —
+important on their own merits but not required to fix dbao-studio.
 
 ### How to use this fixture during v0.2 implementation
 
@@ -880,3 +902,174 @@ For automated coverage, lift a stripped-down fixture under
 manifest files and an existing CLAUDE.md — that lets the test
 suite assert the new detection priority without depending on the
 real `/development/` path.
+
+## 18. v0.2 fixture: donkey_betz_world (Flutter mobile)
+
+A real project at `/Users/donkeyking/development/donkey_betz_world`
+that v0.1 partially handles correctly but silently drops one
+component. Logged as a second concrete acceptance target for v0.2,
+complementary to dbao-studio (§17). Where dbao-studio exposes the
+"misclassification" failure mode, donkey_betz_world exposes the
+worse "honest-by-omission" failure mode — the dry-run report
+mentions only the two stacks v0.1 understands and gives no signal
+that anything was missed.
+
+### What's actually there
+
+- **Empty repo root** (just a `Makefile`, `media/`, and the three
+  recognized subdirs). No CLAUDE.md, no README, no root manifests.
+  This is the clean case for v0.1's depth-1 fallback.
+- **`backend/`** contains both `manage.py` AND `requirements.txt`.
+  Django (Python). v0.1 detects this correctly.
+- **`frontend/`** contains `package.json`, `next.config.mjs`,
+  `eslint.config.mjs`, `jsconfig.json`, an `app/` dir. Next.js.
+  v0.1 detects the `package.json` and labels it "JavaScript /
+  Node.js" (correct as far as v0.1 can see; framework name will
+  arrive with backlog item #5).
+- **`mobile/`** is a real Flutter / Dart project: `pubspec.yaml`
+  at root, `lib/` for Dart source, plus `android/`, `ios/`,
+  `macos/`, `linux/` build targets and `analysis_options.yaml`
+  for Dart analyzer config. **v0.1 cannot see this at all.**
+  `_detect_in_dir(mobile/)` returns `("unknown", [])` because
+  none of the four recognized manifest filenames are present, and
+  the scanner skips the subdir entirely so it never appears in
+  the `parts` dict, the signals list, or the dry-run report.
+
+### Current v0.1 behavior (silent omission)
+
+Run on 2026-04-26 with v0.1 at commit `3f45087`:
+
+```
+Detected stack: Split monorepo — backend=Python, frontend=JavaScript / Node.js
+  note: Split monorepo detected. Per-subdir stack listed below;
+        deeper layouts (apps/<name>/...) are not yet handled.
+
+Plan:
+  would create   docs/BUILD_PLAN.md
+  would create   docs/PROJECT_WHAT_IT_IS.md
+  would create   00-START-NEXT-SESSION.md
+  would create   CLAUDE.md
+```
+
+The detection line names two stacks. The note mentions a single
+caveat (deeper layouts). **Nothing in this output indicates that
+`mobile/` exists, was scanned, or contains a real Flutter app.**
+The generated BUILD_PLAN's `## Tech stack` section reads:
+
+```
+## Tech stack
+
+- **Backend:** Python (detected from `backend/manage.py`)
+- **Frontend:** JavaScript / Node.js (detected from `frontend/package.json`)
+```
+
+An AI session loaded into this project from these docs would build
+two-thirds of the application — backend and web frontend — and
+have no awareness that there's a Flutter mobile app to keep in
+sync. That's a more dangerous failure than dbao-studio's
+misclassification: a wrong fact can be challenged; a missing fact
+cannot.
+
+### Desired v0.2 behavior
+
+When v0.2 ships item #2 from §15, this same dry-run should
+produce:
+
+```
+Detected stack: Split monorepo —
+  backend = Python (detected from backend/manage.py)
+  frontend = JavaScript / Node.js (detected from frontend/package.json)
+  mobile = Flutter / Dart (detected from mobile/pubspec.yaml)
+
+Plan:
+  would create   docs/BUILD_PLAN.md
+  would create   docs/PROJECT_WHAT_IT_IS.md
+  would create   00-START-NEXT-SESSION.md
+  would create   CLAUDE.md
+```
+
+And the BUILD_PLAN's `## Tech stack` section should read:
+
+```
+## Tech stack
+
+- **Backend:** Python (detected from `backend/manage.py`)
+- **Frontend:** JavaScript / Node.js (detected from `frontend/package.json`)
+- **Mobile:** Flutter / Dart (detected from `mobile/pubspec.yaml`)
+```
+
+Even if v0.2 doesn't add full Flutter support in the same ship,
+the half-fix is acceptable as long as it's *visible*:
+
+```
+Detected stack: Split monorepo — backend=Python, frontend=JavaScript / Node.js
+
+Subdirs scanned but not classified:
+  mobile/ — found pubspec.yaml; adopt v0.2 doesn't recognize this format yet.
+```
+
+The honest-omission scan-but-report behavior is item #2's "(b)"
+sub-bullet and is the load-bearing part of the fix; the manifest
+recognition list extension is item #2's "(a)" and is mostly
+mechanical.
+
+### Acceptance criteria for "v0.2 handles donkey_betz_world"
+
+Either path satisfies the fixture:
+
+**Full fix** (item #2 ships both (a) and (b)):
+- [ ] `detect_stack(donkey_betz_world).parts` contains
+      `{"backend": "python", "frontend": "javascript", "mobile": "flutter"}`
+      (or whatever `_lang_label` ends up calling Dart).
+- [ ] BUILD_PLAN.md renders all three subdirs in its bullet table.
+- [ ] CLAUDE.md augment block (or fresh-create) carries all three.
+- [ ] `language` is still `"python"` (backend wins, primary
+      unchanged).
+
+**Half fix** (item #2 ships only (b) — the visibility fix —
+without the recognition list extension):
+- [ ] Dry-run output contains a "Subdirs scanned but not
+      classified" section listing `mobile/` with the actual
+      filename found (`pubspec.yaml`).
+- [ ] The BUILD_PLAN.md likewise notes the unclassified subdir so
+      an AI session reading the doc knows mobile exists, even if
+      adopt couldn't say what kind of app it is.
+
+The half fix is the honest minimum. Without it, v0.2 still has
+the silent-drop bug for any future-not-yet-recognized manifest.
+
+### Which v0.2 backlog items this fixture exercises
+
+- **#2 (expand manifest recognition + report unrecognized
+  subdirs)** — primary and sufficient driver. Item #2 alone
+  closes this fixture.
+- **#5 (framework detection inside manifests)** — would upgrade
+  "Python" to "Django" and "JavaScript / Node.js" to "Next.js"
+  in the BUILD_PLAN, matching the depth of detail item #2 adds
+  for mobile.
+
+A v0.2 release that ships item #2 (even just the visibility
+half) would handle this fixture; pairing with #5 makes the
+output read consistently across all three subdirs.
+
+### How to use this fixture during v0.2 implementation
+
+Manual (dry-run, safe — never touches source):
+
+```bash
+python3 context_kit.py adopt /Users/donkeyking/development/donkey_betz_world
+```
+
+Compare the output against the "desired v0.2 behavior" block
+above. The "Subdirs scanned but not classified" section is the
+load-bearing change to look for; it's what closes the
+silent-omission gap regardless of whether full Flutter support
+lands at the same time.
+
+For automated coverage, lift a stripped-down fixture under
+`tests/fixtures/adopt/donkey_betz_world_shape/` containing the
+three subdir manifests (a one-line `manage.py`, a `{}`
+`package.json`, and a minimal `pubspec.yaml`). The test asserts
+that `mobile/` appears in the report — either as a detected part
+or as a "scanned but not classified" entry — and never as a
+silent omission.
