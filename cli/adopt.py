@@ -14,6 +14,7 @@ release. Source code is never modified; only docs are written.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -50,6 +51,56 @@ class StackProfile:
     # keys to ``parts``. Lets the BUILD_PLAN render "(detected from
     # backend/manage.py)" instead of just naming the language.
     part_signals: dict[str, str] = field(default_factory=dict)
+    # v0.2: visibility-first fallback. Depth-1 child directories that
+    # the classifier didn't pick up — by name, with whatever manifest-
+    # shaped files and notable source extensions are inside. See
+    # ``UnclassifiedSubdir`` and ``scan_unclassified_subdirs``.
+    unclassified_subdirs: list[UnclassifiedSubdir] = field(default_factory=list)
+
+
+@dataclass
+class UnclassifiedSubdir:
+    """A depth-1 child directory the visibility-first scan surfaced.
+
+    See SESSION_009_ADOPT.md §19 — "Never allow real project structure
+    to be invisible." This is what the scanner produces for any
+    non-hidden depth-1 child directory that wasn't classified into
+    ``StackProfile.parts``. Classification stays narrow (it only
+    reports what it can confidently call); visibility-first reports
+    everything else by name so the user (and any AI session reading
+    the generated docs) can't miss a subdir that adopt couldn't
+    classify.
+
+    Fields are intentionally descriptive, not classifying:
+    - ``manifest_files``: filenames that *look like* manifests but
+      adopt isn't claiming to know what they are.
+    - ``notable_extensions``: count per file extension that's in
+      ``NOTABLE_EXTENSIONS`` (capped scan; see MAX_FILES_PER_SUBDIR).
+    - ``example_paths``: one example relative path per extension so
+      the user / AI can one-keystroke navigate to a real file.
+    - ``note``: optional "X files suggest Y; verify with user" hint
+      derived from the dominant domain extension via DOMAIN_HINTS.
+      Empty for generic-language-only subdirs (.py / .js / .ts) —
+      the manifest filenames already tell that story.
+    - ``is_empty``: dir exists but the scan found nothing inside.
+      Worth surfacing explicitly (see flow-name-service's empty
+      ``api/`` placeholder in SESSION_009_ADOPT.md §19).
+    """
+
+    name: str
+    manifest_files: list[str] = field(default_factory=list)
+    notable_extensions: dict[str, int] = field(default_factory=dict)
+    example_paths: dict[str, str] = field(default_factory=dict)
+    note: Optional[str] = None
+    # True only when the dir literally has zero files (rare — usually
+    # an empty placeholder like flow-name-service's ``api/``).
+    is_empty: bool = False
+    # Total file count seen during the scan (capped at MAX_FILES_PER_SUBDIR).
+    # Lets the dry-run distinguish "truly empty" from "has files but
+    # none with extensions we recognize" — the second case shows up for
+    # dirs full of .json / .md / config files (e.g. dbao-studio's
+    # agents/ contains JSON dumps but no .py source).
+    total_file_count: int = 0
 
 
 @dataclass
@@ -161,7 +212,9 @@ def detect_stack(repo: Path) -> StackProfile:
                 "v0 reports JavaScript and notes Python presence; "
                 "multi-stack handling is planned for a later release."
             )
-        return StackProfile(language=root_lang, signals=root_signals, notes=notes)
+        profile = StackProfile(language=root_lang, signals=root_signals, notes=notes)
+        profile.unclassified_subdirs = scan_unclassified_subdirs(repo, set(profile.parts))
+        return profile
 
     # Step 2: one-level-deep scan into recognized subdirs only.
     parts: dict[str, str] = {}
@@ -187,16 +240,18 @@ def detect_stack(repo: Path) -> StackProfile:
             "Split monorepo detected. Per-subdir stack listed below; "
             "deeper layouts (apps/<name>/...) are not yet handled."
         ]
-        return StackProfile(
+        profile = StackProfile(
             language=primary,
             signals=aggregated_signals,
             notes=notes,
             parts=parts,
             part_signals=part_signals,
         )
+        profile.unclassified_subdirs = scan_unclassified_subdirs(repo, set(profile.parts))
+        return profile
 
     # Nothing at root, nothing in recognized subdirs.
-    return StackProfile(
+    profile = StackProfile(
         language="unknown",
         signals=[],
         notes=[
@@ -205,6 +260,8 @@ def detect_stack(repo: Path) -> StackProfile:
             f"({', '.join(RECOGNIZED_SUBDIRS)})."
         ],
     )
+    profile.unclassified_subdirs = scan_unclassified_subdirs(repo, set(profile.parts))
+    return profile
 
 
 def derive_project_title(repo: Path) -> str:
@@ -213,6 +270,280 @@ def derive_project_title(repo: Path) -> str:
     # Replace common separators with spaces then title-case word-by-word.
     cleaned = raw.replace("-", " ").replace("_", " ").strip()
     return " ".join(w.capitalize() for w in cleaned.split()) or "Project"
+
+
+# ---------------------------------------------------------------------------
+# Layer 1.5: visibility-first fallback (v0.2, see SESSION_009_ADOPT.md §19)
+# ---------------------------------------------------------------------------
+#
+# Core principle: never allow real project structure to be invisible.
+# Classification (Layer 1) stays narrow; this layer reports what
+# classification *missed* so an AI session reading the generated docs
+# can't be unaware of (say) a contracts/ directory full of .sol files
+# in a project the classifier called "JavaScript". See §19's worked
+# examples for dbao-studio, donkey_betz_world, clarity-timelock,
+# flow-name-service, and tornado-core.
+#
+# Per-ecosystem detection is deferred. The data tables below say what
+# files *suggest* without committing to what they *are* — a deliberate
+# choice to avoid the per-ecosystem-detector treadmill (Solidity, Move,
+# Anchor, Cadence, Foundry, Hardhat, Brownie, Truffle, Reflex, Flutter,
+# ...). Each ecosystem we'd otherwise need to support is one row in
+# DOMAIN_HINTS.
+
+# Skip these in the depth-1 walk. Hidden dirs (anything starting with
+# ".") are also skipped at the call site.
+NOISE_DIRS = frozenset({
+    "node_modules", "__pycache__", "venv", ".venv", "env",
+    "dist", "build", "out", "target",
+    "coverage", ".coverage", "htmlcov",
+    ".git", ".idea", ".vscode", ".cache", ".next", ".nuxt", ".turbo",
+    "media",  # static media uploads — no source code worth surfacing
+})
+
+# Filenames we explicitly know are project-defining manifests. Used by
+# both classification (Layer 1) and the visibility-first scan, but with
+# different downstream effects: classification returns a language;
+# visibility just reports presence.
+KNOWN_MANIFEST_NAMES = frozenset({
+    # JS/TS
+    "package.json",
+    # Python
+    "manage.py", "requirements.txt", "pyproject.toml", "Pipfile", "rxconfig.py",
+    # Mobile/native
+    "pubspec.yaml", "Podfile",
+    # Other ecosystems
+    "Cargo.toml", "go.mod", "Gemfile",
+    # Web3 / smart contracts
+    "Clarinet.toml", "foundry.toml", "truffle-config.js",
+    "hardhat.config.js", "hardhat.config.ts", "hardhat.config.cjs",
+    "hardhat.config.mjs", "brownie-config.yaml",
+    "Anchor.toml", "Move.toml", "flow.json",
+    # Infra-shaped (worth flagging if alone in a subdir)
+    "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
+    "Makefile",
+})
+
+# Files that LOOK manifest-shaped but are noise (lock files, editor
+# configs, linter configs). Filtered out so the unknown-but-present
+# section stays signal-only.
+NOT_MANIFEST_NAMES = frozenset({
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "tsconfig.json", "jsconfig.json",
+    "analysis_options.yaml",  # Dart analyzer
+    ".eslintrc.json", ".prettierrc",
+    "vercel.json",  # deploy config, not project-defining
+})
+
+# Generic-language extensions: surfaced only when they exceed
+# MIN_SOURCE_FILES_TO_REPORT (3) so a stray .py file in a JS project
+# doesn't add noise. Domain extensions (DOMAIN_HINTS below) surface at
+# any count >= 1 because a single .sol or .clar file is meaningful.
+GENERIC_EXTENSIONS = {
+    ".py":  "Python",
+    ".ts":  "TypeScript",
+    ".tsx": "TSX",
+    ".js":  "JavaScript",
+    ".jsx": "JSX",
+}
+
+# Domain-specific extensions: ext -> "X files suggest Y" hint text.
+# Adding a new ecosystem to visibility = one row here. Each row is
+# data, not code — no detector functions, no classification logic
+# behind these. The "verify with user" framing is load-bearing: adopt
+# is making a hint, not a claim.
+DOMAIN_HINTS = {
+    ".sol":     ".sol files suggest Solidity / EVM smart contracts",
+    ".clar":    ".clar files suggest Clarity / Stacks smart contracts",
+    ".cdc":     ".cdc files suggest Cadence / Flow blockchain",
+    ".cadence": ".cadence files suggest Cadence / Flow blockchain",
+    ".circom":  ".circom files suggest zk-SNARK circuits (Circom)",
+    ".move":    ".move files suggest Move smart contracts (Sui/Aptos)",
+    ".cairo":   ".cairo files suggest Cairo / StarkNet",
+    ".fc":      ".fc files suggest FunC / TON smart contracts",
+    ".dart":    ".dart files suggest Dart / Flutter",
+    ".rs":      ".rs files suggest Rust",
+    ".go":      ".go files suggest Go",
+    ".rb":      ".rb files suggest Ruby",
+    ".swift":   ".swift files suggest Swift",
+    ".kt":      ".kt files suggest Kotlin",
+    ".scala":   ".scala files suggest Scala",
+    ".ex":      ".ex files suggest Elixir",
+    ".elm":     ".elm files suggest Elm",
+    ".ipynb":   ".ipynb files suggest Jupyter notebooks (interactive Python)",
+}
+
+DOMAIN_LABELS = {
+    ".sol": "Solidity", ".clar": "Clarity", ".cdc": "Cadence",
+    ".cadence": "Cadence", ".circom": "Circom", ".move": "Move",
+    ".cairo": "Cairo", ".fc": "FunC", ".dart": "Dart", ".rs": "Rust",
+    ".go": "Go", ".rb": "Ruby", ".swift": "Swift", ".kt": "Kotlin",
+    ".scala": "Scala", ".ex": "Elixir", ".elm": "Elm",
+    ".ipynb": "Jupyter notebook",
+}
+
+# Cost bounds for the depth-2 walk. A project with 5,000 .py files
+# in a single subdir would exhaust the count without these.
+MIN_SOURCE_FILES_TO_REPORT = 3   # generic extensions need >= this to report
+MAX_FILES_PER_SUBDIR = 200       # bail when a subdir scan exceeds this
+MAX_DEPTH_INSIDE_SUBDIR = 2      # walk depth (1 = just immediate contents)
+
+
+def _is_manifest_like(name: str) -> bool:
+    """True iff ``name`` looks like a project-defining manifest.
+
+    Conservative on purpose: explicit allow list + a couple of pattern
+    rules + an explicit deny list. Lock files and editor configs are
+    excluded so the unknown-but-present section stays signal-only.
+    """
+    if name in NOT_MANIFEST_NAMES:
+        return False
+    if name in KNOWN_MANIFEST_NAMES:
+        return True
+    # Pattern: top-level *.config.{js,ts,mjs,cjs} (next.config.mjs,
+    # vite.config.ts, etc.) — these define the project's framework
+    # and are worth surfacing.
+    if "." in name:
+        stem, ext = name.rsplit(".", 1)
+        if ext in ("js", "ts", "mjs", "cjs") and stem.endswith(".config"):
+            return True
+    # Pattern: any *.toml at top level. Catches future ecosystems
+    # (foundry.toml is in KNOWN_MANIFEST_NAMES already, but a hypothetical
+    # newproject.toml would be surfaced too).
+    if name.endswith(".toml") and not name.startswith("."):
+        return True
+    return False
+
+
+def _scan_subdir_contents(d: Path) -> tuple[list[str], dict[str, int], dict[str, str], int]:
+    """Walk ``d`` to ``MAX_DEPTH_INSIDE_SUBDIR`` and return:
+       (manifest filenames at depth 1, extension counts, example paths,
+        total file count seen).
+
+    Cost-bounded: stops after ``MAX_FILES_PER_SUBDIR`` files. Skips
+    hidden dirs and ``NOISE_DIRS``. The total file count is reported
+    so callers can distinguish "truly empty" from "has files but none
+    with extensions we track".
+    """
+    manifests: list[str] = []
+    ext_counts: dict[str, int] = {}
+    example_paths: dict[str, str] = {}
+    file_count = 0
+
+    # Manifests are only meaningful at the immediate top of the subdir
+    # (project-defining files don't typically nest 3 deep). Capture them
+    # first, separately.
+    try:
+        for entry in d.iterdir():
+            if entry.is_file() and _is_manifest_like(entry.name):
+                manifests.append(entry.name)
+    except OSError:
+        return manifests, ext_counts, example_paths, file_count
+    manifests.sort()
+
+    # Then walk depth-2 for extension counts. os.walk + a file_count
+    # cap keeps cost bounded on huge trees.
+    try:
+        for root, dirs, files in os.walk(d):
+            rel = Path(root).relative_to(d)
+            depth = len(rel.parts)
+            if depth > MAX_DEPTH_INSIDE_SUBDIR:
+                dirs[:] = []
+                continue
+            # Filter children we'll descend into.
+            dirs[:] = [x for x in dirs if x not in NOISE_DIRS and not x.startswith(".")]
+            for name in files:
+                file_count += 1
+                if file_count > MAX_FILES_PER_SUBDIR:
+                    break
+                ext = Path(name).suffix.lower()
+                if not ext:
+                    continue
+                if ext in DOMAIN_HINTS or ext in GENERIC_EXTENSIONS:
+                    ext_counts[ext] = ext_counts.get(ext, 0) + 1
+                    if ext not in example_paths:
+                        # Path relative to the repo root, anchored at
+                        # the subdir's name. So a Foo.sol inside
+                        # repo/contracts/Mocks/ surfaces as
+                        # "contracts/Mocks/Foo.sol".
+                        rel_path = (rel / name) if rel.parts else Path(name)
+                        example_paths[ext] = str(Path(d.name) / rel_path)
+            if file_count > MAX_FILES_PER_SUBDIR:
+                break
+    except OSError:
+        pass
+
+    return manifests, ext_counts, example_paths, file_count
+
+
+def _build_unclassified(name: str, manifests: list[str],
+                        ext_counts: dict[str, int],
+                        example_paths: dict[str, str],
+                        total_file_count: int) -> UnclassifiedSubdir:
+    """Apply reporting thresholds and pick a domain hint, if any."""
+    # Filter generic extensions below the threshold; keep all domain
+    # extensions at any count >= 1.
+    reportable: dict[str, int] = {}
+    for ext, count in ext_counts.items():
+        if ext in DOMAIN_HINTS:
+            reportable[ext] = count
+        elif ext in GENERIC_EXTENSIONS and count >= MIN_SOURCE_FILES_TO_REPORT:
+            reportable[ext] = count
+    # Trim example paths to the extensions we kept.
+    examples = {ext: p for ext, p in example_paths.items() if ext in reportable}
+    # Pick a "dominant domain" hint if any domain ext is present.
+    note = None
+    domain_present = [ext for ext in reportable if ext in DOMAIN_HINTS]
+    if domain_present:
+        # Highest count wins; ties broken by sort order for determinism.
+        domain_present.sort(key=lambda e: (-reportable[e], e))
+        note = DOMAIN_HINTS[domain_present[0]] + "; verify with user"
+    # is_empty means literally zero files in the scanned tree. A dir
+    # with files of unrecognized extensions (.json, .md, .txt, ...) is
+    # NOT empty — its file count surfaces via total_file_count so the
+    # dry-run can distinguish "empty placeholder" from "has content
+    # but none we can categorize".
+    is_empty = total_file_count == 0 and not manifests
+    return UnclassifiedSubdir(
+        name=name,
+        manifest_files=manifests,
+        notable_extensions=reportable,
+        example_paths=examples,
+        note=note,
+        is_empty=is_empty,
+        total_file_count=total_file_count,
+    )
+
+
+def scan_unclassified_subdirs(repo: Path,
+                              already_classified: set[str]) -> list[UnclassifiedSubdir]:
+    """Walk depth 1 of ``repo``; report what classification didn't.
+
+    ``already_classified`` is the set of subdir names that
+    ``detect_stack`` populated into ``StackProfile.parts``. Those are
+    excluded — they're already named in the primary classification
+    output. Hidden dirs and ``NOISE_DIRS`` are also skipped.
+
+    The result is sorted by subdir name for deterministic output.
+    """
+    out: list[UnclassifiedSubdir] = []
+    try:
+        entries = sorted(repo.iterdir(), key=lambda e: e.name)
+    except OSError:
+        return out
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        name = entry.name
+        if name.startswith("."):
+            continue
+        if name in NOISE_DIRS:
+            continue
+        if name in already_classified:
+            continue
+        manifests, ext_counts, examples, total_files = _scan_subdir_contents(entry)
+        out.append(_build_unclassified(name, manifests, ext_counts, examples, total_files))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +585,123 @@ def _stack_summary(stack: StackProfile) -> str:
         )
         return f"Python (detected from {sig})"
     return "Unknown stack — no manifest detected"
+
+
+def _format_unclassified_for_dryrun(u: UnclassifiedSubdir) -> list[str]:
+    """One subdir's lines for the CLI dry-run "Unknown but present" block.
+
+    Format mirrors the §19 worked examples — one heading line per
+    subdir followed by indented manifest / source / note lines.
+    Returns a list of strings; caller joins with newlines.
+    """
+    head = f"  {u.name}/"
+    indent = " " * (len(head) + 2)
+    lines: list[str] = []
+    if u.is_empty:
+        lines.append(f"{head}  empty")
+        return lines
+    if u.manifest_files:
+        lines.append(f"{head}  manifests: {', '.join(u.manifest_files)}")
+        head = " " * len(head)
+    # Sort extensions: domain first (interesting), then generic, both
+    # ordered by descending count for readability.
+    domain = sorted([e for e in u.notable_extensions if e in DOMAIN_HINTS],
+                    key=lambda e: (-u.notable_extensions[e], e))
+    generic = sorted([e for e in u.notable_extensions if e in GENERIC_EXTENSIONS],
+                     key=lambda e: (-u.notable_extensions[e], e))
+    src_parts: list[str] = []
+    for ext in domain + generic:
+        count = u.notable_extensions[ext]
+        example = u.example_paths.get(ext)
+        ex_clause = f" (e.g. {example})" if example else ""
+        src_parts.append(f"{count} {ext} files{ex_clause}")
+    if src_parts:
+        lines.append(f"{head}  source:    {src_parts[0]}")
+        for extra in src_parts[1:]:
+            lines.append(f"{indent}{extra}")
+        head = " " * len(head)
+    elif u.total_file_count > 0 and not u.manifest_files:
+        # Has files but none of recognized type — common for dirs full
+        # of .json/.md/.yml. Avoids the misleading "EMPTY" label.
+        lines.append(
+            f"{head}  source:    {u.total_file_count} files "
+            f"(no recognized source extensions)"
+        )
+        head = " " * len(head)
+    if u.note:
+        lines.append(f"{head}  note:      {u.note}")
+    return lines
+
+
+def _unknown_present_block_dryrun(stack: StackProfile) -> list[str]:
+    """The "Unknown but present" section for the CLI dry-run output.
+
+    Returns an empty list when there's nothing to surface so callers
+    don't have to gate on it. The caller is expected to join lines and
+    print as a contiguous block.
+    """
+    if not stack.unclassified_subdirs:
+        return []
+    out = ["", "Unknown but present (depth 1):"]
+    for u in stack.unclassified_subdirs:
+        out.extend(_format_unclassified_for_dryrun(u))
+    return out
+
+
+def _format_unclassified_for_markdown(u: UnclassifiedSubdir) -> str:
+    """One subdir's bullet for the Markdown 'Unknown but present' lists.
+
+    Used by both BUILD_PLAN.md and the CLAUDE.md augment block. Returns
+    a single multiline string; caller wraps in a markdown list context.
+    """
+    if u.is_empty:
+        return f"- **{u.name}/** — empty (no files in scanned tree)."
+    parts: list[str] = []
+    if u.manifest_files:
+        man_str = ", ".join(f"`{m}`" for m in u.manifest_files)
+        parts.append(f"contains {man_str}")
+    domain = sorted([e for e in u.notable_extensions if e in DOMAIN_HINTS],
+                    key=lambda e: (-u.notable_extensions[e], e))
+    generic = sorted([e for e in u.notable_extensions if e in GENERIC_EXTENSIONS],
+                     key=lambda e: (-u.notable_extensions[e], e))
+    for ext in domain + generic:
+        count = u.notable_extensions[ext]
+        example = u.example_paths.get(ext)
+        ex_clause = f" (example: `{example}`)" if example else ""
+        parts.append(f"{count} `{ext}` files{ex_clause}")
+    if not parts and u.total_file_count > 0:
+        parts.append(
+            f"{u.total_file_count} files (no recognized source extensions — "
+            f"may be config / data / docs)"
+        )
+    body = "; ".join(parts) if parts else "no recognized files"
+    line = f"- **{u.name}/** — {body}."
+    if u.note:
+        line += f" {u.note}."
+    return line
+
+
+def _unknown_present_markdown(stack: StackProfile) -> list[str]:
+    """The full "Unknown but present" section for the Markdown docs.
+
+    Returns an empty list when there's nothing to surface so the
+    section is silently omitted on clean projects.
+    """
+    if not stack.unclassified_subdirs:
+        return []
+    out = [
+        "",
+        "### Unknown but present",
+        "",
+        "The following directories exist and contain notable files but",
+        "`adopt` does not yet recognize their type. An AI session reading",
+        "this should ask the user what these are before writing code that",
+        "touches them.",
+        "",
+    ]
+    for u in stack.unclassified_subdirs:
+        out.append(_format_unclassified_for_markdown(u))
+    return out
 
 
 def _stack_table(stack: StackProfile) -> list[str]:
@@ -301,6 +749,10 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str)
         body.append("")
         for note in stack.notes:
             body.append(f"> Note: {note}")
+    # v0.2: visibility-first. Only added when there's something
+    # unclassified to surface — clean classified projects still get
+    # the same compact tech-stack section as v0.1.
+    body += _unknown_present_markdown(stack)
     body += [
         "",
         "## Next milestone",
@@ -399,6 +851,12 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
         lines.append(f"- **Stack:** {_stack_summary(stack)}")
     if stack.signals:
         lines.append(f"- **Manifests seen:** {', '.join(f'`{s}`' for s in stack.signals)}")
+    # v0.2: visibility-first surfaces unclassified subdirs in CLAUDE.md
+    # too, so an AI session reading the entry-point doc can't miss
+    # them. Same content as BUILD_PLAN's "Unknown but present" but
+    # rendered as bullets under a new H3 inside the managed block.
+    if stack.unclassified_subdirs:
+        lines += _unknown_present_markdown(stack)
     lines += [
         "",
         "### What the user told adopt",
@@ -588,6 +1046,11 @@ def run_adopt(args: argparse.Namespace) -> int:
     if stack.notes:
         for note in stack.notes:
             print(f"  note: {note}")
+    # v0.2: visibility-first. Surface unclassified subdirs between the
+    # stack line and the plan so the user reads them before scanning
+    # the file list. Silent when there's nothing to surface.
+    for line in _unknown_present_block_dryrun(stack):
+        print(line)
     print()
     print("Plan:")
     for line in actions:

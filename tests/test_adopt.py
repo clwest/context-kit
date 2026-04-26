@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from cli.adopt import (  # noqa: E402
+    MAX_FILES_PER_SUBDIR,
     AdoptionInputs,
     END_MARKER,
     START_MARKER,
@@ -28,6 +29,7 @@ from cli.adopt import (  # noqa: E402
     generate_claude_block,
     plan_files,
     run_adopt,
+    scan_unclassified_subdirs,
 )
 
 
@@ -354,6 +356,285 @@ class TestRunAdoptCli(unittest.TestCase):
             write=False, description="x", next_step="y",
         ))
         self.assertEqual(rc, 1)
+
+
+# ---------------------------------------------------------------------------
+# v0.2: visibility-first fallback (SESSION_009_ADOPT.md §19)
+# ---------------------------------------------------------------------------
+
+
+class TestVisibilityFirstScan(unittest.TestCase):
+    """Never allow real project structure to be invisible.
+
+    Each test wires up a tiny fixture project that mirrors a shape from
+    the dogfood inventory (tornado-core's contracts/circuits, the
+    flow-name-service empty api/, the dbao-studio root-wins pattern,
+    etc.) and asserts the visibility-first scan surfaces what
+    classification missed.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _named(self, profile, name):
+        """Return the UnclassifiedSubdir with ``name`` from ``profile``,
+        or fail loudly with what was actually found."""
+        match = next((u for u in profile.unclassified_subdirs if u.name == name), None)
+        self.assertIsNotNone(
+            match,
+            f"expected unclassified subdir {name!r}; got "
+            f"{[u.name for u in profile.unclassified_subdirs]}",
+        )
+        return match
+
+    def test_contracts_dir_with_sol_files_surfaces(self):
+        # The tornado-core shape: package.json wins classification but
+        # contracts/ with .sol files must still be visible.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "contracts").mkdir()
+        for n in ("Foo.sol", "Bar.sol", "Baz.sol"):
+            (self.repo / "contracts" / n).write_text("// solidity\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        # Classification unchanged.
+        self.assertEqual(stack.language, "javascript")
+        # contracts/ surfaces with .sol count + suggest-Solidity hint.
+        m = self._named(stack, "contracts")
+        self.assertEqual(m.notable_extensions.get(".sol"), 3)
+        self.assertIn("Solidity", m.note or "")
+        self.assertIn("verify with user", m.note or "")
+        # Example path is anchored at the subdir name.
+        self.assertTrue(
+            m.example_paths.get(".sol", "").startswith("contracts/"),
+            f"expected example under contracts/; got {m.example_paths!r}",
+        )
+
+    def test_circuits_dir_with_circom_files_surfaces(self):
+        # The tornado-core zk-SNARK circuits — first Circom files in
+        # the dogfood inventory. Verifies the .circom hint is
+        # data-table driven, not code-driven.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "circuits").mkdir()
+        for n in ("merkleTree.circom", "withdraw.circom", "transfer.circom"):
+            (self.repo / "circuits" / n).write_text("// circom\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        m = self._named(stack, "circuits")
+        self.assertEqual(m.notable_extensions.get(".circom"), 3)
+        self.assertIn("Circom", m.note or "")
+        self.assertIn("zk-SNARK", m.note or "")
+
+    def test_mobile_pubspec_yaml_surfaces_when_not_classified(self):
+        # The donkey_betz_world failure mode: mobile/ has pubspec.yaml
+        # which v0.1's classifier doesn't recognize, but visibility-
+        # first must surface it as a manifest-shaped file plus the
+        # .dart hint from any Dart sources inside.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# django\n", encoding="utf-8")
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "mobile").mkdir()
+        (self.repo / "mobile" / "pubspec.yaml").write_text("name: x\n", encoding="utf-8")
+        (self.repo / "mobile" / "lib").mkdir()
+        (self.repo / "mobile" / "lib" / "main.dart").write_text("void main() {}\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        # backend/frontend stay classified.
+        self.assertEqual(stack.parts, {"backend": "python", "frontend": "javascript"})
+        # mobile/ surfaces with both the manifest filename and the .dart hint.
+        m = self._named(stack, "mobile")
+        self.assertIn("pubspec.yaml", m.manifest_files)
+        self.assertEqual(m.notable_extensions.get(".dart"), 1)
+        self.assertIn("Dart", m.note or "")
+        self.assertIn("Flutter", m.note or "")
+
+    def test_classified_and_unclassified_appear_together(self):
+        # The mentorforge failure mode: backend/frontend get classified,
+        # but unrecognized peer subdirs (analysis/, financial/, etc.)
+        # silently dropped by v0.1. v0.2 surfaces them while preserving
+        # the original split classification.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# django\n", encoding="utf-8")
+        (self.repo / "analysis").mkdir()
+        (self.repo / "analysis" / "report.py").write_text("# data\n", encoding="utf-8")
+        (self.repo / "analysis" / "model.py").write_text("# data\n", encoding="utf-8")
+        (self.repo / "analysis" / "forecast.py").write_text("# data\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        # backend stays classified.
+        self.assertEqual(stack.parts.get("backend"), "python")
+        # analysis surfaces with .py count above the generic threshold.
+        m = self._named(stack, "analysis")
+        self.assertEqual(m.notable_extensions.get(".py"), 3)
+        # backend should NOT also appear in the unclassified list — it's
+        # already named in parts.
+        names = [u.name for u in stack.unclassified_subdirs]
+        self.assertNotIn("backend", names, f"backend duplicated in {names!r}")
+
+    def test_root_wins_but_subdirs_still_surface(self):
+        # The dbao-studio failure mode: root has both package.json AND
+        # requirements.txt so root wins (JavaScript), but backend/
+        # contains the real Django code. v0.2 must surface backend/ in
+        # unclassified-but-present even though root won classification.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "requirements.txt").write_text("django\n", encoding="utf-8")
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# django\n", encoding="utf-8")
+        (self.repo / "backend" / "requirements.txt").write_text("django\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        # Root classification preserved.
+        self.assertEqual(stack.language, "javascript")
+        self.assertEqual(stack.parts, {})
+        # backend/ surfaces with both manifests visible.
+        m = self._named(stack, "backend")
+        self.assertIn("manage.py", m.manifest_files)
+        self.assertIn("requirements.txt", m.manifest_files)
+
+    def test_noise_dirs_skipped(self):
+        # Hidden dirs and standard noise (node_modules, .git, .venv,
+        # __pycache__, dist, build) must never appear in the
+        # unclassified report — they're build artifacts, not project
+        # structure. Without this filter the report would be
+        # overwhelmed on real npm/Python projects.
+        for noise in ("node_modules", ".git", ".venv", "__pycache__", "dist", "build"):
+            (self.repo / noise).mkdir()
+            (self.repo / noise / "stuff.py").write_text("# noise\n", encoding="utf-8")
+        (self.repo / "real_dir").mkdir()
+        (self.repo / "real_dir" / "thing.py").write_text("# real\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        names = {u.name for u in stack.unclassified_subdirs}
+        for noise in ("node_modules", ".git", ".venv", "__pycache__", "dist", "build"):
+            self.assertNotIn(
+                noise, names,
+                f"{noise} leaked into unclassified report: {names!r}",
+            )
+        # The genuine subdir IS surfaced (sanity check that the test
+        # fixture wired up correctly).
+        self.assertIn("real_dir", names)
+
+    def test_empty_subdir_reported_as_empty(self):
+        # The flow-name-service api/ case — the directory exists but
+        # contains zero files. Worth surfacing as "empty" rather than
+        # silently dropping; an empty placeholder dir often signals
+        # intent (a planned subsystem that wasn't built yet).
+        (self.repo / "api").mkdir()
+        stack = detect_stack(self.repo)
+        m = self._named(stack, "api")
+        self.assertTrue(m.is_empty)
+        self.assertEqual(m.total_file_count, 0)
+
+    def test_dir_with_unrecognized_extensions_not_called_empty(self):
+        # The dbao-studio agents/ case — a directory full of .json
+        # files would have been falsely labelled "EMPTY" if we only
+        # tracked recognized extensions. Visibility-first must
+        # distinguish "no files at all" (truly empty) from "has files
+        # but none of a type we categorize" (config / data / docs).
+        (self.repo / "agents").mkdir()
+        for n in ("a.json", "b.json", "c.json", "readme.md"):
+            (self.repo / "agents" / n).write_text("{}\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        m = self._named(stack, "agents")
+        self.assertFalse(m.is_empty, "dir with .json files reported as empty!")
+        self.assertGreaterEqual(m.total_file_count, 4)
+        # No recognized source extensions means notable_extensions
+        # stays empty — that's how the renderer knows to say "N files
+        # (no recognized source extensions)" instead of listing nothing.
+        self.assertEqual(m.notable_extensions, {})
+
+    def test_generic_extensions_below_threshold_not_reported(self):
+        # MIN_SOURCE_FILES_TO_REPORT (3) gates noisy generic counts.
+        # A stray .py file in an otherwise non-Python project
+        # shouldn't trigger reporting; a domain extension (.sol)
+        # should always report at any count >= 1 because even one
+        # .sol file is meaningful signal.
+        (self.repo / "tools").mkdir()
+        (self.repo / "tools" / "helper.py").write_text("# stray\n", encoding="utf-8")  # 1 < 3
+        (self.repo / "tools" / "one.sol").write_text("// sol\n", encoding="utf-8")     # 1 >= 1 (domain)
+        stack = detect_stack(self.repo)
+        m = self._named(stack, "tools")
+        self.assertNotIn(".py", m.notable_extensions, "generic .py reported below threshold")
+        self.assertEqual(m.notable_extensions.get(".sol"), 1, "domain .sol omitted at count 1")
+
+    def test_large_subdir_files_capped(self):
+        # MAX_FILES_PER_SUBDIR caps the depth-2 walk so a subdir with
+        # 1000+ files can't blow up cost. The test creates twice the
+        # cap and asserts the count is bounded but the dir surfaces.
+        (self.repo / "huge").mkdir()
+        target = MAX_FILES_PER_SUBDIR * 2
+        for i in range(target):
+            (self.repo / "huge" / f"f{i}.sol").write_text("// sol\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        m = self._named(stack, "huge")
+        # Some count is reported.
+        self.assertGreater(m.notable_extensions.get(".sol", 0), 0)
+        # And it's bounded at the cap (off-by-one OK; the file_count
+        # check happens before increment in the inner loop).
+        self.assertLessEqual(
+            m.notable_extensions.get(".sol", 0), MAX_FILES_PER_SUBDIR + 5,
+            f"cap not enforced; got {m.notable_extensions.get('.sol')}",
+        )
+
+    def test_build_plan_renders_unknown_but_present(self):
+        # The full pipeline: detect → generate → assert the BUILD_PLAN
+        # carries the visibility-first content into the doc that an
+        # AI session reads. Without this, the dry-run could surface
+        # things but the agent reading docs/BUILD_PLAN.md would still
+        # be in the dark.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "contracts").mkdir()
+        for n in ("Foo.sol", "Bar.sol", "Baz.sol"):
+            (self.repo / "contracts" / n).write_text("// sol\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        bp = generate_build_plan(
+            stack,
+            AdoptionInputs(project_description="x", next_step="y"),
+            "Test",
+        )
+        self.assertIn("Unknown but present", bp)
+        self.assertIn("contracts/", bp)
+        self.assertIn(".sol", bp)
+        self.assertIn("Solidity", bp)
+
+    def test_claude_block_renders_unknown_but_present(self):
+        # Same content must reach the CLAUDE.md augment block — that's
+        # the AI session's entry-point doc. If contracts/ is in
+        # BUILD_PLAN but not CLAUDE.md, an agent might miss it.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "contracts").mkdir()
+        for n in ("Foo.sol", "Bar.sol", "Baz.sol"):
+            (self.repo / "contracts" / n).write_text("// sol\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        block = generate_claude_block(
+            stack,
+            AdoptionInputs(project_description="x", next_step="y"),
+            "Test",
+        )
+        self.assertIn("Unknown but present", block)
+        self.assertIn("contracts/", block)
+
+    def test_no_unknown_section_when_unclassified_empty(self):
+        # Clean classified projects must not gain a noisy "Unknown but
+        # present" section just because the renderer is now wired up.
+        # The section is silently omitted when there's nothing to surface.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# d\n", encoding="utf-8")
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        # Both subdirs got classified — nothing left over.
+        self.assertEqual(stack.unclassified_subdirs, [])
+        bp = generate_build_plan(
+            stack,
+            AdoptionInputs(project_description="x", next_step="y"),
+            "Test",
+        )
+        self.assertNotIn("Unknown but present", bp)
+        block = generate_claude_block(
+            stack,
+            AdoptionInputs(project_description="x", next_step="y"),
+            "Test",
+        )
+        self.assertNotIn("Unknown but present", block)
 
 
 if __name__ == "__main__":
