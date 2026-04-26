@@ -9,6 +9,110 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-04-26
+
+**Wizard polish, recovery, and a critical onboarding fix.** Driven
+entirely by dogfood testing — most fixes have a real "the user (or
+their dog) hit this" story attached. No CLI behavior changes;
+existing 0.6.0 projects work unchanged.
+
+### Changed
+- **Wizard Step 2 is clearer about what a project name is for.**
+  New title ("Where should we create your project?"), new helper text,
+  re-framed labels (Project name / Folder name with examples), and a
+  gentle inline warning when the user types a generic name like
+  "new" / "app" / "test" / "project". The folder field now reads
+  "Auto-created from the project name. You usually don't need to
+  change this."
+- **Wizard Step 3 talks like a friend, not a tech form.** New intro
+  ("Just describe your idea like you would to a friend"), reassurance
+  that most fields are optional, conversational labels ("What do you
+  want to build?", "Who is this for?", "Why do you want this?", "Not
+  sure about tech? Skip this."), and the medication-reminder
+  dogfood case as the example.
+- **Wizard Step 5 (init) now tells the user to open a *new* terminal
+  and offers a fallback command.** A beginner reading "run
+  context-kit init" in the same terminal that's serving the wizard
+  would type into a busy server and see nothing happen. Step 5 now
+  reads "Keep this page open. In a new terminal window, run: …" with
+  a VS Code menu hint. If the new terminal lost the venv that
+  `pip install contextkit-ai` populated, a second copy-able command
+  shows `python3 -m context_kit init "<name>"` as the recovery path.
+- **Final wizard step (Step 8) now hands the user a strengthened
+  first prompt for their AI tool.** "Read CLAUDE.md,
+  docs/BUILD_PLAN.md, and docs/*_WHAT_IT_IS.md. Summarize the
+  project, confirm the stack, then begin implementing version 1. Do
+  not change the stack without asking." Plus a beginner-friendly
+  explanation of *why* it matters (without this, the AI may pick a
+  different stack and produce code that doesn't fit the plan).
+- **`/api/check` reasons now include the resolved folder path.** A
+  user whose poll-check fails can see exactly which folder was
+  inspected, instead of staring at a generic "not found" message.
+
+### Added
+- **Step 3 "Copy AI help prompt" button.** Generates a beginner-
+  friendly prompt from the current idea fields ("Not sure yet" for
+  empty ones) so a user who's stuck can paste it into ChatGPT,
+  Claude, or any AI assistant and get planning help without leaving
+  the wizard. Closes with "Do not overwhelm me." to keep the
+  response right-sized.
+- **`detected_projects` field on `GET /api/state`.** Lists immediate
+  child directories of cwd that look like context-kit projects
+  (have `00-START-NEXT-SESSION.md`), with which milestone files
+  exist (idea.md, start doc, BUILD_PLAN.md) and a suggested wizard
+  step. Drives the new fresh-tab recovery card.
+
+### Fixed
+- **Wizard polled the wrong project_dir when a user's project name
+  changed across sessions.** The folder slug auto-derived from
+  appName only fired when the field was empty, so stale localStorage
+  from a prior wizard run would stick its old folder slug into the
+  init/seed checks. Symptom: `context-kit init "stress test"`
+  succeeded, created `./stress-test/`, but the wizard said
+  "00-START-NEXT-SESSION.md not found in project_dir" because it was
+  polling the old folder. Wizard slugify also now mirrors
+  `cli/placeholders._slugify` exactly, including camelCase splits.
+- **Wizard lost progress after the local server stopped.** A user
+  whose `context-kit start` terminal got closed (or stepped on by a
+  dog) would see "Network error: Failed to fetch" with no
+  actionable guidance. Now a network failure surfaces a beginner-
+  friendly recovery message ("The local context-kit server may have
+  stopped. Go back to the terminal running context-kit start. If it
+  stopped, run context-kit start again, then refresh this page.").
+  On reload, the wizard reconciles localStorage with on-disk state
+  via `/api/check`, so a user who already ran `seed` lands on
+  Step 8 with a "picking up where you left off" banner instead of
+  being asked to re-run a CLI command they've already run.
+- **Wizard dropped fresh browser tabs at Step 1.** When the local
+  server died and the user restarted it, the CLI helpfully reopened
+  the wizard URL — often in a new browser window with empty
+  localStorage. The reconciler couldn't help because it depends on
+  `state.projectDir`. Bootstrap now calls `/api/state`, sees
+  `detected_projects`, and offers a "We found an existing project:
+  <name>. Continue from there?" card that jumps straight to the
+  right step (8 if seeded, 6 if only scaffolded). Multiple
+  candidates show a chooser; none shows the normal Step 1.
+- **`CLAUDE.md` template did not enforce `BUILD_PLAN.md`.** Real
+  failure observed in dogfood: an agent loaded into a freshly
+  seeded project did not read `docs/BUILD_PLAN.md`, picked a
+  different tech stack from the one `recommend-stack` had baked
+  into the plan, and produced code that didn't fit. Framework-level
+  gap. Generated `CLAUDE.md` now opens with a "Read This Before
+  Writing Any Code" section carrying the rule "Always read
+  `docs/BUILD_PLAN.md` before choosing a stack or writing code. Do
+  not deviate unless you explain why and ask." Quick Start lists
+  BUILD_PLAN.md as item #1 and the "Where to find things" table
+  gains a top row labeled "Source of truth for tech stack and build
+  approach". Closes the divergence loophole at the framework level
+  so every new project ships with it.
+
+### Tests
+- 239 unit tests passing (was 223 in 0.6.0). +16 covering wizard
+  Step 2/3/5/8 copy, ai-help prompt template, slug parity with the
+  CLI, slugged-subdir polling, failure-reason path inclusion, fresh-
+  tab discovery, the recovery message + helper functions, and the
+  CLAUDE.md template enforcement.
+
 ## [0.6.0] — 2026-04-25
 
 **Beginner-first onboarding.** `context-kit start` is now a guided
