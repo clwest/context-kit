@@ -169,6 +169,15 @@
     font-size: .9rem;
     margin: 0 0 1.25rem;
   }
+  .ai-help {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+  .ai-help h3 {
+    font-size: 1rem;
+    margin: 0 0 .35rem;
+  }
   .status {
     margin-top: .75rem;
     padding: .5rem .75rem;
@@ -282,6 +291,13 @@
   <label for="ideaQuestions">Anything you're unsure about?</label>
   <p class="field-hint">Questions, ideas, worries, or things you want the AI to consider.</p>
   <textarea id="ideaQuestions" placeholder=""></textarea>
+
+  <div class="ai-help">
+    <h3>Want help thinking this through?</h3>
+    <p class="field-hint">Copy this prompt into ChatGPT, Claude, or another AI assistant if you want help turning your idea into a simple plan.</p>
+    <button class="secondary" id="aiHelpBtn" type="button">Copy AI help prompt</button>
+    <div class="status" id="step3HelpStatus"></div>
+  </div>
 
   <div class="status" id="step3Status"></div>
   <div class="row">
@@ -552,6 +568,65 @@ function confirmStep2() {
   advance(3);
 }
 
+// Generates the "give this prompt to an AI assistant" template from the
+// Step 3 form values. Empty fields become "Not sure yet" so a beginner
+// can copy the prompt before they've filled everything in.
+function buildAiHelpPrompt() {
+  const what      = state.idea.what      || "Not sure yet";
+  const who       = state.idea.who       || "Not sure yet";
+  const problem   = state.idea.problem   || "Not sure yet";
+  const milestone = state.idea.milestone || "Not sure yet";
+  const stack     = state.idea.stack     || "I am not sure. Please suggest one.";
+  const questions = state.idea.questions || "Not sure yet";
+  return [
+    "You are an AI assistant helping me turn an idea into a simple, buildable plan.",
+    "",
+    "Here is my idea:",
+    "",
+    "What I want to build:",
+    what,
+    "",
+    "Who it is for:",
+    who,
+    "",
+    "Why I want this:",
+    problem,
+    "",
+    "What a first simple version might do:",
+    milestone,
+    "",
+    "Tech stack:",
+    stack,
+    "",
+    "Things I am unsure about:",
+    questions,
+    "",
+    "Please help me:",
+    "1. Suggest a beginner-friendly tech stack.",
+    "2. Explain why that stack fits in plain English.",
+    "3. Tell me what NOT to build yet.",
+    "4. Give me a simple step-by-step plan for version 1.",
+    "5. Point out any important questions I should answer before building.",
+    "",
+    "Keep it simple, practical, and focused on getting something working quickly.",
+    "Do not overwhelm me.",
+  ].join("\n");
+}
+
+async function copyAiHelpPrompt() {
+  // Pick up any in-flight edits the user hasn't blurred yet.
+  captureFieldsToState();
+  const text = buildAiHelpPrompt();
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("step3HelpStatus", "ok",
+      "Copied. Paste it into your AI chat and keep going.");
+  } catch (err) {
+    setStatus("step3HelpStatus", "err",
+      "Couldn't copy. Try again or copy the prompt manually.");
+  }
+}
+
 function confirmStep3() {
   captureFieldsToState();
   if (!state.idea.what) {
@@ -680,6 +755,12 @@ async function bootstrap() {
     const el = getEl();
     if (el) el.addEventListener("input", () => captureFieldsToState());
   });
+
+  // AI-help prompt copy (Step 3). Separate from the .copy delegation
+  // because the prompt is generated dynamically from form state, and
+  // the success message goes to a status panel rather than the button.
+  const aiHelpBtn = document.getElementById("aiHelpBtn");
+  if (aiHelpBtn) aiHelpBtn.addEventListener("click", copyAiHelpPrompt);
 
   // Auto-derive project dir from app name when project dir is empty,
   // and live-warn on very short or generic project names.

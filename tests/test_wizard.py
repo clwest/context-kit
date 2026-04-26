@@ -259,6 +259,21 @@ class TestLiveWizardServer(unittest.TestCase):
             body,
         )
 
+    def test_wizard_step3_offers_ai_help_prompt(self):
+        """Step 3 must offer a copy-able 'give this to ChatGPT' prompt.
+
+        Locks in (a) the section heading + button label so the entry
+        point is discoverable, and (b) the closing line of the prompt
+        template so the actual prompt text doesn't quietly drift back
+        to a long, intimidating version.
+        """
+        _, body, _ = self._get("/wizard")
+        self.assertIn("Want help thinking this through?", body)
+        self.assertIn("Copy AI help prompt", body)
+        # The prompt template lives in the inline JS in the served HTML.
+        # Its tone-setting closing line is the load-bearing bit.
+        self.assertIn("Do not overwhelm me.", body)
+
     def test_wizard_init_step_directs_user_to_new_terminal(self):
         """The init step (running ``context-kit init``) must explicitly tell
         the user to open a *new* terminal. The terminal that launched
