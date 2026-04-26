@@ -22,6 +22,7 @@ from cli.adopt import (  # noqa: E402
     FAILURE_IDEMPOTENCY_RISK,
     FAILURE_MISLEADING_CLASSIFICATION,
     FAILURE_MISSING_FRAMEWORK_DETECTION,
+    FAILURE_MONOREPO_DEPTH_LIMIT,
     FAILURE_NOISE_DIRECTORY_POLLUTION,
     FAILURE_ROOT_SIGNAL_OVERRIDE,
     FAILURE_SEVERITIES,
@@ -1329,8 +1330,10 @@ class TestManifestHintInRenders(unittest.TestCase):
 class TestFailureTaxonomy(unittest.TestCase):
     """The taxonomy is fixed and closed — additions require code change."""
 
-    def test_taxonomy_has_exactly_nine_types(self):
-        self.assertEqual(len(FAILURE_TYPES), 9)
+    def test_taxonomy_has_exactly_ten_types(self):
+        # v0.3 raised the count from 9 to 10 by adding
+        # MONOREPO_DEPTH_LIMIT (SESSION_009_ADOPT.md §22).
+        self.assertEqual(len(FAILURE_TYPES), 10)
         for t in (FAILURE_ROOT_SIGNAL_OVERRIDE,
                   FAILURE_UNRECOGNIZED_ECOSYSTEM,
                   FAILURE_SILENT_SUBDIR_DROP,
@@ -1339,7 +1342,8 @@ class TestFailureTaxonomy(unittest.TestCase):
                   FAILURE_IDEMPOTENCY_RISK,
                   FAILURE_MISLEADING_CLASSIFICATION,
                   FAILURE_MISSING_FRAMEWORK_DETECTION,
-                  FAILURE_STRUCTURE_UNDERREPRESENTED):
+                  FAILURE_STRUCTURE_UNDERREPRESENTED,
+                  FAILURE_MONOREPO_DEPTH_LIMIT):
             self.assertIn(t, FAILURE_TYPES)
 
     def test_severity_and_surface_area_enums(self):
@@ -1579,6 +1583,227 @@ class TestFailureRendering(unittest.TestCase):
             # Either no failures section at all, OR a section that
             # doesn't claim "Detected issues" as a header.
             self.assertNotIn("Detected issues", body)
+
+
+# ---------------------------------------------------------------------------
+# v0.3: MONOREPO_DEPTH_LIMIT + root-level UNRECOGNIZED_ECOSYSTEM
+# (post first dogfood-repos batch — SESSION_009_ADOPT.md §22)
+# ---------------------------------------------------------------------------
+
+
+class TestMonorepoDepthLimit(unittest.TestCase):
+    """The new v0.3 label for workspace containers (apps/, packages/,
+    services/, crates/, members/, workspaces/) that hide child
+    projects below adopt's depth-1 scan. Each fixture mirrors a
+    cloned dogfood repo's shape in miniature.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self):
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        return analyze_failures(self.repo, stack, plan)
+
+    def _types(self, failures):
+        return {f.failure_type for f in failures}
+
+    def test_fns_monorepo_shape_emits_monorepo_depth_limit(self):
+        # The headline §22 case: root package.json + apps/ holding
+        # both a Foundry Solidity project and a Next.js app at
+        # depth 2. v0.2.x emitted 0 failure records on this shape;
+        # v0.3 must label it MONOREPO_DEPTH_LIMIT.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        # apps/forge — Foundry Solidity project
+        (self.repo / "apps" / "forge").mkdir()
+        (self.repo / "apps" / "forge" / "foundry.toml").write_text(
+            "# foundry\n", encoding="utf-8")
+        (self.repo / "apps" / "forge" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        (self.repo / "apps" / "forge" / "contracts").mkdir()
+        (self.repo / "apps" / "forge" / "contracts" / "Foo.sol").write_text(
+            "// sol\n", encoding="utf-8")
+        # apps/next — Next.js dApp
+        (self.repo / "apps" / "next").mkdir()
+        (self.repo / "apps" / "next" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        (self.repo / "apps" / "next" / "app").mkdir()
+        (self.repo / "apps" / "next" / "app" / "page.tsx").write_text(
+            "// tsx\n", encoding="utf-8")
+        records = self._run()
+        types = self._types(records)
+        self.assertIn(FAILURE_MONOREPO_DEPTH_LIMIT, types,
+                      f"expected MONOREPO_DEPTH_LIMIT in {types!r}")
+        # Verify the apps/ container is the one labeled, with a
+        # depth-2-or-deeper example path.
+        match = next(r for r in records
+                     if r.failure_type == FAILURE_MONOREPO_DEPTH_LIMIT)
+        self.assertEqual(match.detected_in, "apps")
+        self.assertGreaterEqual(match.example.count("/"), 2,
+                                f"example {match.example!r} should be "
+                                f"depth-2-or-deeper (>= 2 separators)")
+        self.assertEqual(match.severity, "high")
+        self.assertEqual(match.surface_area, "visibility")
+
+    def test_expo_monorepo_shape_emits_monorepo_depth_limit(self):
+        # Single-child workspace shape (expo-monorepo-example):
+        # apps/example/ holds a real Expo app with package.json +
+        # app.config.ts + .tsx files.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        (self.repo / "apps" / "example").mkdir()
+        (self.repo / "apps" / "example" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        (self.repo / "apps" / "example" / "app.config.ts").write_text(
+            "// expo\n", encoding="utf-8")
+        (self.repo / "apps" / "example" / "app").mkdir()
+        for n in range(3):
+            (self.repo / "apps" / "example" / "app" / f"_layout{n}.tsx").write_text(
+                "// tsx\n", encoding="utf-8")
+        types = self._types(self._run())
+        self.assertIn(FAILURE_MONOREPO_DEPTH_LIMIT, types,
+                      f"expected MONOREPO_DEPTH_LIMIT in {types!r}")
+
+    def test_turborepo_keeps_silent_subdir_drop_and_adds_depth_limit(self):
+        # turborepo-next-django-starter shape: server/backend/manage.py
+        # is the recognized-name SILENT_SUBDIR_DROP case; apps/web/ is
+        # the new MONOREPO_DEPTH_LIMIT case. v0.3 must emit BOTH —
+        # MONOREPO_DEPTH_LIMIT is additive, not a replacement.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        # server/backend/manage.py — recognized server/ subdir
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "backend").mkdir()
+        (self.repo / "server" / "backend" / "manage.py").write_text(
+            "# d\n", encoding="utf-8")
+        for n in range(5):
+            (self.repo / "server" / "backend" / f"v{n}.py").write_text(
+                "# x\n", encoding="utf-8")
+        # apps/web — workspace-container shape
+        (self.repo / "apps").mkdir()
+        (self.repo / "apps" / "web").mkdir()
+        (self.repo / "apps" / "web" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        (self.repo / "apps" / "web" / "app").mkdir()
+        for n in range(3):
+            (self.repo / "apps" / "web" / "app" / f"page{n}.tsx").write_text(
+                "// tsx\n", encoding="utf-8")
+        types = self._types(self._run())
+        # Both labels must fire.
+        self.assertIn(FAILURE_SILENT_SUBDIR_DROP, types,
+                      "SILENT_SUBDIR_DROP regression — server/ should still fire")
+        self.assertIn(FAILURE_MONOREPO_DEPTH_LIMIT, types,
+                      f"MONOREPO_DEPTH_LIMIT missing in {types!r}")
+
+    def test_empty_apps_does_not_emit_monorepo_depth_limit(self):
+        # The false-positive guard: an apps/ directory that's empty
+        # or contains no source files / nested manifests must NOT
+        # fire the label. A workspace container with zero content
+        # tells us nothing useful.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()  # empty apps/
+        types = self._types(self._run())
+        self.assertNotIn(FAILURE_MONOREPO_DEPTH_LIMIT, types,
+                         f"empty apps/ should NOT trigger label; got {types!r}")
+
+    def test_fires_at_most_once_per_workspace_container(self):
+        # apps/ with 5 child projects must produce exactly ONE
+        # MONOREPO_DEPTH_LIMIT record, not 5. Avoids the per-card
+        # explosion problem on a 20-app Turborepo.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app_name in ("app1", "app2", "app3", "app4", "app5"):
+            d = self.repo / "apps" / app_name
+            d.mkdir()
+            (d / "package.json").write_text("{}", encoding="utf-8")
+            (d / "src").mkdir()
+            (d / "src" / "main.tsx").write_text("// x\n", encoding="utf-8")
+        records = self._run()
+        depth_records = [
+            r for r in records
+            if r.failure_type == FAILURE_MONOREPO_DEPTH_LIMIT
+        ]
+        self.assertEqual(len(depth_records), 1,
+                         f"expected 1 MONOREPO_DEPTH_LIMIT record, got "
+                         f"{len(depth_records)}: "
+                         f"{[(r.detected_in, r.example) for r in depth_records]}")
+
+
+class TestRootLevelUnrecognizedEcosystem(unittest.TestCase):
+    """The v0.3 extension to the existing UNRECOGNIZED_ECOSYSTEM
+    detector — also fires for ECOSYSTEM_MANIFESTS at the project
+    root, not just inside unclassified subdirs. Motivated by
+    flutter-monorepo's melos.yaml at root which fired 0 labels in
+    v0.2.x because the detector loop only scanned subdir manifests.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _types(self):
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        return {r.failure_type for r in analyze_failures(self.repo, stack, plan)}
+
+    def test_root_melos_yaml_emits_unrecognized_ecosystem(self):
+        # The flutter-monorepo case: melos.yaml at root, no other
+        # classification manifest. v0.2.x emitted 0 labels for this;
+        # v0.3 must emit UNRECOGNIZED_ECOSYSTEM with detected_in="root".
+        (self.repo / "melos.yaml").write_text("name: x\n", encoding="utf-8")
+        # Add a child dir so the run produces some output beyond
+        # "no manifest found".
+        (self.repo / "apps").mkdir()
+        (self.repo / "apps" / "buyer_app").mkdir()
+        (self.repo / "apps" / "buyer_app" / "pubspec.yaml").write_text(
+            "name: buyer\n", encoding="utf-8")
+        types = self._types()
+        self.assertIn(FAILURE_UNRECOGNIZED_ECOSYSTEM, types,
+                      f"expected UNRECOGNIZED_ECOSYSTEM in {types!r}")
+
+    def test_root_foundry_toml_emits_unrecognized_ecosystem(self):
+        # foundry.toml at root (the solidity-template case). v0.2.x
+        # only fired MISLEADING_CLASSIFICATION here; v0.3 also fires
+        # UNRECOGNIZED_ECOSYSTEM via the new root-scan path.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        types = self._types()
+        self.assertIn(FAILURE_UNRECOGNIZED_ECOSYSTEM, types,
+                      f"expected UNRECOGNIZED_ECOSYSTEM at root in {types!r}")
+
+    def test_root_scan_does_not_double_fire_when_subdir_also_matches(self):
+        # If both root has melos.yaml AND a subdir has pubspec.yaml,
+        # we expect both to fire — they're semantically distinct
+        # (root-level Melos config vs. subdir Dart project). The
+        # per-loop dedup in analyze_failures only prevents within-loop
+        # duplication; cross-loop is allowed.
+        (self.repo / "melos.yaml").write_text("name: x\n", encoding="utf-8")
+        (self.repo / "shared").mkdir()
+        (self.repo / "shared" / "pubspec.yaml").write_text(
+            "name: shared\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        eco_records = [
+            r for r in analyze_failures(self.repo, stack, plan)
+            if r.failure_type == FAILURE_UNRECOGNIZED_ECOSYSTEM
+        ]
+        # Two records: one for root melos.yaml, one for shared/pubspec.yaml.
+        self.assertEqual(len(eco_records), 2,
+                         f"expected 2 UNRECOGNIZED_ECOSYSTEM records "
+                         f"(root + subdir), got "
+                         f"{[(r.detected_in, r.example) for r in eco_records]}")
+        targets = {r.detected_in for r in eco_records}
+        self.assertEqual(targets, {"root", "shared"})
 
 
 if __name__ == "__main__":

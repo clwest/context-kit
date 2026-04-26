@@ -143,6 +143,12 @@ FAILURE_IDEMPOTENCY_RISK = "IDEMPOTENCY_RISK"
 FAILURE_MISLEADING_CLASSIFICATION = "MISLEADING_CLASSIFICATION"
 FAILURE_MISSING_FRAMEWORK_DETECTION = "MISSING_FRAMEWORK_DETECTION"
 FAILURE_STRUCTURE_UNDERREPRESENTED = "STRUCTURE_UNDERREPRESENTED"
+# v0.3 — proposed in SESSION_009_ADOPT.md §22 after the
+# context-kit-dogfood-repos batch (fns-monorepo / expo-monorepo-example /
+# turborepo-next-django-starter / flutter-monorepo-example) showed
+# 3 of 5 monorepo clones emitting zero failure records under v0.2.x
+# despite obvious depth-2 invisibility.
+FAILURE_MONOREPO_DEPTH_LIMIT = "MONOREPO_DEPTH_LIMIT"
 
 FAILURE_TYPES = frozenset({
     FAILURE_ROOT_SIGNAL_OVERRIDE,
@@ -154,6 +160,7 @@ FAILURE_TYPES = frozenset({
     FAILURE_MISLEADING_CLASSIFICATION,
     FAILURE_MISSING_FRAMEWORK_DETECTION,
     FAILURE_STRUCTURE_UNDERREPRESENTED,
+    FAILURE_MONOREPO_DEPTH_LIMIT,
 })
 
 FAILURE_SEVERITIES = ("low", "medium", "high")
@@ -1820,6 +1827,13 @@ _ECOSYSTEM_MANIFESTS = {
     "Cargo.toml":        "Rust",
     "go.mod":            "Go",
     "Gemfile":           "Ruby",
+    # v0.3 — root-level Dart monorepo manifest.
+    # See SESSION_009_ADOPT.md §22 (root-level UNRECOGNIZED_ECOSYSTEM
+    # extension): the v0.2.x detector loop only checked subdir
+    # manifest_files, so a project with melos.yaml at root and
+    # nothing else fired no failure record. Adding melos here lets
+    # the new root-scan path label it.
+    "melos.yaml":        "Dart / Flutter monorepo (Melos)",
 }
 
 # Manifest filenames that imply a SPECIFIC FRAMEWORK on a language adopt
@@ -1852,6 +1866,21 @@ _NOISE_POLLUTION_THRESHOLD = 5
 # (manifests or notable extensions) before the classification line is
 # considered to undersell the project's surface area.
 _STRUCTURE_UNDERREPRESENTED_THRESHOLD = 3
+
+# v0.3 — workspace-container subdir names. A non-noise depth-1 subdir
+# matching one of these likely contains child projects below adopt's
+# scan depth. Used by MONOREPO_DEPTH_LIMIT. See SESSION_009_ADOPT.md §22.
+_WORKSPACE_CONTAINERS = frozenset({
+    "apps", "packages", "services", "crates", "members", "workspaces",
+})
+
+# v0.3 — threshold for MONOREPO_DEPTH_LIMIT. A workspace container
+# either has at least this many source files (collapsed across child
+# projects via the existing depth-2 walk) OR has at least one
+# example-path indicating content nested below the container's
+# immediate root (path containing two or more "/" separators since
+# adopt's example paths are anchored at the subdir name).
+_MONOREPO_DEPTH_FILE_THRESHOLD = 10
 
 
 def analyze_failures(repo: Path, stack: StackProfile,
@@ -1916,6 +1945,36 @@ def analyze_failures(repo: Path, stack: StackProfile,
                 ))
                 seen_eco_dirs.add(u.name)
                 break
+
+    # UNRECOGNIZED_ECOSYSTEM (root extension, v0.3) — same label,
+    # same severity, but for ecosystem manifests at the project root
+    # rather than inside an unclassified subdir. flutter-monorepo's
+    # melos.yaml at root was the motivating case (see §22): the file
+    # is visible (manifest-shaped) but the v0.2.x detector loop only
+    # checked unclassified_subdirs[*].manifest_files, never root files.
+    # Fires at most once for the root regardless of how many ecosystem
+    # manifests are present, mirroring the per-subdir dedup above.
+    try:
+        for entry in repo.iterdir():
+            if (entry.is_file()
+                    and entry.name in _ECOSYSTEM_MANIFESTS):
+                out.append(FailureRecord(
+                    failure_type=FAILURE_UNRECOGNIZED_ECOSYSTEM,
+                    severity="medium",
+                    surface_area="classification",
+                    description=(
+                        f"{entry.name} at the project root indicates "
+                        f"{_ECOSYSTEM_MANIFESTS[entry.name]}, an "
+                        f"ecosystem adopt's classifier doesn't yet "
+                        f"handle. Visibility surfaces nothing more "
+                        f"useful for root-level files."
+                    ),
+                    detected_in="root",
+                    example=entry.name,
+                ))
+                break
+    except OSError:
+        pass
 
     # SILENT_SUBDIR_DROP — a recognized subdir name (backend, frontend,
     # web, mobile, api, client, server) appears in unclassified_subdirs
@@ -2097,6 +2156,59 @@ def analyze_failures(repo: Path, stack: StackProfile,
             example="; ".join(
                 u.name + "/" for u in signal_subdirs[:3]
             ),
+        ))
+
+    # MONOREPO_DEPTH_LIMIT (v0.3) — a workspace-container subdir
+    # (apps/, packages/, services/, crates/, members/, workspaces/)
+    # contains substantial content but adopt's depth-1 scan can't
+    # enter the child projects. fns-monorepo, expo-monorepo-example,
+    # turborepo-next-django-starter all hit this. See §22.
+    #
+    # Detection signal: workspace-container name + EITHER
+    #   (a) >= MONOREPO_DEPTH_FILE_THRESHOLD source files seen via
+    #       the depth-2 walk inside the container, OR
+    #   (b) any example-path showing content nested below the
+    #       container's immediate root (path with >=2 separators
+    #       since example_paths are anchored at the subdir name).
+    # The empty-apps/ false-positive guard falls out of (a) and (b)
+    # both being false on a directory with no files.
+    #
+    # Fires once per workspace-container subdir. Since
+    # unclassified_subdirs lists each name at most once, no explicit
+    # dedup is needed in the loop.
+    for u in stack.unclassified_subdirs:
+        if u.name not in _WORKSPACE_CONTAINERS:
+            continue
+        total_signal_files = sum(u.notable_extensions.values())
+        has_child_subdir_content = any(
+            p.count("/") >= 2 for p in u.example_paths.values()
+        )
+        if (total_signal_files < _MONOREPO_DEPTH_FILE_THRESHOLD
+                and not has_child_subdir_content):
+            continue
+        # Pick the deepest example path as the representative — the
+        # one that most clearly shows the depth-2-or-deeper structure.
+        deepest = max(
+            u.example_paths.values(),
+            key=lambda p: p.count("/"),
+            default=f"{u.name}/",
+        )
+        out.append(FailureRecord(
+            failure_type=FAILURE_MONOREPO_DEPTH_LIMIT,
+            severity="high",
+            surface_area="visibility",
+            description=(
+                f"{u.name}/ is a workspace container — adopt's "
+                f"depth-1 scan saw the directory and (via the "
+                f"depth-2 source walk) counted files inside, but "
+                f"the individual child projects under "
+                f"{u.name}/<name>/ are invisible to classification. "
+                f"Real package.json / foundry.toml / pubspec.yaml "
+                f"manifests likely live one level deeper than "
+                f"adopt currently reads."
+            ),
+            detected_in=u.name,
+            example=deepest,
         ))
 
     return out
