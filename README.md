@@ -196,6 +196,9 @@ Run `python3 context_kit.py <command> --help` for per-command options.
 |---|---|---|
 | *positional* `PATH` | `.` | Project root to adopt |
 | `--write` | off | Apply the plan; without this, adopt prints what would happen |
+| `--html` | off | Also generate a static, self-contained HTML review report (single file, no server). Default destination is `/tmp`; the file opens in your default browser unless `--no-browser` is set |
+| `--html-out PATH` | (none) | Explicit destination for the HTML report (implies `--html`). Default keeps the source tree untouched by writing under the system temp dir |
+| `--no-browser` | off | Don't auto-open the HTML report in the browser (tests, headless, CI) |
 
 `adopt` is the entry point when you have an *existing* project and
 want context-kit's docs layer wrapped around it. It detects basic

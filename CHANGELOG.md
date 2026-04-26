@@ -9,39 +9,185 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
-- **`context-kit adopt`** — retrofit context-kit's docs layer onto an
-  existing project without touching source code. Detects basic stack
-  (JavaScript / Python / unknown) from manifest files at the repo
-  root and one level deep into seven recognized subdirs (`backend`,
-  `frontend`, `web`, `mobile`, `api`, `client`, `server`). Prompts
-  the user for two things — what the project is and what they're
-  trying to do next — then generates `docs/BUILD_PLAN.md`,
-  `docs/PROJECT_WHAT_IT_IS.md`, `00-START-NEXT-SESSION.md`, plus a
-  fresh or augment-only `CLAUDE.md`. Dry-run by default; `--write`
-  to apply. Augment-mode on existing CLAUDE.md preserves all human
-  content outside `<!-- context-kit:adopt:start --> / :end -->`
-  markers and is idempotent across re-runs. Designed in
-  `docs/proposals/SESSION_009_ADOPT.md`; v0 + v0.1 shipped, v0.2
-  backlog (deeper layouts, framework detection inside manifests,
-  `[adopt: please describe]` doctor checks, wizard branch) is
-  tracked there.
-- **Split-monorepo detection in `adopt`.** v0.1 walks one level
-  into seven recognized subdir names when the repo root has no
-  manifest. Backend wins as primary (the AI session's default
-  frame anchors where the domain logic lives); generators render a
-  per-subdir bullet table in BUILD_PLAN.md and the CLAUDE.md
-  augment block. Verified against `focus-flow`, `dealflowtracker`,
-  `contract-concierge`, `norman-handyman-mvp` (three-part split:
-  backend + web + mobile), and `ai-content-studio` (single-stack
-  root, regression-tested to confirm root still wins over a
-  same-named subdir).
+## [0.7.0] — 2026-04-26
+
+**`context-kit adopt` — the existing-project entry point.** A new
+top-level command that retrofits context-kit's docs layer onto
+projects that already have code, without ever touching source files.
+Designed and shipped in seven incremental releases (v0 through v0.3
+plus several cross-cutting passes), each driven by real-world
+dogfood against `/development/` projects and a curated set of
+cloned open-source repos.
+
+The full design lives in `docs/proposals/SESSION_009_ADOPT.md`.
+What's in this release:
+
+### Added — `context-kit adopt`
+
+- **Minimal `context-kit adopt [PATH]` command (v0).** Detects basic
+  stack from manifest files (JavaScript via `package.json`, Python
+  via `manage.py` / `requirements.txt` / `pyproject.toml`, unknown
+  otherwise). Prompts the user for two beginner-friendly things —
+  what the project is and what they're trying to do next — then
+  generates the load-bearing docs (`docs/BUILD_PLAN.md`,
+  `docs/PROJECT_WHAT_IT_IS.md`, `00-START-NEXT-SESSION.md`) and
+  either creates a fresh `CLAUDE.md` or augments an existing one.
+  Dry-run by default; `--write` to apply. Source code is never
+  modified — the strict invariant is that bytes outside the
+  generated/augmented docs never change.
+- **Split-monorepo detection (v0.1).** When the repo root has no
+  manifest, adopt walks one level deep into seven recognized
+  subdirs (`backend`, `frontend`, `web`, `mobile`, `api`, `client`,
+  `server`) and reports a per-subdir stack. Backend wins as primary
+  (the AI session's default frame anchors where the domain logic
+  lives). Generators render a per-subdir bullet table in
+  BUILD_PLAN.md and the CLAUDE.md augment block. Verified against
+  `focus-flow`, `dealflowtracker`, `contract-concierge`,
+  `norman-handyman-mvp` (three-part split: backend + web + mobile),
+  and `ai-content-studio` (single-stack root, regression-tested to
+  confirm root still wins over a same-named subdir).
+- **Visibility-first fallback scan (v0.2 — the load-bearing
+  principle).** "Never allow real project structure to be
+  invisible." After classification, adopt walks every non-hidden
+  depth-1 child directory and reports what classification missed:
+  manifest-shaped files found, source-extension counts, one example
+  path per extension, and a "this looks like X" hint when a domain
+  extension (`.sol`, `.clar`, `.cdc`, `.move`, `.dart`, `.rs`,
+  `.go`, `.swift`, `.kt`, `.ipynb`, etc.) is dominant. The
+  fallback fires *unconditionally* — even on classified projects —
+  so an AI session reading the generated docs can't be unaware of
+  (say) a `contracts/` directory full of `.sol` files in a project
+  the classifier called "JavaScript". Per-ecosystem detectors are
+  deliberately deferred — visibility-first sidesteps the
+  per-ecosystem-treadmill that would otherwise be required to keep
+  up with new languages and frameworks.
+- **Idempotency safety on every generated file (v0.2.x).** All four
+  target docs (`BUILD_PLAN.md`, `PROJECT_WHAT_IT_IS.md`,
+  `00-START-NEXT-SESSION.md`, `CLAUDE.md`) wrap their content in
+  `<!-- context-kit:adopt:start --> / :end -->` markers. Re-running
+  `--write` refreshes content inside the markers and preserves
+  user edits outside them. If an existing file has *no* markers
+  (i.e. user wrote it by hand), adopt now reports `would skip`
+  instead of clobbering — the load-bearing fix from the
+  unified-donkey-betz dogfood, where v0.2 would have silently
+  overwritten a hand-written `00-START-NEXT-SESSION.md`.
+- **Pattern-based noise filter (v0.2.x).** Replaces exact-name
+  filtering with a pattern check that catches `venv_ml/`,
+  `venv-prod/`, `.venv-old/`, etc. while preserving lookalike
+  names like `envelope/` and `envoy/`.
+- **Lightweight subsystem hints (v0.2.x — not full framework
+  detection).** Three pattern hints derived from manifest filename
+  combinations: `package.json + vite.config.* + tailwind.config.*`
+  → "Vite + Tailwind web app", `package.json + app.config.*` →
+  "Expo / React Native mobile app", `requirements.txt` in a subdir
+  → "Python subsystem with isolated dependencies". Surface in the
+  CLI dryrun, BUILD_PLAN markdown, and as a yellow `hint-badge` in
+  the always-visible HTML summary line. Restored visual contrast
+  on Python+JS-only monorepos that previously had zero `verify
+  with user` notes firing.
+- **Data-only directory grouping (v0.2.x).** Subdirs with files
+  but no recognized source extensions (configs, JSON dumps,
+  documentation, etc.) collapse into a single "Data / content /
+  non-code directories" footer in the markdown docs and a single
+  collapsible block in the HTML report. Unified-donkey-betz had
+  35 of these — v0.2 rendered them as a wall of identical cards;
+  v0.2.x renders them as one entry.
+- **`--html` static review report (§21).** A new opt-in flag that
+  writes a single self-contained HTML report (inline CSS, vanilla
+  JS only, no external assets, no server, no HTTP endpoints).
+  Default destination is `<tempdir>/contextkit-adopt-report-<short-hash-of-cwd>.html`
+  so re-runs in the same project overwrite in place and the
+  source tree stays untouched. `--html-out PATH` overrides the
+  default; `--no-browser` suppresses `webbrowser.open()` for tests
+  and CI. The report has six sections — header, detection summary,
+  classified parts (when applicable), unknown-but-present (the
+  main visual focus, with collapsible per-subdir items), the plan
+  with expand-to-preview per file, and a suggested next-action
+  CTA. CLI dry-run output is byte-equal with or without `--html`
+  modulo a single trailing "HTML report: <path>" line.
+- **Failure taxonomy (v0.2.x → v0.3 — 10 fixed labels).** Every
+  detected issue during an adopt run is classified into one of a
+  closed set of `FailureRecord` types with severity (low/medium/
+  high), surface_area (classification/visibility/safety/UX),
+  description, detected_in (subdir or root), and example. Pure
+  additive metadata — does NOT change classification, plan, or
+  any written output. Surfaces in both the CLI compact summary
+  and a "Detected issues" section in the HTML report. The 10
+  types: `ROOT_SIGNAL_OVERRIDE`, `UNRECOGNIZED_ECOSYSTEM`,
+  `SILENT_SUBDIR_DROP`, `WRAPPER_DIRECTORY_INVISIBILITY`,
+  `NOISE_DIRECTORY_POLLUTION`, `IDEMPOTENCY_RISK`,
+  `MISLEADING_CLASSIFICATION`, `MISSING_FRAMEWORK_DETECTION`,
+  `STRUCTURE_UNDERREPRESENTED`, `MONOREPO_DEPTH_LIMIT`. Detectors
+  are deterministic rules over `StackProfile + plan`. No dynamic
+  taxonomy generation, no AI-generated labels.
+- **`MONOREPO_DEPTH_LIMIT` failure label (v0.3).** Fires when a
+  workspace-container subdir (`apps`, `packages`, `services`,
+  `crates`, `members`, `workspaces`) holds substantial content but
+  adopt's depth-1 scan can't enter the child projects. Closes the
+  v0.2.x gap exposed by the cloned dogfood batch, where 3 of 5
+  Turborepo-style projects (`expo-monorepo-example`, `fns-monorepo`,
+  `turborepo-next-django-starter`) emitted zero failure records
+  despite obvious depth-2 invisibility. Designed in §22 of the
+  proposal.
+- **Root-level `UNRECOGNIZED_ECOSYSTEM` extension (v0.3).** The
+  existing detector now also fires for ecosystem manifests at the
+  project root (e.g. `melos.yaml` in a Dart Flutter monorepo,
+  `foundry.toml` in a Solidity template). Previously the loop
+  only checked subdir manifests.
+
+### Added — bundled context-kit skill
+
+- The bundled `cli/_skills/context-kit/SKILL.md` ships into every
+  generated project at `.claude/skills/context-kit/SKILL.md` and
+  was extended to mention `context-kit adopt` for projects that
+  aren't context-kit yet — so an agent loaded into a non-adopted
+  project knows the retrofit entry point exists.
+
+### Changed
+
+- README's CLI reference adds the `adopt` row, a full options
+  table for adopt (positional `PATH`, `--write`, `--html`,
+  `--html-out PATH`, `--no-browser`), and a paragraph framing
+  adopt as the entry point for *existing* projects.
+- `cli/bootstrap.py`'s `RUNTIME_COPY` now includes `cli/adopt.py`
+  so generated projects can run `python3 ./context_kit.py adopt .`
+  from their own copy without `ImportError`.
+- `cli/server.py` and the bootstrap pipeline are unchanged. No
+  existing CLI command's behavior changes.
 
 ### Tests
-- 259 passing (was 239 in 0.6.1). +20 for `adopt`: 5 detection,
-  6 split-layout subdir scanning, 3 plan/dry-run/write,
-  3 CLAUDE.md augment + idempotency + BUILD_PLAN rule, 3 CLI
-  entry-point.
+
+- 327 passing (was 239 in 0.6.1). +88 for `adopt` across 13 test
+  classes covering: per-bucket classification (5), split-layout
+  subdir scanning (6), plan/dry-run/write (3), CLAUDE.md augment +
+  idempotency + BUILD_PLAN rule (3), CLI entry-point (3),
+  visibility-first scan + extension reporting + cap (13), pattern-
+  based noise filtering (4), manifest-hint detection (5),
+  idempotency safety + skip-when-no-markers (5), data-only
+  grouping + render hygiene (3), manifest-hint surfacing in CLI/
+  Markdown/HTML (3), `--html` static report including XSS-safety
+  on user input + the `--no-browser` contract (12 + 1 pure-render),
+  failure taxonomy required cases + edge cases + record-shape
+  invariants + render coverage (13), and the v0.3 monorepo-depth
+  + root-ecosystem detectors (8).
+
+### Dogfood validation (read-only, --html --no-browser)
+
+Run during 0.7.0 prep. All five `/development/`-resident
+fixtures plus five cloned `context-kit-dogfood-repos/` clones
+correctly classified or honestly labeled:
+
+  /development/dbao-studio              → ROOT_SIGNAL_OVERRIDE etc.
+  /development/donkey_betz_world        → SILENT_SUBDIR_DROP for mobile/
+  /development/clarity-timelock         → WRAPPER_DIRECTORY_INVISIBILITY
+  /development/unified-donkey-betz      → IDEMPOTENCY_RISK + NOISE_POLLUTION
+  /development/apps/tornado-core        → MISLEADING_CLASSIFICATION + UNRECOGNIZED_ECOSYSTEM (root foundry.toml)
+
+  context-kit-dogfood-repos/expo-monorepo-example       → MONOREPO_DEPTH_LIMIT × 2
+  context-kit-dogfood-repos/flutter-monorepo-example    → MONOREPO_DEPTH_LIMIT + UNRECOGNIZED_ECOSYSTEM × 2
+  context-kit-dogfood-repos/fns-monorepo                → MONOREPO_DEPTH_LIMIT (the headline win — was 0 in v0.2.x)
+  context-kit-dogfood-repos/solidity-template           → MISLEADING_CLASSIFICATION + UNRECOGNIZED_ECOSYSTEM
+  context-kit-dogfood-repos/turborepo-next-django-starter → SILENT_SUBDIR_DROP + MONOREPO_DEPTH_LIMIT
 
 ## [0.6.1] — 2026-04-26
 

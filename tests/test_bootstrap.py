@@ -76,6 +76,27 @@ class TestInitWritesExpectedFiles(unittest.TestCase):
         for _, dst_rel in RUNTIME_COPY:
             self.assertTrue((target / dst_rel).is_file(), f"runtime missing: {dst_rel}")
 
+    def test_generated_project_includes_cli_adopt(self):
+        # 0.7.0 added adopt as a public command. RUNTIME_COPY must
+        # include cli/adopt.py so a user invoking
+        # ``python3 ./context_kit.py adopt .`` from inside a generated
+        # project doesn't hit ImportError. The named-by-string assertion
+        # makes silent removal harder than the loop above (which would
+        # just iterate one fewer entry).
+        target = self.tmpdir / "adopt-runtime"
+        run_init(_init_args("R", target))
+        self.assertTrue(
+            (target / "cli" / "adopt.py").is_file(),
+            "cli/adopt.py missing from generated project — RUNTIME_COPY "
+            "regression. Generated project would ImportError on "
+            "`context-kit adopt`.",
+        )
+        self.assertIn(
+            ("cli/adopt.py", "cli/adopt.py"),
+            RUNTIME_COPY,
+            "cli/adopt.py absent from RUNTIME_COPY tuple itself.",
+        )
+
     def test_default_target_is_slug_in_cwd(self):
         old_cwd = os.getcwd()
         try:

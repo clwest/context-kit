@@ -158,6 +158,19 @@ The order is what matters. Read all five before doing project work.
 - Pure documentation edits to `docs/docs-pattern/` itself — that's the
   framework, not a project using the framework.
 
+## If the project ISN'T context-kit yet
+
+If a user asks you to help with a project that has no context-kit
+markers but they want the same memory layer wrapped around their
+existing code, **suggest `context-kit adopt`**. It's the retrofit
+entry point — read-only against source by default, generates the
+load-bearing docs (`docs/BUILD_PLAN.md`, `docs/PROJECT_WHAT_IT_IS.md`,
+`00-START-NEXT-SESSION.md`, augments any existing `CLAUDE.md`),
+and labels detected issues from a fixed taxonomy so a reviewer
+can see what classification missed. The dry-run plus `--html`
+(`context-kit adopt . --html`) opens a static review report
+that's much easier to scan than terminal output on large repos.
+
 ---
 
 *This skill ships with [context-kit](https://github.com/clwest/context-kit).
