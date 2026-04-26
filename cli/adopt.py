@@ -31,14 +31,25 @@ END_MARKER = "<!-- context-kit:adopt:end -->"
 class StackProfile:
     """What we detected about the project's stack.
 
-    Kept intentionally simple for v0: one language, free-form notes.
-    The full design has a richer shape (frameworks, confidence,
-    multi-stack); we'll grow into it when there's a real reason to.
+    ``language`` is the *primary* language (the one the AI should
+    treat as default). ``parts`` is non-empty for split monorepos
+    where each subdir has its own stack — e.g.
+    ``{"backend": "python", "frontend": "javascript"}``. When parts
+    is populated the generators render a per-subdir stack table
+    instead of a single-line summary.
     """
 
     language: str  # "javascript" | "python" | "unknown"
     signals: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # v0.1: per-subdir detection results. Populated only when the
+    # repo root has no top-level manifest and one or more recognized
+    # subdirectories (backend, frontend, etc.) carry their own.
+    parts: dict[str, str] = field(default_factory=dict)
+    # v0.1: which manifest file each part was detected from. Parallel
+    # keys to ``parts``. Lets the BUILD_PLAN render "(detected from
+    # backend/manage.py)" instead of just naming the language.
+    part_signals: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -68,45 +79,131 @@ class PlannedFile:
 # ---------------------------------------------------------------------------
 
 
-def detect_stack(repo: Path) -> StackProfile:
-    """Look for the obvious manifest files at ``repo`` root.
+# v0.1: subdirs we'll look inside when the root has no manifest.
+# Order matters — the first hit becomes the primary stack when no
+# ``backend`` is detected (backend wins by convention; see _pick_primary).
+RECOGNIZED_SUBDIRS = ("backend", "frontend", "web", "mobile", "api", "client", "server")
 
-    v0 detects exactly three buckets — JavaScript, Python, unknown.
-    Multi-stack repos are not handled yet; we report whichever signal
-    we hit first in the order below. The full design treats these as
-    confidence-scored co-equal signals.
+
+def _detect_in_dir(d: Path) -> tuple[str, list[str]]:
+    """Return ``(language, signals)`` for a single directory.
+
+    ``language`` is "javascript" | "python" | "unknown". ``signals``
+    lists the manifest filenames found in ``d`` (for reporting; not
+    prefixed with the directory). Mixed JS+Python in the same
+    directory still resolves to JavaScript with a multi-stack note
+    appended at the call site.
     """
     signals: list[str] = []
-    if (repo / "package.json").is_file():
+    if (d / "package.json").is_file():
         signals.append("package.json")
-    if (repo / "manage.py").is_file():
+    if (d / "manage.py").is_file():
         signals.append("manage.py")
-    if (repo / "requirements.txt").is_file():
+    if (d / "requirements.txt").is_file():
         signals.append("requirements.txt")
-    if (repo / "pyproject.toml").is_file():
+    if (d / "pyproject.toml").is_file():
         signals.append("pyproject.toml")
-
     has_js = "package.json" in signals
     has_py = any(s in signals for s in ("manage.py", "requirements.txt", "pyproject.toml"))
-
-    notes: list[str] = []
     if has_js and has_py:
-        # v0 doesn't handle this; flag honestly so the user knows
-        # what was picked and why.
-        notes.append(
-            "Detected both JavaScript and Python manifests. "
-            "v0 reports JavaScript and notes Python presence; "
-            "multi-stack handling is planned for a later release."
-        )
-        return StackProfile(language="javascript", signals=signals, notes=notes)
+        return "javascript", signals  # caller decides whether to add a note
     if has_js:
-        return StackProfile(language="javascript", signals=signals)
+        return "javascript", signals
     if has_py:
-        return StackProfile(language="python", signals=signals)
+        return "python", signals
+    return "unknown", signals
+
+
+def _pick_primary(parts: dict[str, str]) -> str:
+    """Backend wins by convention; otherwise first detected in scan order.
+
+    The "backend wins" rule comes from the dogfood split-monorepo
+    shape (focus-flow, dealflowtracker, etc.). Backend is where the
+    domain logic lives, so the AI session's default frame is best
+    anchored there. A user who disagrees can edit BUILD_PLAN.md.
+    """
+    if "backend" in parts and parts["backend"] != "unknown":
+        return parts["backend"]
+    for sub in RECOGNIZED_SUBDIRS:
+        if parts.get(sub) and parts[sub] != "unknown":
+            return parts[sub]
+    return "unknown"
+
+
+def detect_stack(repo: Path) -> StackProfile:
+    """Detect the project's stack, root-first then one level deep.
+
+    Order:
+      1. Scan ``repo`` root. If any manifest is found there, return
+         that profile and ignore subdirs (root wins; preserves v0
+         behavior for single-stack repos like ai-content-studio).
+      2. Otherwise, scan each recognized subdir
+         (backend / frontend / web / mobile / api / client / server)
+         for the same set of manifests. Populate ``parts`` per
+         subdir. ``language`` becomes the primary (backend if
+         present, else first detected, else unknown).
+
+    Depth is capped at 1 by design. Microservice / Turborepo shapes
+    (``apps/<name>/...``) are intentionally not handled yet — that's
+    v0.2's job.
+    """
+    # Step 1: root scan. Existing v0 behavior.
+    root_lang, root_signals = _detect_in_dir(repo)
+    if root_signals:
+        notes: list[str] = []
+        # Preserve the v0 "mixed JS+Python at root" honest note.
+        if (
+            "package.json" in root_signals
+            and any(s in root_signals for s in ("manage.py", "requirements.txt", "pyproject.toml"))
+        ):
+            notes.append(
+                "Detected both JavaScript and Python manifests at root. "
+                "v0 reports JavaScript and notes Python presence; "
+                "multi-stack handling is planned for a later release."
+            )
+        return StackProfile(language=root_lang, signals=root_signals, notes=notes)
+
+    # Step 2: one-level-deep scan into recognized subdirs only.
+    parts: dict[str, str] = {}
+    part_signals: dict[str, str] = {}
+    aggregated_signals: list[str] = []
+    for sub in RECOGNIZED_SUBDIRS:
+        d = repo / sub
+        if not d.is_dir():
+            continue
+        lang, sigs = _detect_in_dir(d)
+        if not sigs:
+            continue
+        parts[sub] = lang
+        # Surface the most informative signal per subdir (the first
+        # match in the canonical priority of _detect_in_dir).
+        part_signals[sub] = sigs[0]
+        for s in sigs:
+            aggregated_signals.append(f"{sub}/{s}")
+
+    if parts:
+        primary = _pick_primary(parts)
+        notes = [
+            "Split monorepo detected. Per-subdir stack listed below; "
+            "deeper layouts (apps/<name>/...) are not yet handled."
+        ]
+        return StackProfile(
+            language=primary,
+            signals=aggregated_signals,
+            notes=notes,
+            parts=parts,
+            part_signals=part_signals,
+        )
+
+    # Nothing at root, nothing in recognized subdirs.
     return StackProfile(
         language="unknown",
-        signals=signals,
-        notes=["No package.json, manage.py, requirements.txt, or pyproject.toml found."],
+        signals=[],
+        notes=[
+            "No package.json, manage.py, requirements.txt, or pyproject.toml "
+            "found at repo root or in recognized subdirs "
+            f"({', '.join(RECOGNIZED_SUBDIRS)})."
+        ],
     )
 
 
@@ -127,13 +224,53 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _lang_label(lang: str) -> str:
+    if lang == "javascript":
+        return "JavaScript / Node.js"
+    if lang == "python":
+        return "Python"
+    return "Unknown"
+
+
 def _stack_summary(stack: StackProfile) -> str:
+    """Single-line summary used in dry-run output and the CLAUDE.md block.
+
+    For split monorepos this returns a one-line "Split: backend=Python,
+    frontend=JavaScript" form so the CLI dry-run report stays compact;
+    the Markdown generators use ``_stack_table`` instead for the
+    longer rendering inside docs.
+    """
+    if stack.parts:
+        items = ", ".join(
+            f"{sub}={_lang_label(lang)}" for sub, lang in stack.parts.items()
+        )
+        return f"Split monorepo — {items}"
     if stack.language == "javascript":
         return "JavaScript / Node.js (detected from package.json)"
     if stack.language == "python":
-        sig = next((s for s in stack.signals if s in ("manage.py", "requirements.txt", "pyproject.toml")), "manifest")
+        sig = next(
+            (s for s in stack.signals if s in ("manage.py", "requirements.txt", "pyproject.toml")),
+            "manifest",
+        )
         return f"Python (detected from {sig})"
     return "Unknown stack — no manifest detected"
+
+
+def _stack_table(stack: StackProfile) -> list[str]:
+    """Multi-line markdown rendering of the stack for BUILD_PLAN / CLAUDE.
+
+    Returns a list of lines (no trailing newline). For split monorepos
+    this is a bullet list per subdir; for single-stack repos this is
+    the same one-line string ``_stack_summary`` returns.
+    """
+    if not stack.parts:
+        return [_stack_summary(stack)]
+    lines: list[str] = []
+    for sub, lang in stack.parts.items():
+        sig = stack.part_signals.get(sub)
+        from_clause = f" (detected from `{sub}/{sig}`)" if sig else ""
+        lines.append(f"- **{sub.capitalize()}:** {_lang_label(lang)}{from_clause}")
+    return lines
 
 
 def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str) -> str:
@@ -155,8 +292,8 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str)
         "",
         "## Tech stack",
         "",
-        _stack_summary(stack),
     ]
+    body += _stack_table(stack)
     if stack.signals:
         body.append("")
         body.append("Manifest files seen: " + ", ".join(f"`{s}`" for s in stack.signals))
@@ -195,7 +332,9 @@ def generate_what_it_is(stack: StackProfile, inputs: AdoptionInputs, title: str)
         "",
         "## Stack",
         "",
-        _stack_summary(stack),
+    ]
+    body += _stack_table(stack)
+    body += [
         "",
         "## Why it exists",
         "",
@@ -249,8 +388,15 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
         f"_Generated by `context-kit adopt` on {_today()}. Re-runs update this block in place._",
         "",
         f"- **Project:** {title}",
-        f"- **Stack:** {_stack_summary(stack)}",
     ]
+    if stack.parts:
+        # Split monorepo: render the per-subdir table inline so the
+        # AI session sees each component's stack as a discrete fact.
+        lines.append("- **Stack:**")
+        for line in _stack_table(stack):
+            lines.append(f"  {line}")
+    else:
+        lines.append(f"- **Stack:** {_stack_summary(stack)}")
     if stack.signals:
         lines.append(f"- **Manifests seen:** {', '.join(f'`{s}`' for s in stack.signals)}")
     lines += [

@@ -24,6 +24,7 @@ from cli.adopt import (  # noqa: E402
     START_MARKER,
     apply_plan,
     detect_stack,
+    generate_build_plan,
     generate_claude_block,
     plan_files,
     run_adopt,
@@ -85,6 +86,111 @@ class TestDetectStack(unittest.TestCase):
             any("multi-stack" in n.lower() for n in result.notes),
             f"expected multi-stack note; got {result.notes!r}",
         )
+
+
+class TestSubdirDetection(unittest.TestCase):
+    """v0.1: scan one level deep when the root has nothing.
+
+    Root-first behavior is preserved (locked by the regression test
+    in TestDetectStack); these tests cover the new split-monorepo
+    fallback path that handles real-world dogfood projects like
+    focus-flow / dealflowtracker / norman-handyman-mvp.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_split_backend_python_frontend_js_primary_is_backend(self):
+        # The headline case the v0.1 plan was written for.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# django\n", encoding="utf-8")
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+        result = detect_stack(self.repo)
+        self.assertEqual(result.parts, {"backend": "python", "frontend": "javascript"})
+        self.assertEqual(result.language, "python", "backend wins as primary")
+        # Signals are prefixed with the subdir so reports stay readable.
+        self.assertIn("backend/manage.py", result.signals)
+        self.assertIn("frontend/package.json", result.signals)
+
+    def test_web_and_mobile_only_primary_is_first_detected(self):
+        # No backend/. Mobile is JS-by-way-of-Expo would be handled in
+        # a later release; here we treat any package.json as javascript
+        # and confirm the "first-detected wins when no backend" rule.
+        (self.repo / "web").mkdir()
+        (self.repo / "web" / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "mobile").mkdir()
+        (self.repo / "mobile" / "package.json").write_text("{}", encoding="utf-8")
+        result = detect_stack(self.repo)
+        self.assertEqual(result.parts, {"web": "javascript", "mobile": "javascript"})
+        self.assertEqual(result.language, "javascript")
+
+    def test_lone_backend_subdir_detected_with_split_note(self):
+        # Half-built monorepo — backend exists, frontend doesn't.
+        # We still go down the split path and emit the "split monorepo
+        # detected" note so the user knows we scanned subdirs.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+        result = detect_stack(self.repo)
+        self.assertEqual(result.parts, {"backend": "python"})
+        self.assertEqual(result.language, "python")
+        self.assertTrue(
+            any("split monorepo" in n.lower() for n in result.notes),
+            f"expected split-monorepo note; got {result.notes!r}",
+        )
+
+    def test_root_manifest_wins_over_subdir_manifest(self):
+        # Regression guard: ai-content-studio has package.json at
+        # root AND a backend/. Root must win — we don't want to
+        # silently re-classify a single-stack repo as a monorepo
+        # just because there's a same-named subdir.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# django\n", encoding="utf-8")
+        result = detect_stack(self.repo)
+        self.assertEqual(result.language, "javascript")
+        self.assertEqual(result.parts, {}, "parts must stay empty when root wins")
+        self.assertIn("package.json", result.signals)
+        # Subdir manifest should NOT leak into the signals list when
+        # root wins; that would imply we scanned both, which we didn't.
+        self.assertNotIn("backend/manage.py", result.signals)
+
+    def test_build_plan_renders_split_stack_table(self):
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# django\n", encoding="utf-8")
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        body = generate_build_plan(
+            stack,
+            AdoptionInputs(project_description="Demo", next_step="ship v0"),
+            "Demo",
+        )
+        # Per-subdir bullet rendering (not the single-line summary).
+        self.assertIn("**Backend:** Python", body)
+        self.assertIn("**Frontend:** JavaScript", body)
+        self.assertIn("`backend/manage.py`", body)
+        self.assertIn("`frontend/package.json`", body)
+
+    def test_claude_block_renders_split_stack_table(self):
+        # The augment block is the AI's instruction surface — it must
+        # carry the per-subdir stack too, not just a flat summary.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "manage.py").write_text("# django\n", encoding="utf-8")
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        block = generate_claude_block(
+            stack,
+            AdoptionInputs(project_description="Demo", next_step="ship v0"),
+            "Demo",
+        )
+        self.assertIn("**Backend:** Python", block)
+        self.assertIn("**Frontend:** JavaScript", block)
 
 
 class TestPlanAndApply(unittest.TestCase):
