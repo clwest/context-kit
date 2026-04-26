@@ -1676,3 +1676,260 @@ the top 10 above plus the five fixtures with full sections (§17,
 §18, §20, plus clarity-timelock and flow-name-service in §19's
 worked examples) cover every distinct way v0.1 fails that we've
 documented to date.
+
+## 21. adopt --html static review report
+
+> **Status:** design only. Added 2026-04-26 after the v0.2
+> visibility-first ship (commit 7a5ddb8) made the dry-run output
+> long enough on real projects (tornado-core surfaces 7 unclassified
+> subdirs) that reading it in a terminal became painful. This section
+> proposes the smallest UX layer that makes adopt's output reviewable.
+> No code in this commit.
+
+### Recommendation in one sentence
+
+Add a `--html` flag to `context-kit adopt` that writes a single
+self-contained HTML report to a temp file and auto-opens it in the
+browser. Nothing else. CLI behavior is unchanged.
+
+### Hard contracts
+
+These are non-negotiable for the MVP. Future scope creep should
+re-read this list before adding anything.
+
+- **Static HTML report.** A single self-contained file. Inline CSS,
+  vanilla JS only (collapse / copy-to-clipboard). Same constraint
+  as `cli/_static/wizard.html`. No JS framework, no npm
+  dependencies, no build step. context-kit stays zero-dep Python.
+- **No server.** No new HTTP endpoints anywhere. The report is a
+  file on disk; the browser opens it via `file://`. Sidesteps the
+  Oreo lifecycle problems the wizard work surfaced.
+- **No wizard integration.** Backlog item §15 #6 is still deferred.
+  Don't sneak it in via the report. `context-kit start` and
+  `context-kit adopt` stay independent commands.
+- **Source tree untouched by default.** Default output destination
+  is `/tmp/contextkit-adopt-report-<short-hash-of-cwd>.html`. The
+  short hash is `cwd.resolve()` digest-truncated so re-runs in
+  different projects don't collide on the same file. Same project
+  re-run overwrites in place. No `.gitignore` entry needed because
+  nothing lands in the project.
+- **`--html-out PATH` for explicit destination.** A user who
+  wants the report inside their project (e.g.
+  `./adopt-report.html`) can pass it explicitly. Default keeps
+  source untouched.
+- **`--no-browser` for tests / headless / CI.** Without it, the
+  default behavior calls `webbrowser.open()` (same stdlib trick
+  `context-kit start` already uses). Tests must pass `--no-browser`.
+- **No edit / apply actions in the browser.** The report is
+  read-only. No "click to apply just this part of the plan" or
+  "edit description and save back" controls. Both would require
+  HTTP endpoints, both would re-introduce server lifecycle pain,
+  both would break the dry-run-is-safe contract. The user's only
+  control surface remains the CLI: re-run with `--write` (or with
+  different flags) when the report looks right.
+- **Unknown-but-present structure is the main visual focus.** §19's
+  visibility output is the load-bearing reason this UX exists. The
+  report's center-of-page real estate goes to the "Unknown but
+  present" section, with collapsible per-subdir items so 7
+  unclassified subdirs (tornado-core's case) don't render as a wall
+  of text by default. Classified parts get a card too, but tighter.
+- **CLI dry-run text output unchanged.** `--html` is purely
+  *additive*. Removing the flag leaves adopt v0.2 behaving exactly
+  as it does today. Tests assert the dry-run stdout is byte-equal
+  with and without `--html`.
+
+### Why HTML and not the alternatives
+
+Four options were weighed:
+
+| Option | Cost | Why rejected (or chosen) |
+|---|---|---|
+| **`adopt --html` static report** | ~300 LOC + 10 tests | **Chosen.** No server lifecycle. Aligns with `inventory --json` pattern. Source-tree untouched. Works offline. |
+| Wizard branch in `context-kit start` | ~700 LOC + new HTTP routes | Rejected. Couples adopt to the wizard, reintroduces server lifecycle, wizard is already feature-rich. |
+| TUI / pager output | Medium | Rejected. The user's complaint is "long terminal output is painful" — a pager just paginates the pain. |
+| `--report report.md` markdown | Tiny | Considered as a follow-up. HTML costs barely more and gives real visual hierarchy with collapsibles. |
+
+The wizard option is the most tempting and the most dangerous. We
+already saw what server-lifecycle complexity costs (the Oreo
+recovery work). Adopt is a one-shot operation; it doesn't earn the
+server.
+
+### What the report shows (six sections, top-to-bottom)
+
+1. **Header band** — project name (cwd basename), full cwd path,
+   generated timestamp, adopt version (read from
+   `cli/__init__` or pyproject).
+2. **Detection summary card** — primary classification line, the
+   signals that produced it, classifier notes ("Split monorepo
+   detected", "Detected both JavaScript and Python at root").
+   Color-coded: green when classified, amber when "Unknown stack",
+   red when no signal at all.
+3. **Classified parts card** — only when `parts` is non-empty.
+   Per-subdir bullet list mirroring the BUILD_PLAN markdown table.
+4. **Unknown but present** — the §19 visibility output as a
+   collapsible list. Each subdir item shows manifest files,
+   notable extensions with counts and example paths (clickable
+   `file://` links), and the suggest-hint note when present. **This
+   is the main visual focus** — the section gets the most page real
+   estate and the clearest typography.
+5. **What adopt would write** — the four-file plan with
+   `create` / `augment` badges. Each file row has an "expand to
+   preview" toggle that reveals the actual content adopt would
+   produce. The CLAUDE.md augment block is shown side-by-side with
+   what currently exists in the file (when augment-mode applies)
+   so the user can see what's preserved vs. what's added.
+6. **Suggested next action** — one prominent CTA. Either:
+   - **"Looks good — run with `--write`"** with the literal command
+     pre-formatted in a copy box, OR
+   - **"Fill in `[adopt: please describe]` placeholders before
+     writing"** with file links to where the placeholders appear in
+     the planned content.
+
+### Visual separation
+
+Match `cli/_static/wizard.html`'s aesthetic. Card-based vertical
+layout, single-column 720-px max width, dark/light auto-theme via
+`prefers-color-scheme`. Color hierarchy:
+
+| Region | Color accent | Tone |
+|---|---|---|
+| Detection card (classified) | Green | "Confident result" |
+| Detection card (unknown) | Amber | "We tried and found nothing definitive" |
+| Unknown but present | Amber | "Worth your attention but not a problem" |
+| Plan / file previews | Neutral grey | "Mechanical output" |
+| Warnings / inline notes | Yellow callout boxes | "Read this before acting" |
+| Suggested next action | Single bold green button | "Do this next" |
+
+Typography: monospace for paths and commands, system sans-serif
+for prose. Inline copy buttons reuse the wizard's `data-copy-text`
+delegation pattern.
+
+### Default output destination
+
+```
+/tmp/contextkit-adopt-report-<short-hash-of-cwd>.html
+```
+
+`<short-hash-of-cwd>` is the first 8 chars of a SHA1 of
+`cwd.resolve()`. Same project re-run produces the same filename
+and overwrites in place. Different projects on the same machine
+don't collide.
+
+Why `/tmp/`:
+- Untouched at next reboot — no accumulation risk.
+- Standard scratch location every Unix has.
+- macOS reflects to `/private/var/folders/...` which `webbrowser.open`
+  handles fine.
+- Doesn't pollute the project, doesn't pollute `~/.context-kit/`,
+  doesn't require a settings file.
+
+`--html-out PATH` is the explicit override. A user who wants the
+report version-controlled inside their project (e.g.
+`./docs/adopt-report.html`) can pass it. Default keeps the source
+tree untouched.
+
+### Test strategy
+
+~10 focused tests, mirroring the wizard's HTML-load + grep-the-body
+pattern (already in tests/test_wizard.py). Each runs against a tiny
+fixture project under `tests/fixtures/adopt_html/...`.
+
+| Test | Asserts |
+|---|---|
+| `--html` triggers a write to default path | file exists at expected location after dry-run |
+| `--html-out PATH` writes to that path | exact path control |
+| Re-run overwrites (doesn't accumulate) | file size / mtime changes, no second file appears |
+| HTML contains project name, classification line, all unclassified subdir names | visibility coverage |
+| HTML escapes user-supplied content (description, next_step) | XSS safety on user input |
+| `--html` co-exists with `--write` | both behaviors fire, exit 0 |
+| CLI dry-run stdout unchanged when `--html` also passed | additivity contract |
+| Clean classified project's HTML omits "Unknown but present" section | no noise on tidy projects |
+| HTML's CTA reads "Run with --write" when no placeholders in the plan | happy path |
+| HTML's CTA reads "Fill in placeholders first" when placeholders exist | guard rail |
+| `--no-browser` suppresses the `webbrowser.open()` call | tests + CI safety |
+
+### Risks of overbuilding (the "do not build" list)
+
+These are seven concrete risks observed during design. Future
+implementation should re-read before adding anything.
+
+1. **JS framework / build pipeline.** Hard rule: vanilla JS only,
+   inline. Same as the wizard.
+2. **Server-backed interactivity.** "Click to apply only part of
+   the plan", "edit and save back" — both require HTTP endpoints
+   and break the dry-run contract.
+3. **Auto-refresh / websockets.** Adopt is one-shot. Real-time is
+   the wrong frame.
+4. **Wizard integration via the back door.** §15 backlog item #6
+   says wizard branch is deferred. Don't sneak it in via the
+   report.
+5. **"Looks professional" trap.** The wizard's HTML is intentionally
+   not a designer's portfolio. Match that aesthetic, don't
+   over-style.
+6. **PDF / screenshot / "share report" features.** Each adds
+   dependencies, hosting concerns, or scope. None help the user
+   answer "what does adopt see in my project?"
+7. **Visualization for visualization's sake.** Dependency graphs,
+   file-count pie charts, etc. — tempting but distract from the
+   core question. Tables and lists are enough.
+
+### MVP scope (write this down before coding)
+
+**Build:**
+- `--html` flag on `context-kit adopt`
+- Default output `/tmp/contextkit-adopt-report-<short-hash-of-cwd>.html`
+- `--html-out PATH` for explicit destination
+- `--no-browser` flag
+- Single self-contained HTML file; inline CSS + vanilla JS for
+  collapse / copy only
+- The six sections above, with **unknown-but-present as the
+  primary visual focus**
+- Auto-open via `webbrowser.open()` unless `--no-browser`
+- ~10 focused tests
+
+**Explicitly do NOT build:**
+
+- ❌ Wizard branch / `context-kit start` adopt mode
+- ❌ Any HTTP endpoints
+- ❌ Real-time / websockets / auto-refresh
+- ❌ Edit-in-browser / save-back
+- ❌ "Apply partial plan" controls
+- ❌ JS framework / npm dependencies / build step
+- ❌ PDF / screenshot / share features
+- ❌ Visualization beyond tables / lists / badges
+- ❌ Cache / metadata files inside the project
+- ❌ Authentication or hosting concerns
+
+### Cost estimate
+
+~300 LOC for the renderer + ~100 LOC of inline CSS + 10 tests.
+One focused session. The renderer is a pure function from
+`StackProfile` + `AdoptionInputs` → `str` (mirrors the existing
+markdown generators), so testability is straightforward.
+
+### Implementation note (when v0.3 starts)
+
+The renderer should consume `StackProfile` through its public
+attributes only — no reaching into private fields, no shape
+assumptions beyond what `cli/adopt.py` declares in its dataclasses.
+If `UnclassifiedSubdir` gains or loses a field, the renderer
+should fail loudly (raise on unknown shape) rather than silently
+render the wrong thing. This is the same contract the wizard's
+renderer respects against `_render_html`'s callers.
+
+### What this is NOT
+
+- Not a wizard step. The wizard remains from-scratch oriented.
+- Not a server feature. No `context-kit start` involvement.
+- Not a project-state UI. It only shows what *one adopt run* sees.
+  History / diff between adopt runs is out of scope.
+- Not a substitute for the CLI dry-run. The plain text output
+  stays intact and is the primary scripting / CI path.
+
+### Where this slots into the v0.3 plan
+
+This is design for v0.3 (or v0.2.1 if shipped on its own without
+other changes). The visibility-first scan (§19) in v0.2 produced
+the data; this section proposes how to make that data scannable.
+It's orthogonal to the rest of the v0.2 backlog (§15 items #3 –
+#9): independent ship, doesn't block any of them.
