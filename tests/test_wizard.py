@@ -382,6 +382,25 @@ class TestLiveWizardServer(unittest.TestCase):
                 (self.cwd / noise / "00-START-NEXT-SESSION.md").unlink(missing_ok=True)
                 (self.cwd / noise).rmdir()
 
+    def test_wizard_step8_suggests_first_prompt_for_build_plan(self):
+        """The whole framework leans on ``BUILD_PLAN.md`` being the
+        source of truth for stack decisions. Without a primer prompt,
+        a beginner who runs ``claude`` may get an agent that ignores
+        the plan, picks a different stack, and produces wrong code —
+        exactly the failure that triggered this work. The final wizard
+        step must hand the user a copy-able first prompt that points
+        the agent at BUILD_PLAN.md before it writes anything.
+        """
+        _, body, _ = self._get("/wizard")
+        self.assertIn(
+            "Read BUILD_PLAN.md and WHAT_IT_IS.md, then begin implementing version 1.",
+            body,
+        )
+        # Beginner-friendly framing of *why* the prompt matters — not
+        # just dropped on them as a magic incantation.
+        self.assertIn("source of truth for your", body)
+        self.assertIn("tech stack", body)
+
     def test_wizard_includes_fresh_tab_recovery_copy(self):
         """The discovery card copy must ship in the served HTML so a
         future refactor can't quietly remove the fresh-tab recovery

@@ -85,6 +85,34 @@ class TestInitWritesExpectedFiles(unittest.TestCase):
         finally:
             os.chdir(old_cwd)
 
+    def test_claude_md_enforces_build_plan_as_source_of_truth(self):
+        """Real failure mode this locks down: an agent loaded into a
+        scaffolded project did NOT read ``docs/BUILD_PLAN.md``, picked
+        a different stack from the one ``recommend-stack`` had baked
+        into the plan, and produced code that didn't fit the project.
+        ``BUILD_PLAN.md`` MUST be surfaced in CLAUDE.md (the AI session
+        entry point) both as a hard rule and as a discoverable row in
+        the "where to find things" table.
+        """
+        target = self.tmpdir / "buildplan-check"
+        run_init(_init_args("BP Check", target))
+        body = (target / "CLAUDE.md").read_text(encoding="utf-8")
+        # The hard rule near the top — exact wording from the framework
+        # decision so an agent skimming the first screen can't miss it.
+        self.assertIn(
+            "Always read `docs/BUILD_PLAN.md` before choosing a stack "
+            "or writing code",
+            body,
+        )
+        self.assertIn("Do not deviate unless you explain why and ask", body)
+        # The discovery row in the "where to find things" table — must
+        # be labeled with its load-bearing role, not just its filename.
+        self.assertIn(
+            "Source of truth for tech stack and build approach",
+            body,
+        )
+        self.assertIn("`docs/BUILD_PLAN.md`", body)
+
     def test_scaffolded_start_here_has_state_scaffold_frontmatter(self):
         """Locks in the contract `context-kit seed` relies on."""
         target = self.tmpdir / "state-check"
