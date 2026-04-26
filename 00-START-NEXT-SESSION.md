@@ -3,126 +3,127 @@
 > **Source of truth (read in this order):**
 > 1. `docs/CONTEXT_KIT_WHAT_IT_IS.md` — narrative anchor
 > 2. `docs/CONTEXT_KIT_INVENTORY.md` — runtime anchor (auto-generated)
-> 3. Most recent `docs/handoffs/SESSION_NNN_*.md`
-> 4. `docs/LAUNCH_FEEDBACK.md` — running feedback log (live)
+> 3. `docs/handoffs/SESSION_009_ADOPT_AND_0_7_0.md` — what last session shipped
+> 4. `docs/proposals/SESSION_009_ADOPT.md` — full adopt design (deep reference)
 >
 > When any other doc disagrees with the above, the above wins.
 
 ---
 
-## What just shipped
+## Where state actually is right now
 
-`contextkit-ai 0.4.2` is live on PyPI. The `init / seed / orient`
-loop is the shippable shape of the tool now.
+**Version is staged at 0.7.0** locally. Not yet pushed, not yet
+published to PyPI, not yet tagged, no GitHub release.
 
-Recent commit history (latest first):
+- **Local commit:** `a0ae625 chore(release): prepare 0.7.0`
+  is one ahead of `origin/main`.
+- **Tests:** **328/328 passing**.
+- **Inventory:** current.
+- **Build:** clean. `dist/contextkit_ai-0.7.0-py3-none-any.whl` +
+  `.tar.gz` exist locally.
+- **`twine check`:** PASSED for both artifacts.
+- **Fresh-venv install smoke:** passed end-to-end —
+  `pip install` the local wheel, `context-kit adopt --help`
+  shows all four flags (`--write`, `--html`, `--html-out`,
+  `--no-browser`), `context-kit adopt <fixture> --html
+  --no-browser` runs to exit 0.
+- **PyPI:** still on **0.6.1**. 0.7.0 NOT published.
+- **Git tag:** `v0.6.0` is the latest. **No `v0.7.0` tag yet.**
+- **GitHub release:** none for 0.7.0.
 
-- `chore(release): bump to 0.4.2` — version bump; 0.4.1 was already
-  published without `seed` and PyPI versions are immutable, so seed
-  ships in 0.4.2.
-- `docs: position seed in launch + log estimation calibration` —
-  README + DISTRIBUTION_NOTES updated with the three-line positioning;
-  TRUST_CALIBRATION gains an entry on AI-paced estimates being too
-  high when design is locked.
-- `feat(seed): generate project context from idea files` — the
-  Session 5 feature. 5 target files, managed-block markers, schema
-  documented at `cli/_pattern/IDEA_SCHEMA.md`. 34 new tests.
-- `chore(packaging): rename PyPI distribution to contextkit-ai` —
-  the unsuffixed `context-kit` name was rejected.
-- `feat(packaging): make wheel installable` — Session 4 work; assets
-  moved inside `cli/` as package data, bootstrap reads via
-  `importlib.resources`.
+## What 0.7.0 ships
 
-127/127 tests passing. Clean-venv install of the live PyPI wheel
-verified end-to-end (init → seed → orient).
+Top-line: `context-kit adopt` is the new public command for
+retrofitting context-kit's docs layer onto existing projects
+without touching source code. Built across seven incremental
+ships (v0 through v0.3) plus this release prep.
 
-See the SESSION_NNN_*.md handoffs in `docs/handoffs/` for full
-context. The latest is Session 4 (`SESSION_004_PYPI_PREP.md`); a
-Session 5 handoff is queued for the next session that does
-non-launch work.
+Headline features in the 0.7.0 release notes:
 
----
+- **`context-kit adopt [PATH]`** — minimal three-language
+  detection, two-prompt user input, four-file generation
+  (BUILD_PLAN.md, PROJECT_WHAT_IT_IS.md, 00-START-NEXT-SESSION.md,
+  fresh-or-augment CLAUDE.md). Dry-run by default; `--write` to
+  apply.
+- **Split-monorepo detection** — when root has no manifest, walks
+  one level into seven recognized subdir names; backend wins as
+  primary.
+- **Visibility-first unclassified scan** — the load-bearing
+  principle. Never silently drops a depth-1 child directory;
+  always reports manifests + source extensions + example paths +
+  domain-extension hints.
+- **Idempotency safety** — all four generated files use adopt
+  markers. Re-runs preserve user edits; existing files without
+  markers are skipped (not clobbered).
+- **Pattern-based noise filter** — catches `venv_ml/`,
+  `venv-prod/`, etc. while preserving `envelope/`.
+- **Lightweight subsystem hints** — Vite + Tailwind, Expo +
+  React Native, Python isolated subsystem.
+- **Data-only directory grouping** — collapses N "no recognized
+  source extensions" cards into one block.
+- **`--html` static review report** — single self-contained file,
+  inline CSS + vanilla JS, no server. Default writes to system
+  temp dir.
+- **Failure taxonomy** — 10 fixed labels (ROOT_SIGNAL_OVERRIDE,
+  UNRECOGNIZED_ECOSYSTEM, SILENT_SUBDIR_DROP,
+  WRAPPER_DIRECTORY_INVISIBILITY, NOISE_DIRECTORY_POLLUTION,
+  IDEMPOTENCY_RISK, MISLEADING_CLASSIFICATION,
+  MISSING_FRAMEWORK_DETECTION, STRUCTURE_UNDERREPRESENTED,
+  MONOREPO_DEPTH_LIMIT). Pure additive metadata. CLI compact
+  summary + HTML "Detected issues" section.
+- **MONOREPO_DEPTH_LIMIT (v0.3)** — labels Turborepo / pnpm-
+  workspace shapes where child projects live below adopt's
+  current scan depth. Closes the v0.2.x gap exposed by the
+  cloned dogfood batch.
 
-## MODE: launch watch (still)
+Full per-ship breakdown lives in
+`docs/handoffs/SESSION_009_ADOPT_AND_0_7_0.md`. Full design lives
+in `docs/proposals/SESSION_009_ADOPT.md`.
 
-PyPI publish was infrastructure for the launch, not new product
-scope. We remain in launch-watch mode: **no new build work until
-3-5 real feedback signals are in.** Decision gate is in
-`docs/LAUNCH_FEEDBACK.md`.
+## Next steps (in order)
 
----
+1. **`git push origin main`** — single commit (`a0ae625`).
+2. **`python3 -m twine upload dist/*`** — uploads
+   `contextkit_ai-0.7.0` to PyPI. (Or upload to TestPyPI first
+   if you want a dry run.)
+3. **Verify fresh install** from PyPI (not the local wheel):
+   `pip install contextkit-ai==0.7.0` in a new venv, run
+   `context-kit adopt --help` to confirm the install works
+   end-to-end against the published artifact.
+4. **`git tag -a v0.7.0 -m "..."`** then `git push origin v0.7.0`.
+5. **GitHub release** for `v0.7.0`. Body can come from the
+   `[0.7.0]` section of `CHANGELOG.md` verbatim, or be summarized.
 
-## What the human is doing (off-keyboard, in order)
+## Open design questions (deferred, NOT for this release)
 
-### Done
+- **`apps/<name>/` workspace walking** (proposal §15 #3) — the
+  natural follow-on to v0.3's MONOREPO_DEPTH_LIMIT. v0.3
+  *labels* the gap; v0.8.0 should *fix* it by walking depth-2
+  inside the seven workspace containers.
+- **Framework detection inside manifests** (proposal §15 #5) —
+  classify `manage.py` as Django, `next.config.*` as Next.js,
+  etc. Pairs naturally with the workspace-walking work.
+- **`[adopt: please describe]` doctor check** (proposal §15 #6).
+- **Wizard branch for adopt** (proposal §15 #7).
 
-- ✅ `pip install contextkit-ai` is live on PyPI as **0.4.2**.
-- ✅ Tags `v0.4.1` and `v0.4.2` pushed.
-- ✅ GitHub release v0.4.2 published:
-  https://github.com/clwest/context-kit/releases/tag/v0.4.2
-- ✅ All launch copy in `docs/DISTRIBUTION_NOTES.md` reflects the
-  shipped state.
+These are post-0.7.0 work. Don't sneak them into the release.
 
-### Now: the public launch
+## Where to look when you come back
 
-1. **Reply** to Damian, Brian, Austin under their original LinkedIn
-   comments using the snippets in `DISTRIBUTION_NOTES.md`. Edit to
-   your voice. Include the demo (asciinema cast or screen recording
-   of `examples/demo.sh`) if you have one.
-2. **Wait ~24h.** Read whatever comes back.
-3. **Post** the long-form LinkedIn update (draft in
-   `DISTRIBUTION_NOTES.md` — leads with the `init / seed / orient`
-   loop and the live install).
-4. **Wait ~24h.**
-5. **Post** the X/Twitter thread (6 tweets, draft in
-   `DISTRIBUTION_NOTES.md`).
+| What | Where |
+|---|---|
+| Latest handoff | `docs/handoffs/SESSION_009_ADOPT_AND_0_7_0.md` |
+| Adopt code | `cli/adopt.py` (~1,800 lines) |
+| Adopt tests | `tests/test_adopt.py` (~1,300 lines, 88 tests) |
+| Full adopt design | `docs/proposals/SESSION_009_ADOPT.md` |
+| Release notes | `CHANGELOG.md` `[0.7.0]` section |
+| Recent commits | `git log --oneline -10` |
+| Wheel + sdist | `dist/contextkit_ai-0.7.0.{whl,tar.gz}` |
 
----
+## Load-bearing reminder
 
-## What I can do (on-keyboard) once feedback arrives
-
-- Open a GitHub issue for any signal you paste me, with the right
-  label (`drift` / `onboarding` / `confusion` / `missing-feature` /
-  `dogfood` / `feedback`).
-- Append to `LAUNCH_FEEDBACK.md` with source + paraphrase + my read.
-- Reproduce reported bugs against a clean wheel install (now
-  trivially possible: build wheel → install in venv → run failing
-  command).
-- Help draft replies (you send them).
-
----
-
-## What we are NOT doing
-
-- Not building new features. Not even small ones. Not even
-  PyPI-related ones unless the publish itself fails.
-- Not refactoring "while we're here."
-- Not polishing the README again.
-- Anything tempting goes to "Queued for after the recap" below.
-
----
-
-## Queued for after the recap
-
-- **CI install matrix.** Add a workflow step that builds the wheel
-  and installs it in a clean venv on every PR. Catches packaging
-  regressions before they hit users.
-- **`tests` to `PATTERN_EXCLUDES`.** Now obsolete — the new
-  bootstrap reads from `cli/_pattern/` only, so tests can't leak in.
-  Removable as a queued item.
-- **Wire `inventory --check` into CI.** Failing build = drift between
-  code and inventory in the same commit.
-- **Pre-commit hook for inventory currency.**
-- **`_cli_subcommands` introspection of generated projects' own
-  entry script.**
-
----
-
-## AI / Assistant Context
-
-- Sessions 1-4 followed the pattern. Session 4 broke the
-  launch-watch rule on purpose (PyPI is universal onboarding
-  friction, not feature scope) and that was the right call.
-- `docs/TRUST_CALIBRATION.md` now has 2 entries. Re-read both
-  before any future estimation, especially if you catch yourself
-  unconsciously quoting human-paced timelines.
+`docs/CONTEXT_KIT_INVENTORY.md` is auto-generated from
+`context-kit inventory --write`. Re-run it whenever code/test/doc
+counts change so the runtime anchor stays accurate. CI (and the
+project's own discipline) treats it as the source of truth — when
+narrative docs disagree with the inventory, the inventory wins.
