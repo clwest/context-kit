@@ -259,6 +259,19 @@ class TestLiveWizardServer(unittest.TestCase):
             body,
         )
 
+    def test_wizard_init_step_directs_user_to_new_terminal(self):
+        """The init step (running ``context-kit init``) must explicitly tell
+        the user to open a *new* terminal. The terminal that launched
+        ``context-kit start`` is busy serving this page, and beginners do
+        not intuit that they need a second one — they try to type in the
+        running server's terminal and get nothing.
+        """
+        _, body, _ = self._get("/wizard")
+        self.assertIn("Keep this page open", body)
+        self.assertIn("In a new terminal", body)
+        # VS Code helper — exact menu path so users can follow it verbatim.
+        self.assertIn('"Terminal" → "New Terminal"', body)
+
     # --- /api/state ---
 
     def test_api_state_returns_json(self):
