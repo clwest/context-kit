@@ -641,14 +641,30 @@ after v0 + v0.1 shipped to track what landed and what's next.*
 Ordered by "expected payoff per unit of work", informed by the
 five-project dogfood at the close of v0.1:
 
-1. **`apps/<name>/` Turborepo / monorepo shapes.** The current
+1. **Root manifest should not automatically win when subdirs
+   contain stronger framework signals.** v0.1's "root wins"
+   shortcut is correct for clean single-stack repos but wrong for
+   "abandoned-shape" repos where the root carries weak/leftover
+   manifests (e.g. a root `package.json` for tooling) and the
+   real application lives in `backend/` + `frontend/`. The
+   dbao-studio fixture (see §17) is the canonical example: root
+   has both `package.json` and `requirements.txt`, but `backend/`
+   contains `manage.py` (a much stronger Django signal) and the
+   existing CLAUDE.md confirms "Django backend". v0.2 should: (a)
+   when root has only weak/mixed signals, also scan recognized
+   subdirs and merge results; (b) treat `manage.py` /
+   `pubspec.yaml` / `Cargo.toml` / `go.mod` as *strong* framework
+   signals that outrank a generic root `package.json` /
+   `requirements.txt` even when both are present. Pairs naturally
+   with item #3 below (framework detection inside manifests).
+2. **`apps/<name>/` Turborepo / monorepo shapes.** The current
    depth-1 limit returns "unknown" for Nx, Turborepo, and
    microservice monorepos that put each component under
    `apps/api`, `apps/web`, etc. v0.1's `_detect_in_dir()` is
    already the right primitive — v0.2 adds a second fallback that
    walks `apps/*/` (and maybe `packages/*/` and `services/*/`)
    when the depth-1 scan returns empty.
-2. **Idempotent BUILD_PLAN / WHAT_IT_IS / START rewriting via
+3. **Idempotent BUILD_PLAN / WHAT_IT_IS / START rewriting via
    managed-block markers.** Currently these three files are
    create-only — re-running `adopt --write` against a project
    where they exist would either skip them or overwrite them
@@ -656,7 +672,7 @@ five-project dogfood at the close of v0.1:
    `<!-- context-kit:adopt:start --> / :end -->` blocks so re-runs
    refresh the auto-generated portions and preserve human edits.
    Same pattern the CLAUDE.md augment block already uses.
-3. **Framework detection inside the four manifests.** Today we
+4. **Framework detection inside the four manifests.** Today we
    know "JavaScript" but not "Next.js"; "Python" but not "Django"
    (despite already detecting `manage.py` separately).
    `package.json` parsing with a small dependency-name lookup
@@ -665,19 +681,19 @@ five-project dogfood at the close of v0.1:
    keyword grep (django, fastapi, flask) gets us most of the way.
    Output line goes from "JavaScript / Node.js" to "Next.js
    (React, App Router)".
-4. **`[adopt: please describe]` doctor check.** §7 of the original
+5. **`[adopt: please describe]` doctor check.** §7 of the original
    design. `doctor` learns to grep the project's docs for the
    marker and warn (not block) on each occurrence. Closes the
    loop — adopt is honest about what it didn't infer, doctor
    surfaces those gaps every run until they're filled in.
-5. **Wizard branch.** The current wizard assumes empty cwd. Add
+6. **Wizard branch.** The current wizard assumes empty cwd. Add
    a "fresh tab discovery" entry point: when `/api/state` reports
    the cwd has no init markers but `adopt` would detect a usable
    stack, the wizard offers "We found an existing project. Want
    to adopt it instead of starting from scratch?". Lifts adopt
    into the beginner flow without forcing it on existing CLI
    users.
-6. **`recommend-stack` integration (read-only).** The current
+7. **`recommend-stack` integration (read-only).** The current
    adopt block hard-codes the "do not switch frameworks without
    asking" rule. v0.2 could optionally invoke `recommend-stack`
    on the *adopted* project's idea-equivalent (the user-supplied
@@ -685,15 +701,21 @@ five-project dogfood at the close of v0.1:
    recommend-stack would have suggested FastAPI for this idea —
    here's why, but you've already shipped, so we're not changing
    anything." Honest, advisory, never modifies the stack.
-7. **Confidence scoring.** §3's full table. Useful when v0.2
+8. **Confidence scoring.** §3's full table. Useful when v0.2
    starts seeing genuinely ambiguous projects; not useful while
    we're still operating on binary detection of four manifest
    filenames.
 
-Items 1 and 2 are the highest-value pair — they unblock the next
-class of real-world projects and make adopt safely re-runnable.
-Items 3–4 close the "honest about what we don't know" loop.
-Items 5–7 are nice-to-haves once the core is solid.
+Items 1, 2, and 3 are the highest-value group — together they
+unblock the messy real-world cases (mixed-root projects, Turborepo
+shapes) and make adopt safely re-runnable. Items 4–5 close the
+"honest about what we don't know" loop. Items 6–8 are nice-to-haves
+once the core is solid.
+
+Items 1 and 4 specifically pair against the dbao-studio fixture
+(§17) — together they would let v0.2 produce a correct BUILD_PLAN
+for that project where v0.1 currently misclassifies the stack as
+JavaScript.
 
 ## 16. What shipped vs. what was designed
 
@@ -718,3 +740,143 @@ The pattern across v0 and v0.1: ship the smallest credible thing,
 let real projects expose the next limit, then design v0.2 against
 evidence. This is the same pattern that worked for `recommend-
 stack` (Session 7) and `doctor` (Session 6).
+
+## 17. v0.2 fixture: dbao-studio
+
+A real project at `/Users/donkeyking/development/dbao-studio` that
+v0.1 misclassifies. Logged here as a concrete acceptance target
+for the v0.2 work — when v0.2 ships, the dry-run against this
+project should produce a correct BUILD_PLAN without hand-editing.
+
+### What's actually there
+
+- **Root manifests:** both `package.json` AND `requirements.txt`.
+  Both are weak signals individually — the `package.json` may be
+  tooling-only (lint, build helpers, frontend bundler config), and
+  `requirements.txt` is a generic Python pin file with no
+  framework name in it.
+- **Subdirectory shape:** `backend/`, `frontend/`, plus
+  `agents/`, `config/`, `docker/`, `docs/`, `documentation/`,
+  `documentations/` (yes, two doc dirs), and `sdk/`.
+- **Strong subdir signal:** `backend/` contains `manage.py`. This
+  is a Django marker — much stronger than the root manifests
+  combined.
+- **Existing rich CLAUDE.md** at root, with the project's actual
+  architecture documented inline:
+    > "backend/ # Django backend, with subsystems for agents/,
+    > api/, core/ Django settings, integrations/, content/,
+    > embeddings/, memory/, prompts/, learning/, manage.py."
+  The existing CLAUDE.md is already authoritative — augment-mode
+  must preserve every byte of it.
+- **README.md** present at root.
+- **Multiple `docker-compose*.yml` files** (production, unified,
+  default) suggesting a containerized multi-service deployment.
+
+### Current v0.1 behavior (misclassification)
+
+Run on 2026-04-26 with v0.1 at commit `3f45087`:
+
+```
+Detected stack: JavaScript / Node.js (detected from package.json)
+  note: Detected both JavaScript and Python manifests at root.
+        v0 reports JavaScript and notes Python presence;
+        multi-stack handling is planned for a later release.
+
+Plan:
+  would create   docs/BUILD_PLAN.md
+  would create   docs/PROJECT_WHAT_IT_IS.md
+  would create   00-START-NEXT-SESSION.md
+  would augment  CLAUDE.md
+```
+
+The `would augment` line is correct — augment-mode would preserve
+the existing CLAUDE.md verbatim. But the generated BUILD_PLAN's
+`## Tech stack` heading would read:
+
+```
+## Tech stack
+
+JavaScript / Node.js (detected from package.json)
+```
+
+This is misleading. The existing CLAUDE.md says the backend is
+Django (Python). An AI session reading the v0.1-generated
+BUILD_PLAN would treat JavaScript as the source-of-truth stack
+and propose Node-first solutions, contradicting reality.
+
+### Desired v0.2 behavior
+
+When v0.2 ships, this same dry-run should produce:
+
+```
+Detected stack: Split monorepo —
+  backend = Django (detected from backend/manage.py)
+  frontend = JavaScript / Node.js (detected from frontend/package.json)
+  note: Root manifests (package.json, requirements.txt) appear to
+        be tooling/infra only; backend/manage.py is a stronger
+        framework signal and was preferred. To override, edit
+        docs/BUILD_PLAN.md after --write.
+
+Plan:
+  would create   docs/BUILD_PLAN.md      (managed-block, re-runnable)
+  would create   docs/PROJECT_WHAT_IT_IS.md  (managed-block, re-runnable)
+  would create   00-START-NEXT-SESSION.md
+  would augment  CLAUDE.md
+```
+
+And the generated BUILD_PLAN's `## Tech stack` heading should read:
+
+```
+## Tech stack
+
+- **Backend:** Django (detected from `backend/manage.py`)
+- **Frontend:** JavaScript / Node.js (detected from `frontend/package.json`)
+```
+
+### Acceptance criteria for "v0.2 handles dbao-studio"
+
+- [ ] `detect_stack(dbao_studio_path).parts` is non-empty and
+      contains `{"backend": "django", "frontend": "javascript"}`
+      (or `"python"` if framework detection from item #4 doesn't
+      land in the same v0.2 ship).
+- [ ] `detect_stack(...).language` is `"python"` (backend wins).
+- [ ] BUILD_PLAN.md renders the per-subdir bullet table, not the
+      single-line "JavaScript / Node.js" summary.
+- [ ] CLAUDE.md augment block carries the split table too.
+- [ ] Existing CLAUDE.md prose (project structure tree, agent
+      list, integrations) is preserved byte-for-byte outside the
+      managed markers — re-verify this stays true through the
+      detection-priority rewrite.
+- [ ] A re-run of `adopt --write` after a hand-edit to BUILD_PLAN
+      preserves the human edit (depends on item #3 — managed
+      markers in BUILD_PLAN).
+
+### Which v0.2 backlog items this fixture exercises
+
+- **#1 (root vs subdir signal priority)** — primary driver. Without
+  this, v0.2 still misclassifies dbao-studio.
+- **#3 (idempotent BUILD_PLAN via managed markers)** — required
+  for the "re-runnable after hand-edit" acceptance criterion.
+- **#4 (framework detection inside manifests)** — pairs with #1 to
+  upgrade "Python" to "Django" so the BUILD_PLAN reads the way
+  the existing CLAUDE.md does.
+
+A v0.2 release that ships items #1 + #3 + #4 would handle this
+fixture cleanly. The other backlog items (#2 Turborepo walking,
+#5 doctor placeholders, #6–8) are orthogonal — important on their
+own merits but not required to fix dbao-studio.
+
+### How to use this fixture during v0.2 implementation
+
+Manual (dry-run, safe — never touches source):
+
+```bash
+python3 context_kit.py adopt /Users/donkeyking/development/dbao-studio
+```
+
+The expected output above (or close to it) is the eyeball test.
+For automated coverage, lift a stripped-down fixture under
+`tests/fixtures/adopt/dbao_studio_shape/` containing just the
+manifest files and an existing CLAUDE.md — that lets the test
+suite assert the new detection priority without depending on the
+real `/development/` path.
