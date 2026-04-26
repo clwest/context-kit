@@ -24,6 +24,9 @@ from cli.adopt import (  # noqa: E402
     END_MARKER,
     START_MARKER,
     _default_html_path,
+    _is_data_only_subdir,
+    _is_noise_dir,
+    _manifest_hint,
     apply_plan,
     detect_stack,
     generate_build_plan,
@@ -921,6 +924,387 @@ class TestRenderAdoptHtmlPure(unittest.TestCase):
         # Self-contained: no external <link> or <script src=>.
         self.assertNotIn("<link", html)
         self.assertNotIn("<script src=", html)
+
+
+# ---------------------------------------------------------------------------
+# v0.2.x: idempotency + noise patterns + manifest hints + data-only grouping
+# (post unified-donkey-betz dogfood)
+# ---------------------------------------------------------------------------
+
+
+class TestNoisePatternFiltering(unittest.TestCase):
+    """Pattern-based noise filter — fix for venv_ml/, venv-prod/, etc.
+    that v0.2's exact-name matching let through. False-positive guard
+    on lookalike names (envelope, envoy) is part of the contract.
+    """
+
+    def test_exact_name_matches(self):
+        for n in ("node_modules", "__pycache__", "dist", "build",
+                  "out", "target", "coverage", "media"):
+            self.assertTrue(_is_noise_dir(n), f"{n} should be noise")
+
+    def test_venv_variants_match(self):
+        # The bug from the unified-donkey-betz dogfood: venv_ml/ slipped
+        # past v0.2's exact-name set. Pattern-based matching catches it
+        # AND venv-prod/, venv.old/, .venv* (via the leading-dot
+        # filter applied separately at the call site).
+        for n in ("venv", "venv_ml", "venv-prod", "venv.old",
+                  "env", "env-dev", "env_dev", "env.staging",
+                  "pyenv", "virtualenv"):
+            self.assertTrue(_is_noise_dir(n), f"{n} should be noise")
+
+    def test_lookalike_names_not_filtered(self):
+        # The false-positive guard: a directory whose name STARTS WITH
+        # "env" or "venv" but doesn't have a separator after the prefix
+        # is real content, not a venv. Don't filter these.
+        for n in ("envelope", "envoy", "venvelope", "envman", "envoie"):
+            self.assertFalse(_is_noise_dir(n), f"{n} should NOT be filtered")
+
+    def test_noise_pattern_filter_applies_to_unclassified_scan(self):
+        # End-to-end: a venv_ml/ in a real repo must not appear in
+        # unclassified_subdirs. This is the load-bearing test against
+        # the unified-donkey-betz failure mode.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "venv_ml").mkdir()
+            (repo / "venv_ml" / "bin").mkdir()
+            (repo / "venv_ml" / "bin" / "python").touch()
+            (repo / "real_subsystem").mkdir()
+            (repo / "real_subsystem" / "thing.py").write_text(
+                "# real\n", encoding="utf-8")
+            stack = detect_stack(repo)
+            names = {u.name for u in stack.unclassified_subdirs}
+            self.assertNotIn("venv_ml", names,
+                             f"venv_ml leaked into unclassified: {names!r}")
+            self.assertIn("real_subsystem", names)
+
+
+class TestManifestHints(unittest.TestCase):
+    """Lightweight pattern hints — restore visual contrast on common
+    monorepos. Not a full framework detector. Three patterns shipped
+    in v0.2.x; everything else stays generic.
+    """
+
+    def test_vite_plus_tailwind_hint(self):
+        # The unified-donkey-betz frontend/ shape: package.json +
+        # vite.config.ts + tailwind.config.js. v0.2 surfaced it as
+        # generic "JS / TS files"; v0.2.x adds the framework hint.
+        hint = _manifest_hint(["package.json", "vite.config.ts",
+                               "tailwind.config.js", "postcss.config.js"])
+        self.assertIsNotNone(hint)
+        self.assertIn("Vite", hint)
+        self.assertIn("Tailwind", hint)
+        self.assertIn("verify with user", hint)
+
+    def test_expo_hint(self):
+        # The unified-donkey-betz mobile/ shape: package.json +
+        # app.config.ts. Strong Expo signal without parsing
+        # package.json deps.
+        hint = _manifest_hint(["package.json", "app.config.ts",
+                               "babel.config.js"])
+        self.assertIsNotNone(hint)
+        self.assertIn("Expo", hint)
+
+    def test_isolated_python_subsystem_hint(self):
+        # ml/ and resolve_node/ in unified-donkey-betz both have their
+        # own requirements.txt — meaningful structural signal that the
+        # subsystem is intended to run in isolation.
+        hint = _manifest_hint(["requirements.txt"])
+        self.assertIsNotNone(hint)
+        self.assertIn("Python subsystem", hint)
+        self.assertIn("isolated dependencies", hint)
+
+    def test_no_hint_for_plain_package_json(self):
+        # A subdir with just package.json (no vite / tailwind / app
+        # config) gets no manifest hint — too generic to commit to.
+        self.assertIsNone(_manifest_hint(["package.json"]))
+
+    def test_no_hint_for_unrelated_manifests(self):
+        # Web3 manifests don't trigger any of the three patterns we
+        # ship; they get a domain-extension hint instead via DOMAIN_HINTS.
+        self.assertIsNone(_manifest_hint(["Clarinet.toml"]))
+        self.assertIsNone(_manifest_hint(["foundry.toml", "hardhat.config.ts"]))
+
+
+class TestIdempotencySafety(unittest.TestCase):
+    """The load-bearing safety contract: re-running ``adopt --write``
+    must NEVER destroy user content. This is the fix for the
+    unified-donkey-betz dogfood gap where the existing
+    00-START-NEXT-SESSION.md would have been clobbered.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        # Minimal Python project so adopt has something to classify.
+        (self.repo / "manage.py").write_text("# django\n", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _ns(self, *, write=True, description="My project",
+            next_step="ship v1") -> argparse.Namespace:
+        return argparse.Namespace(
+            command="adopt", path=str(self.repo), write=write,
+            html=False, html_out=None, no_browser=True,
+            description=description, next_step=next_step,
+        )
+
+    def test_steady_state_rerun_is_byte_identical(self):
+        # Compares run 2 vs run 3, not run 1 vs run 2. The first --write
+        # creates ``docs/`` (containing BUILD_PLAN.md + PROJECT_WHAT_IT_IS.md),
+        # which the second run then surfaces in its own "Unknown but
+        # present" data-only section — so run 1 and run 2 will differ
+        # by exactly that. Once docs/ exists from run 2 onward, every
+        # subsequent run sees the same project state and writes
+        # byte-identical content. That's the idempotency contract:
+        # SECOND --write onward is steady.
+        run_adopt(self._ns())  # run 1: creates docs/
+        run_adopt(self._ns())  # run 2: sees docs/ for the first time
+        snapshot = {p: p.read_bytes() for p in (
+            self.repo / "docs" / "BUILD_PLAN.md",
+            self.repo / "docs" / "PROJECT_WHAT_IT_IS.md",
+            self.repo / "00-START-NEXT-SESSION.md",
+            self.repo / "CLAUDE.md",
+        )}
+        run_adopt(self._ns())  # run 3: identical inputs, identical disk state
+        for path, before in snapshot.items():
+            after = path.read_bytes()
+            self.assertEqual(
+                before, after,
+                f"{path.name} changed between steady-state re-runs",
+            )
+
+    def test_user_edits_outside_managed_blocks_are_preserved(self):
+        # First write creates BUILD_PLAN with markers. User adds prose
+        # ABOVE and BELOW the markers. Second write must preserve that
+        # prose — only refresh content between the markers.
+        run_adopt(self._ns())
+        bp = self.repo / "docs" / "BUILD_PLAN.md"
+        original = bp.read_text(encoding="utf-8")
+        # Sanity: markers are present.
+        self.assertIn(START_MARKER, original)
+        self.assertIn(END_MARKER, original)
+        # Splice user prose around the managed block.
+        head, _, rest = original.partition(START_MARKER)
+        block, _, tail = rest.partition(END_MARKER)
+        user_above = "# My handwritten preamble\n\nThis is user content above.\n\n"
+        user_below = "\n\n## My notes section\n\nUser content below the markers.\n"
+        bp.write_text(
+            user_above + START_MARKER + block + END_MARKER + user_below,
+            encoding="utf-8",
+        )
+        # Re-run with a different next_step so the managed-block
+        # content WOULD differ — we want to confirm the user's prose
+        # is preserved AND the managed block was refreshed.
+        run_adopt(self._ns(next_step="updated next step"))
+        after = bp.read_text(encoding="utf-8")
+        # User prose preserved verbatim.
+        self.assertIn("# My handwritten preamble", after)
+        self.assertIn("This is user content above.", after)
+        self.assertIn("## My notes section", after)
+        self.assertIn("User content below the markers.", after)
+        # Managed block content refreshed.
+        self.assertIn("updated next step", after)
+
+    def test_existing_file_without_markers_is_skipped(self):
+        # The unified-donkey-betz scenario: a project already has a
+        # hand-written 00-START-NEXT-SESSION.md (with no adopt
+        # markers because adopt didn't write it). Re-run with --write
+        # MUST NOT clobber it.
+        start = self.repo / "00-START-NEXT-SESSION.md"
+        original = (
+            "---\n"
+            "state: scaffold\n"
+            "date: 2026-01-01\n"
+            "---\n\n"
+            "# Hand-written session priorities\n\n"
+            "This file was written by hand. Adopt should not touch it.\n"
+        )
+        start.write_text(original, encoding="utf-8")
+        run_adopt(self._ns())
+        after = start.read_text(encoding="utf-8")
+        self.assertEqual(original, after,
+                         "hand-written START doc was modified by adopt")
+        # And the plan should have surfaced this as a "skip".
+        from io import StringIO
+        from contextlib import redirect_stdout
+        buf = StringIO()
+        with redirect_stdout(buf):
+            run_adopt(self._ns(write=False))
+        self.assertIn("skip", buf.getvalue())
+        self.assertIn("00-START-NEXT-SESSION.md", buf.getvalue())
+
+    def test_existing_file_with_adopt_markers_is_augmented(self):
+        # If the user re-runs adopt against a project that's already
+        # been adopted (file has markers), we refresh the managed
+        # block in place. This is the augment path — distinct from
+        # both create and skip.
+        run_adopt(self._ns(next_step="initial next"))
+        bp = self.repo / "docs" / "BUILD_PLAN.md"
+        self.assertIn("initial next", bp.read_text(encoding="utf-8"))
+        # Re-run with new next_step.
+        run_adopt(self._ns(next_step="changed next"))
+        text = bp.read_text(encoding="utf-8")
+        self.assertIn("changed next", text)
+        self.assertNotIn("initial next", text,
+                         "old managed-block content not refreshed")
+        # Still exactly one pair of markers (no stacking).
+        self.assertEqual(text.count(START_MARKER), 1)
+        self.assertEqual(text.count(END_MARKER), 1)
+
+    def test_start_doc_keeps_frontmatter_at_top_outside_markers(self):
+        # The wizard's _detect_project_state reads
+        # ``text.startswith("---\\n")`` to recognize the frontmatter.
+        # Markers MUST wrap only the body, not the frontmatter, or
+        # the wizard breaks on adopt-generated projects.
+        run_adopt(self._ns())
+        sh = self.repo / "00-START-NEXT-SESSION.md"
+        body = sh.read_text(encoding="utf-8")
+        self.assertTrue(body.startswith("---\nstate: scaffold"),
+                        f"frontmatter not at top: {body[:60]!r}")
+        # Markers ARE present (just after the frontmatter).
+        self.assertIn(START_MARKER, body)
+        self.assertIn(END_MARKER, body)
+        # Frontmatter ends BEFORE the start marker.
+        fm_end = body.find("\n---\n", 4) + len("\n---\n")
+        self.assertLess(fm_end, body.find(START_MARKER))
+
+
+class TestDataOnlyGrouping(unittest.TestCase):
+    """Group "no recognized source extensions" subdirs into a single
+    collapsible / footer so large repos like unified-donkey-betz
+    don't bury the high-signal cards under 24+ identical entries.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_is_data_only_predicate(self):
+        from cli.adopt import UnclassifiedSubdir
+        # Only-files-but-no-recognized-source = data-only.
+        u = UnclassifiedSubdir(name="config", total_file_count=10)
+        self.assertTrue(_is_data_only_subdir(u))
+        # Has a manifest = NOT data-only.
+        u = UnclassifiedSubdir(name="x", manifest_files=["package.json"],
+                               total_file_count=1)
+        self.assertFalse(_is_data_only_subdir(u))
+        # Has notable extensions = NOT data-only.
+        u = UnclassifiedSubdir(name="x", notable_extensions={".py": 5},
+                               total_file_count=5)
+        self.assertFalse(_is_data_only_subdir(u))
+        # Empty = NOT data-only (rendered as "empty" instead).
+        u = UnclassifiedSubdir(name="x", is_empty=True)
+        self.assertFalse(_is_data_only_subdir(u))
+        # Has manifest hint = NOT data-only.
+        u = UnclassifiedSubdir(name="x", total_file_count=1,
+                               manifest_hint="Python subsystem ...")
+        self.assertFalse(_is_data_only_subdir(u))
+
+    def test_html_groups_data_only_subdirs_into_collapsible(self):
+        # Build a fixture with a mix: one signal subdir + three
+        # data-only subdirs. The HTML must render the signal one as
+        # its own card and group the three under a single collapsible.
+        (self.repo / "manage.py").write_text("# django\n", encoding="utf-8")
+        # One signal subdir with .py source.
+        (self.repo / "agents").mkdir()
+        for n in range(5):
+            (self.repo / "agents" / f"a{n}.py").write_text("# x\n", encoding="utf-8")
+        # Three data-only subdirs (only .json / .md content).
+        for d in ("docs", "config", "data"):
+            (self.repo / d).mkdir()
+            for n in range(3):
+                (self.repo / d / f"x{n}.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack,
+                          AdoptionInputs(project_description="x", next_step="y"))
+        html = render_adopt_html(self.repo, stack,
+                                 AdoptionInputs(project_description="x", next_step="y"),
+                                 plan, write_mode=False)
+        # Data-only collapsible is present.
+        self.assertIn("Data / content / non-code directories", html)
+        self.assertIn("3 hidden by default", html)
+        # All three data-only names listed inside it.
+        for d in ("docs", "config", "data"):
+            self.assertIn(f"<code>{d}/</code>", html)
+        # Signal subdir got its own card (NOT inside the data-only collapsible).
+        # Verify by checking that "agents/" appears OUTSIDE the
+        # ``unc-dataonly`` block.
+        before_dataonly, _, _ = html.partition("unc-dataonly")
+        self.assertIn("agents/", before_dataonly,
+                      "signal subdir 'agents' got grouped with data-only")
+
+    def test_no_dataonly_block_when_no_dataonly_subdirs(self):
+        # Clean projects without any data-only subdirs must NOT get a
+        # dangling empty group. Visual hygiene.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "contracts").mkdir()
+        for n in ("Foo.sol", "Bar.sol", "Baz.sol"):
+            (self.repo / "contracts" / n).write_text("// sol\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack,
+                          AdoptionInputs(project_description="x", next_step="y"))
+        html = render_adopt_html(self.repo, stack,
+                                 AdoptionInputs(project_description="x", next_step="y"),
+                                 plan, write_mode=False)
+        self.assertNotIn("Data / content / non-code", html)
+
+
+class TestManifestHintInRenders(unittest.TestCase):
+    """The manifest_hint must surface in all three renderers (CLI dryrun,
+    Markdown, HTML) so an AI session reading any of them sees the same
+    "this looks like X" signal.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        # Project root with a Python signal so adopt classifies it,
+        # and a frontend/ subdir with the Vite + Tailwind combo so the
+        # manifest hint fires on the unclassified subdir.
+        (self.repo / "manage.py").write_text("# d\n", encoding="utf-8")
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "frontend" / "vite.config.ts").write_text("// v\n", encoding="utf-8")
+        (self.repo / "frontend" / "tailwind.config.js").write_text("// t\n", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_hint_in_dryrun_output(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        buf = StringIO()
+        with redirect_stdout(buf):
+            run_adopt(argparse.Namespace(
+                command="adopt", path=str(self.repo), write=False,
+                html=False, html_out=None, no_browser=True,
+                description="x", next_step="y",
+            ))
+        out = buf.getvalue()
+        self.assertIn("Vite + Tailwind", out)
+
+    def test_hint_in_markdown_build_plan(self):
+        stack = detect_stack(self.repo)
+        bp = generate_build_plan(stack,
+                                 AdoptionInputs(project_description="x", next_step="y"),
+                                 "Test")
+        self.assertIn("Vite + Tailwind", bp)
+
+    def test_hint_in_html_summary_badge(self):
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack,
+                          AdoptionInputs(project_description="x", next_step="y"))
+        html = render_adopt_html(self.repo, stack,
+                                 AdoptionInputs(project_description="x", next_step="y"),
+                                 plan, write_mode=False)
+        # The badge appears in the always-visible summary.
+        self.assertIn("hint-badge", html)
+        self.assertIn("Vite + Tailwind", html)
 
 
 if __name__ == "__main__":

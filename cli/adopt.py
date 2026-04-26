@@ -96,6 +96,13 @@ class UnclassifiedSubdir:
     notable_extensions: dict[str, int] = field(default_factory=dict)
     example_paths: dict[str, str] = field(default_factory=dict)
     note: Optional[str] = None
+    # v0.2.x: lightweight pattern-based hint derived from a *combination*
+    # of manifest filenames (e.g. package.json + vite.config.* +
+    # tailwind.config.* -> "Vite + Tailwind web app"). Independent of
+    # ``note`` (which is a per-extension hint). Both surface in renders
+    # so the AI session and the human get the strongest available
+    # signal. Not a full framework detector — see _manifest_hint.
+    manifest_hint: Optional[str] = None
     # True only when the dir literally has zero files (rare — usually
     # an empty placeholder like flow-name-service's ``api/``).
     is_empty: bool = False
@@ -296,14 +303,42 @@ def derive_project_title(repo: Path) -> str:
 # DOMAIN_HINTS.
 
 # Skip these in the depth-1 walk. Hidden dirs (anything starting with
-# ".") are also skipped at the call site.
-NOISE_DIRS = frozenset({
-    "node_modules", "__pycache__", "venv", ".venv", "env",
+# ".") are also skipped at the call site, which catches .venv / .git /
+# .next / .nuxt / .turbo / .idea / .vscode / .cache / .coverage etc.
+# without enumerating them here.
+NOISE_EXACT = frozenset({
+    "node_modules", "__pycache__",
     "dist", "build", "out", "target",
-    "coverage", ".coverage", "htmlcov",
-    ".git", ".idea", ".vscode", ".cache", ".next", ".nuxt", ".turbo",
+    "coverage", "htmlcov",
     "media",  # static media uploads — no source code worth surfacing
 })
+
+# Pattern-based noise: a directory whose name *starts with* one of these
+# prefixes followed by EOL or a separator (-, _, .) is treated as a
+# variant of the prefix. So "venv_ml", "venv-prod", "venv.old" all match
+# the "venv" prefix, but "venvelope" doesn't (no separator after the
+# prefix) and stays visible. Lesson from the unified-donkey-betz dogfood
+# where ``venv_ml/`` slipped past exact-name matching.
+NOISE_PREFIXES = ("venv", "env", "pyenv", "virtualenv")
+
+# Backwards-compat alias for code/tests that imported NOISE_DIRS in v0.2.
+# Kept as the union of exact names for the most-common actual-name
+# lookups; pattern-aware callers should use ``_is_noise_dir`` instead.
+NOISE_DIRS = NOISE_EXACT | frozenset(NOISE_PREFIXES)
+
+
+def _is_noise_dir(name: str) -> bool:
+    """Pattern-aware noise-dir check. See NOISE_EXACT / NOISE_PREFIXES."""
+    if name in NOISE_EXACT:
+        return True
+    for prefix in NOISE_PREFIXES:
+        if name == prefix:
+            return True
+        if (name.startswith(prefix)
+                and len(name) > len(prefix)
+                and name[len(prefix)] in "-_."):
+            return True
+    return False
 
 # Filenames we explicitly know are project-defining manifests. Used by
 # both classification (Layer 1) and the visibility-first scan, but with
@@ -455,7 +490,7 @@ def _scan_subdir_contents(d: Path) -> tuple[list[str], dict[str, int], dict[str,
                 dirs[:] = []
                 continue
             # Filter children we'll descend into.
-            dirs[:] = [x for x in dirs if x not in NOISE_DIRS and not x.startswith(".")]
+            dirs[:] = [x for x in dirs if not _is_noise_dir(x) and not x.startswith(".")]
             for name in files:
                 file_count += 1
                 if file_count > MAX_FILES_PER_SUBDIR:
@@ -478,6 +513,36 @@ def _scan_subdir_contents(d: Path) -> tuple[list[str], dict[str, int], dict[str,
         pass
 
     return manifests, ext_counts, example_paths, file_count
+
+
+def _manifest_hint(manifests: list[str]) -> Optional[str]:
+    """Lightweight pattern hint from a combination of manifest filenames.
+
+    Three patterns chosen from the unified-donkey-betz dogfood, where
+    pure Python+JS repos produced no DOMAIN_HINTS notes and the
+    visual hierarchy collapsed to "everything is amber". These hints
+    re-introduce some color contrast without being a full framework
+    detector — that's still §15 backlog item #5.
+
+    The patterns intentionally require the framework's *root config
+    file* to be present (vite.config.*, tailwind.config.*,
+    app.config.*, etc.), not just a guess from package.json deps. We
+    don't open or parse files; we just check filename presence.
+    """
+    mset = set(manifests)
+    has_pkg = "package.json" in mset
+    has_vite = any(m.startswith("vite.config.") for m in mset)
+    has_tw = any(m.startswith("tailwind.config.") for m in mset)
+    has_expo = any(m.startswith("app.config.") for m in mset)
+    if has_pkg and has_vite and has_tw:
+        return ("Vite + Tailwind web app (likely frontend); "
+                "verify with user")
+    if has_pkg and has_expo:
+        return "Expo / React Native mobile app; verify with user"
+    if "requirements.txt" in mset:
+        return ("Python subsystem with isolated dependencies "
+                "(own requirements.txt); verify with user")
+    return None
 
 
 def _build_unclassified(name: str, manifests: list[str],
@@ -514,6 +579,7 @@ def _build_unclassified(name: str, manifests: list[str],
         notable_extensions=reportable,
         example_paths=examples,
         note=note,
+        manifest_hint=_manifest_hint(manifests),
         is_empty=is_empty,
         total_file_count=total_file_count,
     )
@@ -541,7 +607,7 @@ def scan_unclassified_subdirs(repo: Path,
         name = entry.name
         if name.startswith("."):
             continue
-        if name in NOISE_DIRS:
+        if _is_noise_dir(name):
             continue
         if name in already_classified:
             continue
@@ -634,21 +700,65 @@ def _format_unclassified_for_dryrun(u: UnclassifiedSubdir) -> list[str]:
         head = " " * len(head)
     if u.note:
         lines.append(f"{head}  note:      {u.note}")
+        head = " " * len(head)
+    if u.manifest_hint:
+        lines.append(f"{head}  hint:      {u.manifest_hint}")
     return lines
+
+
+def _is_data_only_subdir(u: UnclassifiedSubdir) -> bool:
+    """True iff ``u`` has only the 'no recognized source extensions' signal.
+
+    Lesson from the unified-donkey-betz dogfood: large repos generated
+    24 cards reading "N files (no recognized source extensions)" — all
+    visually identical, all crowding out the cards with real signal.
+    The renderers group these into a single collapsible "Data /
+    content / non-code directories" section so the high-signal cards
+    breathe.
+    """
+    return (
+        not u.manifest_files
+        and not u.notable_extensions
+        and not u.is_empty
+        and u.total_file_count > 0
+        and u.note is None
+        and u.manifest_hint is None
+    )
+
+
+def _partition_unclassified(stack: StackProfile) -> tuple[list[UnclassifiedSubdir], list[UnclassifiedSubdir]]:
+    """Return (signal_subdirs, data_only_subdirs) preserving order."""
+    signal: list[UnclassifiedSubdir] = []
+    data_only: list[UnclassifiedSubdir] = []
+    for u in stack.unclassified_subdirs:
+        (data_only if _is_data_only_subdir(u) else signal).append(u)
+    return signal, data_only
 
 
 def _unknown_present_block_dryrun(stack: StackProfile) -> list[str]:
     """The "Unknown but present" section for the CLI dry-run output.
 
+    Splits into "signal" subdirs (with manifests / notable extensions /
+    empties / hints) and "data-only" subdirs (just a file count) so the
+    high-signal output isn't visually swamped on large repos.
+
     Returns an empty list when there's nothing to surface so callers
-    don't have to gate on it. The caller is expected to join lines and
-    print as a contiguous block.
+    don't have to gate on it.
     """
     if not stack.unclassified_subdirs:
         return []
+    signal, data_only = _partition_unclassified(stack)
     out = ["", "Unknown but present (depth 1):"]
-    for u in stack.unclassified_subdirs:
+    for u in signal:
         out.extend(_format_unclassified_for_dryrun(u))
+    if data_only:
+        # Compact one-line summary so the CLI doesn't repeat the
+        # "N files (no recognized source extensions)" pattern N times.
+        names = ", ".join(f"{u.name}/ ({u.total_file_count})" for u in data_only)
+        out.append("")
+        out.append(
+            f"  Data / content / non-code dirs ({len(data_only)}): {names}"
+        )
     return out
 
 
@@ -682,17 +792,24 @@ def _format_unclassified_for_markdown(u: UnclassifiedSubdir) -> str:
     line = f"- **{u.name}/** — {body}."
     if u.note:
         line += f" {u.note}."
+    if u.manifest_hint:
+        line += f" *{u.manifest_hint}.*"
     return line
 
 
 def _unknown_present_markdown(stack: StackProfile) -> list[str]:
     """The full "Unknown but present" section for the Markdown docs.
 
+    Splits into "signal" subdirs and a compact "data / content /
+    non-code" footer so long lists of low-signal entries don't bury
+    the high-signal ones in BUILD_PLAN.md / CLAUDE.md.
+
     Returns an empty list when there's nothing to surface so the
     section is silently omitted on clean projects.
     """
     if not stack.unclassified_subdirs:
         return []
+    signal, data_only = _partition_unclassified(stack)
     out = [
         "",
         "### Unknown but present",
@@ -703,8 +820,19 @@ def _unknown_present_markdown(stack: StackProfile) -> list[str]:
         "touches them.",
         "",
     ]
-    for u in stack.unclassified_subdirs:
+    for u in signal:
         out.append(_format_unclassified_for_markdown(u))
+    if data_only:
+        names = ", ".join(f"`{u.name}/`" for u in data_only)
+        out += [
+            "",
+            f"**Data / content / non-code directories ({len(data_only)}):** "
+            f"{names}",
+            "",
+            "_These contain files but none with extensions adopt categorizes "
+            "as source (likely config / data / documentation). Listed compactly "
+            "so the high-signal directories above stay visible._",
+        ]
     return out
 
 
@@ -723,6 +851,30 @@ def _stack_table(stack: StackProfile) -> list[str]:
         from_clause = f" (detected from `{sub}/{sig}`)" if sig else ""
         lines.append(f"- **{sub.capitalize()}:** {_lang_label(lang)}{from_clause}")
     return lines
+
+
+def _wrap_in_managed_block(content: str) -> str:
+    """Wrap generated content in adopt's managed-block markers.
+
+    Re-runs of ``adopt --write`` replace everything between the start
+    and end markers and preserve everything outside. This is what
+    makes BUILD_PLAN.md / PROJECT_WHAT_IT_IS.md / 00-START-NEXT-SESSION.md
+    safe to re-generate without destroying user edits — exactly the
+    safety gap the unified-donkey-betz dogfood exposed (the existing
+    00-START doc would have been clobbered).
+
+    The brief explainer at the top is part of the managed content
+    (refreshed on every re-run) so it stays accurate to whatever the
+    current adopt version says.
+    """
+    explainer = (
+        "<!-- This block is managed by `context-kit adopt`. "
+        "Edits between the markers are overwritten on re-run. "
+        "Edits outside the markers are preserved. -->"
+    )
+    return (
+        f"{START_MARKER}\n{explainer}\n\n{content.rstrip()}\n\n{END_MARKER}\n"
+    )
 
 
 def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str) -> str:
@@ -771,7 +923,10 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str)
         "  source.",
         "",
     ]
-    return "\n".join(body)
+    # v0.2.x: idempotency. Wrap in adopt-managed markers so re-runs of
+    # ``--write`` refresh content inside the markers and preserve any
+    # user prose added outside them.
+    return _wrap_in_managed_block("\n".join(body))
 
 
 def generate_what_it_is(stack: StackProfile, inputs: AdoptionInputs, title: str) -> str:
@@ -801,16 +956,21 @@ def generate_what_it_is(stack: StackProfile, inputs: AdoptionInputs, title: str)
         "[adopt: please describe — adopt cannot infer the audience.]",
         "",
     ]
-    return "\n".join(body)
+    return _wrap_in_managed_block("\n".join(body))
 
 
 def generate_start_here(inputs: AdoptionInputs, title: str) -> str:
+    # Frontmatter MUST stay at the top of the file outside the
+    # managed-block markers — cli/server.py::_detect_project_state
+    # reads ``text.startswith("---\\n")`` to recognize the wizard's
+    # project state. Wrap only the body in markers.
+    frontmatter = (
+        "---\n"
+        "state: scaffold\n"
+        f"date: {_today()}\n"
+        "---\n"
+    )
     body = [
-        "---",
-        "state: scaffold",
-        f"date: {_today()}",
-        "---",
-        "",
         f"# Next session — {title}",
         "",
         f"> Generated by `context-kit adopt` on {_today()}.",
@@ -827,7 +987,7 @@ def generate_start_here(inputs: AdoptionInputs, title: str) -> str:
         "4. Then begin the work above.",
         "",
     ]
-    return "\n".join(body)
+    return frontmatter + "\n" + _wrap_in_managed_block("\n".join(body))
 
 
 def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: str) -> str:
@@ -1001,6 +1161,14 @@ def render_adopt_html(repo: Path, stack: StackProfile,
         parts_html += ['  </ul>', '</section>']
 
     # ---- Section 4: unknown but present (THE main focus) ----
+    # v0.2.x: split into "signal" (manifests / extensions / hints / empty)
+    # vs "data-only" (just a file count, no recognized signals). The
+    # signal cards render individually; the data-only ones get
+    # collapsed into a single "Data / content / non-code" block at the
+    # bottom so a 70-card output (unified-donkey-betz) doesn't bury the
+    # high-signal directories under a wall of identical "N files (no
+    # recognized source extensions)" cards.
+    signal_subdirs, data_only_subdirs = _partition_unclassified(stack)
     unknown_html: list[str] = []
     if stack.unclassified_subdirs:
         unknown_html = [
@@ -1010,7 +1178,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             'Click each to expand. The hint lines are *suggestions* — '
             'verify with what you know about the project.</p>',
         ]
-        for u in stack.unclassified_subdirs:
+        for u in signal_subdirs:
             # One <details> block per subdir. Native collapse, no JS.
             summary_bits: list[str] = []
             if u.manifest_files:
@@ -1036,7 +1204,15 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                 f'  <details class="unc"><summary>'
                 f'<code class="dirname">{_esc(u.name)}/</code> '
                 f'<span class="dim">{summary}</span>'
-                f'</summary>'
+                + (
+                    # Surface the manifest hint inline in the summary so
+                    # it's visible without expanding — restores some
+                    # visual contrast on common monorepos where no
+                    # DOMAIN_HINTS notes fire.
+                    f' <span class="hint-badge">{_esc(u.manifest_hint.split(";")[0])}</span>'
+                    if u.manifest_hint else ""
+                )
+                + '</summary>'
             )
             # Body contents.
             unknown_html.append('    <div class="unc-body">')
@@ -1067,6 +1243,35 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                 unknown_html.append('      <p class="dim">Directory exists but contains no files.</p>')
             if u.note:
                 unknown_html.append(f'      <p class="hint">{_esc(u.note)}</p>')
+            if u.manifest_hint:
+                unknown_html.append(
+                    f'      <p class="hint">{_esc(u.manifest_hint)}</p>'
+                )
+            unknown_html.append('    </div>')
+            unknown_html.append('  </details>')
+        # Data-only subdirs: one collapsible holding the lot, so the
+        # high-signal cards above stay visually dominant.
+        if data_only_subdirs:
+            unknown_html.append(
+                '  <details class="unc unc-dataonly">'
+                f'<summary><strong>Data / content / non-code directories'
+                f'</strong> <span class="dim">'
+                f'({len(data_only_subdirs)} hidden by default)</span>'
+                '</summary>'
+                '    <div class="unc-body">'
+                '      <p class="dim">These directories contain files but '
+                'none with extensions adopt categorizes as source — likely '
+                'config, data, generated content, or documentation. '
+                'Listed compactly so the high-signal directories above stay '
+                'visible.</p>'
+                '      <ul>'
+            )
+            for u in data_only_subdirs:
+                unknown_html.append(
+                    f'        <li><code>{_esc(u.name)}/</code> '
+                    f'<span class="dim">— {u.total_file_count} files</span></li>'
+                )
+            unknown_html.append('      </ul>')
             unknown_html.append('    </div>')
             unknown_html.append('  </details>')
         unknown_html.append('</section>')
@@ -1211,6 +1416,12 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     }
     .badge-create { background: rgba(16, 185, 129, .15); color: var(--accent-strong); }
     .badge-augment { background: rgba(251, 191, 36, .18); color: var(--warn-strong); }
+    .hint-badge {
+      display: inline-block; margin-left: .5rem;
+      padding: .05rem .5rem; border-radius: 4px;
+      font-size: .75rem; font-weight: 600; letter-spacing: .01em;
+      background: rgba(251, 191, 36, .18); color: var(--warn-strong);
+    }
     .cta h2 { font-size: 1.25rem; }
     .cmd {
       background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
@@ -1276,19 +1487,56 @@ def render_adopt_html(repo: Path, stack: StackProfile,
 # ---------------------------------------------------------------------------
 
 
+def _plan_managed_doc(path: Path, content: str) -> PlannedFile:
+    """Plan one of the three new marker-managed docs (BUILD_PLAN.md,
+    PROJECT_WHAT_IT_IS.md, 00-START-NEXT-SESSION.md).
+
+    Three outcomes:
+    - file doesn't exist -> CREATE the marker-wrapped content
+    - file exists with adopt markers -> AUGMENT (refresh inside markers)
+    - file exists WITHOUT adopt markers -> SKIP (assumed hand-written;
+      adopt is not authorized to clobber)
+
+    The third outcome is the load-bearing safety case from the
+    unified-donkey-betz dogfood: an existing 00-START-NEXT-SESSION.md
+    that v0.2 would have overwritten on --write. SKIP makes adopt
+    safe to re-run on any project, including legacy ones with their
+    own hand-written copies of these files.
+    """
+    if not path.is_file():
+        return PlannedFile(path=path, content=content, kind="create")
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except OSError:
+        return PlannedFile(path=path, content="", kind="skip")
+    if START_MARKER in existing and END_MARKER in existing:
+        return PlannedFile(path=path, content=content, kind="augment")
+    return PlannedFile(path=path, content="", kind="skip")
+
+
 def plan_files(
     repo: Path,
     stack: StackProfile,
     inputs: AdoptionInputs,
 ) -> list[PlannedFile]:
-    """Build the list of files we'd create or augment, without writing."""
+    """Build the list of files we'd create / augment / skip, without writing.
+
+    All four target files now use marker-managed content (v0.2.x):
+    - CLAUDE.md: existing augment-or-create-fresh logic. If the file
+      exists without adopt markers, the managed block is *appended*
+      (CLAUDE.md is the AI session entry-point, so adding our block
+      is value-add even on hand-written files).
+    - BUILD_PLAN.md / PROJECT_WHAT_IT_IS.md / 00-START-NEXT-SESSION.md:
+      ``_plan_managed_doc`` — CREATE if absent, AUGMENT if our markers
+      already exist, SKIP if the file exists without markers (don't
+      clobber hand-written content).
+    """
     title = derive_project_title(repo)
     plan: list[PlannedFile] = []
 
-    plan.append(PlannedFile(
-        path=repo / "docs" / "BUILD_PLAN.md",
-        content=generate_build_plan(stack, inputs, title),
-        kind="create",
+    plan.append(_plan_managed_doc(
+        repo / "docs" / "BUILD_PLAN.md",
+        generate_build_plan(stack, inputs, title),
     ))
     # v0 uses a fixed filename (``PROJECT_WHAT_IT_IS.md``) rather than
     # the slug-based ``<APP>_WHAT_IT_IS.md`` the rest of context-kit
@@ -1296,15 +1544,13 @@ def plan_files(
     # dir name leaks into a docs filename" footgun. The full release
     # can switch to slug-based naming once we add the project-name
     # prompt promised in the design.
-    plan.append(PlannedFile(
-        path=repo / "docs" / "PROJECT_WHAT_IT_IS.md",
-        content=generate_what_it_is(stack, inputs, title),
-        kind="create",
+    plan.append(_plan_managed_doc(
+        repo / "docs" / "PROJECT_WHAT_IT_IS.md",
+        generate_what_it_is(stack, inputs, title),
     ))
-    plan.append(PlannedFile(
-        path=repo / "00-START-NEXT-SESSION.md",
-        content=generate_start_here(inputs, title),
-        kind="create",
+    plan.append(_plan_managed_doc(
+        repo / "00-START-NEXT-SESSION.md",
+        generate_start_here(inputs, title),
     ))
 
     claude_path = repo / "CLAUDE.md"
@@ -1323,35 +1569,91 @@ def plan_files(
     return plan
 
 
-def _augment_claude_md(existing: str, block: str) -> str:
-    """Append (or replace) the managed block in CLAUDE.md.
+def _apply_managed_block(existing: str, new_content: str) -> str:
+    """Splice the marker block from ``new_content`` into ``existing``.
 
-    Preserves all human content outside markers. If the markers
-    already exist, we replace what's between them; otherwise we
-    append the block to the end of the file.
+    Two cases:
+    - Markers already in ``existing``: replace everything between them
+      (and DROP any prelude/postlude in ``new_content`` outside its own
+      markers — the existing file's prelude is what the user has, and
+      we preserve it verbatim).
+    - Markers absent in ``existing``: append the marker block to the
+      end of ``existing``.
+
+    Either way, content OUTSIDE the markers in ``existing`` is preserved
+    byte-for-byte (modulo head .rstrip() / tail .lstrip("\\n") that
+    normalize surrounding whitespace). This is the load-bearing safety
+    primitive for v0.2.x idempotency: re-running ``adopt --write``
+    against a project where the user has hand-edited prose around the
+    managed block keeps the user's edits intact.
+
+    The prelude-stripping behavior matters specifically for the
+    00-START-NEXT-SESSION.md case: ``generate_start_here`` returns
+    ``frontmatter + marker_block``, and on augment we must NOT
+    re-paste the frontmatter (it's already in the existing file's
+    ``head``). Without this, the YAML frontmatter would double on
+    every steady-state re-run.
     """
+    # Normalize: extract just the START..END marker block from
+    # new_content. Anything in new_content before START_MARKER or
+    # after END_MARKER is irrelevant for augment-mode (the existing
+    # file's outside-markers content is the canonical version).
+    if START_MARKER in new_content and END_MARKER in new_content:
+        _, _, after_start = new_content.partition(START_MARKER)
+        between, _, _ = after_start.partition(END_MARKER)
+        new_block = START_MARKER + between + END_MARKER
+    else:
+        new_block = new_content
+
     if START_MARKER in existing and END_MARKER in existing:
         head, _, rest = existing.partition(START_MARKER)
         _, _, tail = rest.partition(END_MARKER)
-        return head.rstrip() + "\n\n" + block + "\n" + tail.lstrip("\n")
+        head_stripped = head.rstrip()
+        tail_stripped = tail.lstrip("\n")
+        # When the file IS the marker block (no head/tail), don't
+        # prepend ``\n\n`` or append extra blank lines — the augment
+        # output must be byte-identical to a fresh create on
+        # idempotent re-runs.
+        head_part = (head_stripped + "\n\n") if head_stripped else ""
+        tail_part = ("\n\n" + tail_stripped) if tail_stripped else "\n"
+        return head_part + new_block.rstrip() + tail_part
     sep = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
-    return existing + sep + "\n" + block + "\n"
+    return existing + sep + "\n" + new_block.rstrip() + "\n"
+
+
+# Backwards-compat alias for any external callers that imported the
+# pre-v0.2.x name. The new general name is _apply_managed_block.
+_augment_claude_md = _apply_managed_block
 
 
 def apply_plan(plan: list[PlannedFile], dry_run: bool) -> list[str]:
-    """Execute the plan; return per-file action verbs ("create"/"augment"/"would create"/"would augment").
+    """Execute the plan; return per-file action verbs.
 
-    Source code is never touched. Only docs/* and root-level CLAUDE.md /
-    00-START-NEXT-SESSION.md are written.
+    Action kinds (``would `` prefix when dry_run=True):
+    - **create**: file doesn't exist; write ``content`` whole.
+    - **augment**: file exists with adopt markers (or, for CLAUDE.md,
+      exists at all); splice ``content`` into the managed block via
+      ``_apply_managed_block``. Content outside markers is preserved.
+    - **skip**: file exists without adopt markers AND isn't CLAUDE.md.
+      Do not touch — the user's hand-written file stays intact.
+
+    Source code is never touched. Only docs/* and the two root-level
+    docs (CLAUDE.md, 00-START-NEXT-SESSION.md) are written.
     """
     actions: list[str] = []
     for item in plan:
         verb_prefix = "would " if dry_run else ""
+        if item.kind == "skip":
+            actions.append(
+                f"  {verb_prefix}skip       {item.path}  "
+                f"(exists without adopt markers — not safe to overwrite)"
+            )
+            continue
         if item.kind == "augment" and item.path.is_file():
             verb = f"{verb_prefix}augment"
             if not dry_run:
                 existing = item.path.read_text(encoding="utf-8")
-                merged = _augment_claude_md(existing, item.content)
+                merged = _apply_managed_block(existing, item.content)
                 item.path.write_text(merged, encoding="utf-8")
         else:
             # "create" path — also fires for "augment" when the file
