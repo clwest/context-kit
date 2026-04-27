@@ -3917,5 +3917,179 @@ class TestAdoptSummary(unittest.TestCase):
         self.assertNotIn("### Suggested next actions (", block)
 
 
+class TestWorkspaceAwarePrimaryDetection(unittest.TestCase):
+    """v0.8 Phase 4.5 — promote workspace child consistency into
+    the primary detection label when the root scan returns
+    "unknown" but every non-trivial child shares one of three
+    target stack labels (Flutter / Solidity / Next.js).
+
+    Constraints under test:
+      - JS / Python root detections never overridden.
+      - Plain unknown repos with no workspace children stay Unknown.
+      - Mixed workspace children stay Unknown.
+      - Inferred primary surfaces with the "(inferred from
+        workspace children)" suffix in CLI / HTML.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run_cli(self):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        return buf.getvalue()
+
+    def _build_flutter_fixture(self):
+        # melos.yaml at root (not a v0 classifier signal) +
+        # apps/buyer_app + apps/seller_app each with pubspec.yaml
+        # and a .dart file. Mirrors flutter-monorepo-example.
+        (self.repo / "melos.yaml").write_text("name: x\n", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app in ("buyer_app", "seller_app"):
+            d = self.repo / "apps" / app
+            d.mkdir()
+            (d / "pubspec.yaml").write_text(
+                f"name: {app}\n", encoding="utf-8")
+            (d / "lib").mkdir()
+            (d / "lib" / "main.dart").write_text("// dart\n", encoding="utf-8")
+
+    # ---- 1. flutter-monorepo no longer Unknown ---------------------
+
+    def test_flutter_monorepo_promotes_to_flutter_dart_primary(self):
+        self._build_flutter_fixture()
+        stack = detect_stack(self.repo)
+        # Root scan still returns "unknown" — Phase 4.5 doesn't
+        # mutate stack.language. Only the inferred_primary field
+        # is populated.
+        self.assertEqual(stack.language, "unknown")
+        self.assertEqual(stack.inferred_primary, "Flutter / Dart")
+        # CLI shows the inferred primary with the spec'd suffix.
+        out = self._run_cli()
+        self.assertIn("Flutter / Dart (inferred from workspace children)", out)
+        self.assertNotIn("Unknown stack — no manifest detected", out)
+
+    # ---- 2. mixed workspace children stay Unknown ------------------
+
+    def test_mixed_workspace_children_stay_unknown(self):
+        # apps/forge has Solidity, apps/dart has Flutter — mixed
+        # signals must NOT be inferred to a single primary.
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        dart = self.repo / "apps" / "dart"
+        dart.mkdir()
+        (dart / "pubspec.yaml").write_text("name: x\n", encoding="utf-8")
+        (dart / "lib").mkdir()
+        (dart / "lib" / "main.dart").write_text("// dart\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "unknown")
+        self.assertIsNone(stack.inferred_primary,
+                          "mixed children must NOT produce inference")
+        out = self._run_cli()
+        self.assertIn("Unknown stack — no manifest detected", out)
+        self.assertNotIn("inferred from workspace children", out)
+
+    # ---- 3. fns-monorepo: JS root detection still wins ------------
+
+    def test_fns_monorepo_root_detection_unchanged(self):
+        # Root has package.json -> JavaScript wins. Phase 4.5
+        # never overrides JS / Python root detections.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "javascript")
+        # inferred_primary stays None — JS already won.
+        self.assertIsNone(stack.inferred_primary)
+        out = self._run_cli()
+        self.assertIn("Detected stack: JavaScript / Node.js", out)
+        self.assertNotIn("inferred from workspace children", out)
+
+    # ---- 4. plain unknown repo with no children stays Unknown ----
+
+    def test_plain_unknown_repo_stays_unknown(self):
+        # No manifest, no workspace containers, just a wrapper dir
+        # with one .rs file. Inference has nothing to read.
+        (self.repo / "wrapper").mkdir()
+        (self.repo / "wrapper" / "src").mkdir()
+        (self.repo / "wrapper" / "src" / "lib.rs").write_text(
+            "// rs\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "unknown")
+        self.assertIsNone(stack.inferred_primary)
+        out = self._run_cli()
+        self.assertIn("Unknown stack — no manifest detected", out)
+
+    # ---- 5. inference suffix appears in HTML + CLI ---------------
+
+    def test_inferred_primary_suffix_appears_in_outputs(self):
+        # The "(inferred from workspace children)" copy is
+        # load-bearing — tells the reader the primary came from
+        # a different evidence source than JS / Python lines.
+        self._build_flutter_fixture()
+        out = self._run_cli()
+        self.assertIn("(inferred from workspace children)", out)
+
+        from cli.adopt import (
+            derive_adopt_summary, derive_project_type,
+            derive_stack_reality, derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality)
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 summary=summary)
+        self.assertIn("(inferred from workspace children)", html)
+        # Detection card label still uses _stack_summary's output,
+        # so the inferred suffix flows through there too.
+        self.assertIn("Flutter / Dart", html)
+
+    # ---- 6. Stack reality treats inferred as a real primary ------
+
+    def test_inferred_primary_changes_stack_reality(self):
+        # Without inference, flutter monorepo would land in
+        # "Unclear project shape" / Low. With Phase 4.5 inference
+        # it becomes Single-stack project / Medium.
+        self._build_flutter_fixture()
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        self.assertEqual(reality.assessment, "Single-stack project")
+        self.assertEqual(reality.confidence, "Medium")
+        self.assertIn("inferred", reality.why)
+
+
 if __name__ == "__main__":
     unittest.main()

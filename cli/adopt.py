@@ -69,6 +69,13 @@ class StackProfile:
     # data model right so a follow-up ship can teach the BUILD_PLAN
     # / HTML report / failure analyzer to use it.
     workspace_children: list[WorkspaceChild] = field(default_factory=list)
+    # v0.8 Phase 4.5: when the root scan returns ``language ==
+    # "unknown"`` but every non-trivial workspace child shares the
+    # same strong Phase 3 stack label, ``detect_stack`` promotes
+    # that label here. Renderers prefer it over the bare
+    # "Unknown stack" line. Never set when language is "javascript"
+    # or "python" — root detections stay authoritative.
+    inferred_primary: Optional[str] = None
 
 
 @dataclass
@@ -383,6 +390,15 @@ def detect_stack(repo: Path) -> StackProfile:
     )
     profile.unclassified_subdirs = scan_unclassified_subdirs(repo, set(profile.parts))
     profile.workspace_children = scan_workspace_children(repo)
+    # v0.8 Phase 4.5 — only when root detection returned unknown:
+    # if every non-trivial workspace child shares a single Phase 3
+    # label that maps to one of the three inferable primaries
+    # (Flutter / Solidity / Next.js), promote it. JS / Python root
+    # detections are never overridden — the early returns above
+    # already short-circuited those paths.
+    profile.inferred_primary = _infer_primary_from_workspace(
+        profile.workspace_children
+    )
     return profile
 
 
@@ -851,6 +867,62 @@ def _classify_workspace_child(c: WorkspaceChild) -> Optional[str]:
     return None
 
 
+# v0.8 Phase 4.5 — workspace-aware primary detection. When the
+# root scan returns "unknown", the inferred primary uses these
+# Phase 3 child labels mapped to a slightly tighter primary form
+# (drops "app" / "web app" suffixes that read odd as a primary
+# stack label). Only three target labels per the spec — Expo and
+# the future "package.json + .tsx" Next.js fallback are not
+# inferred here to keep false-positive risk low.
+_INFERRED_PRIMARY_BY_CHILD_LABEL: dict[str, str] = {
+    "Flutter / Dart app":             "Flutter / Dart",
+    "Solidity / EVM smart contracts": "Solidity / EVM smart contracts",
+    "Next.js / React web app":        "Next.js / React",
+}
+
+
+def _infer_primary_from_workspace(
+    children: list[WorkspaceChild],
+) -> Optional[str]:
+    """Return an inferred primary-stack label, or ``None``.
+
+    v0.8 Phase 4.5 — fires only when:
+      1. There is at least one non-trivial workspace child.
+         "Trivial" means ``package.json`` only with no notable
+         extensions (typically a shared config package); these
+         are excluded from the consistency check.
+      2. Every non-trivial child has a Phase 3 stack label
+         (``_classify_workspace_child`` returns non-None).
+      3. All those labels are identical.
+      4. That label is one of the three Phase 4.5 targets
+         (Flutter / Solidity / Next.js).
+
+    Mixed children, unknown children, or unsupported labels
+    return ``None`` so the renderer falls back to the existing
+    "Unknown stack" line. Pure function; no I/O.
+    """
+    if not children:
+        return None
+    labels: list[str] = []
+    for c in children:
+        is_trivial = (
+            c.manifest_files == ["package.json"]
+            and not c.notable_extensions
+        )
+        if is_trivial:
+            continue
+        label = _classify_workspace_child(c)
+        if label is None:
+            return None
+        labels.append(label)
+    if not labels:
+        return None
+    unique = set(labels)
+    if len(unique) != 1:
+        return None
+    return _INFERRED_PRIMARY_BY_CHILD_LABEL.get(unique.pop())
+
+
 def _workspace_stack_pairs(stack: StackProfile) -> list[tuple[str, str]]:
     """Return ``(child_name, stack_label)`` pairs for children with a label.
 
@@ -968,7 +1040,12 @@ def derive_stack_reality(stack: StackProfile,
     pairs = _workspace_stack_pairs(stack)
     workspace_signals = sorted({label for _, label in pairs})
 
-    if stack.language == "unknown":
+    # v0.8 Phase 4.5 — when root detection is unknown but
+    # workspace inference produced a primary label, treat it as
+    # a real primary classification. The Mixed / Single rules
+    # below take over from the Unclear path. Without inference,
+    # unknown still falls into Unclear / Low.
+    if stack.language == "unknown" and stack.inferred_primary is None:
         signal_subs, data_only_subs = _partition_unclassified(stack)
         clar_count = len(signal_subs) + len(data_only_subs)
         if clar_count >= 1:
@@ -984,6 +1061,25 @@ def derive_stack_reality(stack: StackProfile,
             assessment="Unclear project shape",
             confidence="Low",
             why=why,
+            primary=primary,
+            workspace_signals=workspace_signals,
+        )
+
+    # v0.8 Phase 4.5 — inferred-primary case. By definition
+    # workspace children are non-empty and consistent, so there
+    # are no DIFFERENT-from-primary stacks below. Treat as
+    # Single-stack (workspace-distributed) at Medium confidence.
+    if stack.inferred_primary is not None:
+        n_children = len(stack.workspace_children)
+        return StackReality(
+            assessment="Single-stack project",
+            confidence="Medium",
+            why=(
+                f"No root manifest detected; primary stack inferred "
+                f"from {n_children} workspace child project"
+                f"{'s' if n_children != 1 else ''}, all of which "
+                f"share the same stack signal."
+            ),
             primary=primary,
             workspace_signals=workspace_signals,
         )
@@ -1445,6 +1541,14 @@ def _stack_summary(stack: StackProfile) -> str:
             "manifest",
         )
         return f"Python (detected from {sig})"
+    # v0.8 Phase 4.5: when root detection returned "unknown" but
+    # workspace inference produced a label, surface it instead of
+    # the bare "Unknown stack" line. The "(inferred from workspace
+    # children)" suffix is load-bearing — it tells the reader the
+    # primary label came from a different evidence source than
+    # the JS / Python lines above.
+    if stack.inferred_primary is not None:
+        return f"{stack.inferred_primary} (inferred from workspace children)"
     return "Unknown stack — no manifest detected"
 
 
