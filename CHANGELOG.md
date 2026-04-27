@@ -9,6 +9,137 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-04-27
+
+**Ecosystem coverage milestone.** Five fixes driven by the
+SESSION_011 dogfood batch on real public repos: Rust support,
+Go support, a Smart contract project type, mixed-root JS/Python
+correction, and a React Native vs Next.js disambiguation. The
+v0.8.0 decision-layer machinery (Adopt Summary, Stack reality,
+Project type, Suggested next actions) carries the new behavior
+without UI changes; the failure taxonomy is unchanged.
+
+### Added — Rust ecosystem (Phase 5.2)
+
+- **Root `Cargo.toml` is now a recognized primary signal.**
+  ``_detect_in_dir`` returns ``"rust"`` when Cargo.toml is the
+  only manifest at root. JS / Python take precedence when
+  multiple manifests coexist, so existing mixed cases keep
+  going through Phase 5.1's source-dominance check.
+- **Workspace child label "Rust crate"** fires on Cargo.toml
+  or `.rs` files in a depth-2 workspace child. Surfaces
+  cleanly in the Adopt Summary's Structure block.
+- **Phase 4.5 inferred-primary** maps "Rust crate" workspace
+  signals to a "Rust workspace" primary when root has no
+  manifest — handles the rare Cargo workspace without a
+  root Cargo.toml.
+- **Project type "Rust workspace / library"** in Phase 4.2.
+  Fires only when Rust is the actual primary identity (root
+  Cargo.toml or unknown-root + Rust workspace inference);
+  JS / Python primary repos that happen to have auxiliary
+  Rust tooling (e.g. next.js's `crates/turbopack-*`) fall
+  through to the JS / Python rules.
+
+### Added — Go ecosystem (Phase 5.3)
+
+- **Root `go.mod` is now a recognized primary signal.**
+  ``_detect_in_dir`` returns ``"go"`` when go.mod is at root.
+- **Project type "Go project"** in Phase 4.2 when
+  `stack.language == "go"`. Reason text names the manifest
+  evidence. (No workspace-child Go rule — Go workspaces are
+  uncommon enough to defer.)
+
+### Added — Smart contract project type (Phase 5.4)
+
+- **New Phase 4.2 rule between Web3 dApp and Full-stack web
+  app.** Fires when any of:
+  - workspace child is labeled Solidity, OR
+  - any depth-1 directory has ≥ 10 `.sol` files, OR
+  - root contains a smart-contract framework config
+    (`hardhat.config.{js,ts,mjs,cjs}`, `foundry.toml`,
+    `truffle-config.js`, `brownie-config.yaml`).
+  Result: project type = "Smart contract project". Closes the
+  openzeppelin-contracts mislabel (was "JavaScript app/tooling
+  project" through v0.8.0).
+- **`derive_project_type` signature** now takes optional
+  ``failures=None``. The smart-contract rule reads failure
+  examples to detect root configs that aren't tracked in
+  ``stack.signals``. ``run_adopt`` passes ``prelim_failures``;
+  callers without failures still work with the default.
+
+### Added — Mixed-root source dominance (Phase 5.1)
+
+- **When both root JavaScript and root Python manifests are
+  present, walk depth-2 source evidence and pick the dominant
+  side.** v0 always picked JavaScript, which produced the
+  django/django dogfood failure where 198 .py files in
+  `django/` + 163 in `tests/` silently lost to a tooling-only
+  root `package.json`.
+- **Resolution rules:** Python wins when py-count ≥ 5 AND ≥ 3×
+  js-count; symmetric for JavaScript; otherwise inconclusive
+  (falls back to JS, preserves v0 default for non-audited
+  callers).
+- **Stack reality confidence is capped at Medium** for any
+  mixed-root case regardless of which side won. Mixed-root
+  setups rarely behave as a single stack in practice, and a
+  "High confidence" label there would be confidently wrong.
+- Notes explicitly say: "Mixed root manifests (package.json +
+  pyproject.toml); Python primary based on source dominance
+  (1229 .py files vs 12 .js/.ts/.tsx/.jsx files at depth ≤ 2)."
+
+### Changed — React Native vs Next.js disambiguation (Phase 5.5)
+
+- **Phase 3 `_classify_workspace_child` adds a "React Native /
+  mobile framework" label** that fires BEFORE the Next.js rule
+  when mobile signals are present:
+  - `metro.config.{js,ts,mjs,cjs}`
+  - `react-native.config.{js,ts,mjs,cjs}`
+  - `Podfile` (CocoaPods, iOS)
+  - `Gemfile` (Ruby, common in RN iOS)
+  - `.swift` or `.kt` source files
+  Closes the react-native dogfood failure where
+  `packages/react-native` (a mobile framework with
+  `metro.config.js + .tsx`) was labeled "Next.js / React web
+  app", which then cascaded into a "Full-stack web app"
+  project-type misfire via Phase 4.2 Rule 2.
+- **Project type "Mobile app suite" generalized** to fire on
+  Flutter OR React Native workspace signals. Reason text
+  adapts to name which kind ("Flutter / Dart" / "React Native"
+  / "Flutter and React Native") and lists up to 3 mobile
+  children.
+
+### Tests
+
+- 424 passing (was 327 in 0.7.0, 407 in 0.8.0). +17 in
+  TestMixedRootDominance + TestEcosystemCoverage covering all
+  five spec'd fixture shapes (django-shape,
+  ripgrep-shape, kubernetes-shape, openzeppelin-shape,
+  react-native-shape) plus regression sanity checks
+  (transformers, fns-monorepo) and the JS+Rust-aux guard
+  fixture (next.js-shape).
+
+### Dogfood validation
+
+Real-world before/after on the seven repos in
+`/Users/donkeyking/development/context-kit-dogfood-repos/`:
+
+  django:                JS app/tooling High  -> Python app/tooling Medium
+  react-native:          Full-stack web app   -> Mobile app suite
+  openzeppelin-contracts: JavaScript app/tooling -> Smart contract project
+  ripgrep:               Unclear / Low        -> Rust workspace / library
+  kubernetes:            Unclear / Low        -> Go project (High)
+  transformers:          unchanged (Python / High)
+  fns-monorepo:          unchanged (Web3 dApp)
+
+Beneficial side effects on existing dogfood repos:
+aave-v3-core, solidity-template, and v3-core all flipped from
+"JavaScript app/tooling project" to "Smart contract project"
+since they have hardhat config or heavy `contracts/` dirs.
+
+next.js correctly stays "Unclear project type" — it's a real
+JS+Rust hybrid that doesn't fit any clean category, and the
+Rust-rule guard prevents misclassifying it as a Rust project.
+
 ## [0.8.0] — 2026-04-27
 
 **`context-kit adopt` gains a depth-2 workspace walk plus a

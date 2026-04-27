@@ -202,21 +202,25 @@ Run `python3 context_kit.py <command> --help` for per-command options.
 
 `adopt` is the entry point when you have an *existing* project
 and want context-kit's docs layer wrapped around it. It detects
-the project's stack — at the root, one level deep into the seven
-recognized subdirs (`backend`, `frontend`, `web`, `mobile`,
-`api`, `client`, `server`), and one level deeper inside known
-workspace containers (`apps/`, `packages/`, `services/`,
-`crates/`, `members/`, `workspaces/`). When the root scan can't
-find a manifest but every workspace child shares the same stack
-(Flutter / Solidity / Next.js), adopt promotes that into the
-primary detection. **Source code is never modified.**
+the project's stack — at the root (JavaScript / Python / Rust /
+Go), one level deep into the seven recognized subdirs
+(`backend`, `frontend`, `web`, `mobile`, `api`, `client`,
+`server`), and one level deeper inside known workspace
+containers (`apps/`, `packages/`, `services/`, `crates/`,
+`members/`, `workspaces/`). When both root JavaScript and
+Python manifests are present, adopt walks shallow source
+evidence and picks the dominant side; when the root scan finds
+no manifest but every workspace child shares the same stack
+(Flutter / Solidity / Next.js / Rust), adopt promotes that into
+the primary detection. **Source code is never modified.**
 
 Output leads with a single **Adopt Summary** card — one block
 per run that names the concrete project's content:
 
 - **Type** — derived project label (e.g. *Web3 dApp*,
-  *Full-stack web app*, *Mobile app suite*, *JavaScript
-  app/tooling project*) with a confidence band.
+  *Smart contract project*, *Full-stack web app*, *Mobile app
+  suite*, *Rust workspace / library*, *Go project*,
+  *JavaScript app/tooling project*) with a confidence band.
 - **Structure** — per-child workspace stacks (e.g.
   `apps/forge → Solidity / EVM smart contracts`,
   `apps/next → Next.js / React web app`).
