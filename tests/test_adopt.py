@@ -5242,5 +5242,102 @@ class TestSplitMonorepoFullStackProjectType(unittest.TestCase):
         self.assertIn("Next.js", ptype.reason)
 
 
+class TestPlaceholdersDoNotBlockInspection(unittest.TestCase):
+    """v0.10.x — placeholders should not block read-only inspection.
+
+    Real-world testing on contract-concierge after `adopt --write`
+    showed agents stopping to ask the user about
+    `[adopt: please describe]` placeholders before doing any
+    repo inspection. Generated docs should explicitly tell the
+    agent to keep going for read-only work and only ask before
+    decisions that depend on the missing context.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _full_chain(self):
+        from cli.adopt import (
+            derive_adopt_summary, derive_agent_launch_prompt,
+            derive_project_type, derive_stack_reality,
+            derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality, prelim)
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+        prompt = derive_agent_launch_prompt(stack, reality, ptype, summary)
+        return stack, reality, ptype, summary, prompt
+
+    # ---- generated CLAUDE.md (managed block + fresh) --------------
+
+    def test_claude_managed_block_softens_placeholder_rule(self):
+        # The "Rule for this session" inside the managed block
+        # must permit read-only inspection and only require
+        # asking before decisions that depend on missing context.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        stack, reality, ptype, summary, prompt = self._full_chain()
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      reality=reality, project_type=ptype,
+                                      summary=summary,
+                                      agent_prompt=prompt)
+        self.assertIn(
+            "Do not block read-only inspection on", block,
+            f"managed block must explicitly permit read-only "
+            f"inspection on placeholders; got:\n{block}",
+        )
+        # Ask-before-decisions guidance present.
+        self.assertIn("Only ask the user before making decisions", block)
+        # Old "ask the user to fill it in before writing code that
+        # depends on the missing context" wording is gone from the
+        # managed block. (The fresh CLAUDE.md intro had its own
+        # version of the rule, which is also softened — covered by
+        # the next test.)
+
+    def test_fresh_claude_md_softens_placeholder_warning(self):
+        # generate_claude_md_fresh produces the full CLAUDE.md
+        # body (intro + managed block) when no CLAUDE.md exists.
+        # The intro's placeholder warning must also be softened.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        stack, reality, ptype, summary, prompt = self._full_chain()
+        from cli.adopt import generate_claude_md_fresh
+        body = generate_claude_md_fresh(
+            stack, self.inputs, "Test",
+            reality=reality, project_type=ptype, summary=summary,
+            agent_prompt=prompt,
+        )
+        self.assertIn("do not block read-only inspection", body.lower(),
+                      f"fresh CLAUDE.md must permit read-only "
+                      f"inspection; got:\n{body[:1200]}")
+        self.assertIn("Only ask the user before making decisions", body)
+        # Old "ask the user to fill it in before writing code"
+        # blocking wording is gone — defense against re-introduction.
+        self.assertNotIn("ask the user to fill it in before writing code",
+                         body)
+
+    # ---- 00-START-NEXT-SESSION.md ----------------------------------
+
+    def test_start_here_step_3_softens_placeholder_handling(self):
+        # generate_start_here's "How to start the session" step 3
+        # used to say "fill them in or ask the user". v0.10.x
+        # softens to "do not block read-only inspection".
+        from cli.adopt import generate_start_here
+        body = generate_start_here(self.inputs, "Test")
+        self.assertIn("Do not block on them for read-only inspection",
+                      body)
+        self.assertIn("safe and read-only", body)
+        # Old fill-them-in-or-ask wording gone.
+        self.assertNotIn("fill them in or ask the user", body)
+
+
 if __name__ == "__main__":
     unittest.main()

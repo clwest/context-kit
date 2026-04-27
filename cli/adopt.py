@@ -2754,7 +2754,11 @@ def generate_start_here(inputs: AdoptionInputs, title: str) -> str:
         "",
         "1. Read `docs/BUILD_PLAN.md` — confirm the stack matches reality.",
         "2. Read `docs/PROJECT_WHAT_IT_IS.md` (or your project's *_WHAT_IT_IS.md).",
-        "3. If you see `[adopt: please describe]` markers, fill them in or ask the user.",
+        "3. Note any `[adopt: please describe]` placeholders — these mark "
+        "context the user hasn't filled in yet. **Do not block on them for "
+        "read-only inspection.** Proceed with the recommended first action "
+        "from CLAUDE.md if it's safe and read-only. Only ask the user "
+        "before making decisions that depend on the missing context.",
         "4. Then begin the work above.",
         "",
     ]
@@ -2837,6 +2841,11 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
         "- Always read `docs/BUILD_PLAN.md` before choosing a stack or writing",
         "  code. The detected stack above is the source of truth — do not",
         "  switch frameworks without asking.",
+        "- `[adopt: please describe]` placeholders mark context the user",
+        "  hasn't filled in yet. **Do not block read-only inspection on them.**",
+        "  Proceed with the recommended first action above if it's safe and",
+        "  read-only. Only ask the user before making decisions (writes,",
+        "  refactors, framework choices) that depend on the missing context.",
         "",
         END_MARKER,
     ]
@@ -2871,8 +2880,12 @@ def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title:
         "2. `docs/PROJECT_WHAT_IT_IS.md` (or `docs/<slug>_WHAT_IT_IS.md`) — what this is and why.",
         "3. `00-START-NEXT-SESSION.md` — the current session priority.",
         "",
-        "If you see `[adopt: please describe]` anywhere, ask the user to fill",
-        "it in before writing code that depends on the missing context.",
+        "If you see `[adopt: please describe]` anywhere, that's context the "
+        "user hasn't filled in yet — **do not block read-only inspection on "
+        "these placeholders.** Proceed with the recommended first action "
+        "below if it's safe and read-only. Only ask the user before making "
+        "decisions (writes, refactors, framework choices) that depend on "
+        "the missing context.",
         "",
         block,
         "",
