@@ -4939,9 +4939,14 @@ class TestAgentLaunchPrompt(unittest.TestCase):
 
     # ---- Unclear: prompt asks to clarify before coding -------------
 
-    def test_unclear_project_type_prompt_asks_to_clarify(self):
+    def test_unclear_project_type_prompt_infers_before_asking(self):
         # Mix of Rust crates AND Next.js apps (no clean primary
         # identity, like next.js itself) → Unclear project type.
+        # As of v0.11.x the unclear-first-action tells the agent
+        # to infer the shape from the codebase first and only ask
+        # the user about residual gaps — replacing the older
+        # "wait for the user before doing anything" wording that
+        # contradicted the new HOW TO APPROACH conditional rule.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "crates").mkdir()
         for name in ("a", "b"):
@@ -4953,9 +4958,14 @@ class TestAgentLaunchPrompt(unittest.TestCase):
         _, _, ptype, _, prompt = self._derive_full_chain()
         self.assertEqual(ptype.label, "Unclear project type")
         text = prompt.prompt_text
-        self.assertIn("Do NOT write code yet", text)
-        self.assertIn("Clarify the project shape", text)
-        self.assertIn("Wait for their answer", text)
+        # New wording: infer first, then ask only for gaps.
+        self.assertIn("Do not write code yet", text)
+        self.assertIn("Infer the project shape first", text)
+        self.assertIn(
+            "Only ask the user for clarification after this "
+            "inspection",
+            text,
+        )
 
     # ---- HTML: prompt block + copy button --------------------------
 
@@ -6107,6 +6117,37 @@ class TestAgentPromptBehaviorRules(unittest.TestCase):
         self.assertIn(pt.confidence.lower(), ("low", "medium"))
         self.assertIn("HOW TO APPROACH THIS REPO", text)
         self.assertIn("WHAT TO PRIORITIZE", text)
+
+    def test_unclear_first_action_infers_before_asking(self):
+        # The unclear-project RECOMMENDED FIRST ACTION used to say
+        # "Clarify first" + "Wait for their answer", which directly
+        # contradicted the new HOW TO APPROACH rule that tells the
+        # agent to do a structured read-through on low confidence.
+        # Lock the new "infer first, ask only for residual gaps"
+        # wording in so the contradiction can't sneak back in.
+        self._make_unclear_repo()
+        text, pt, _r = self._build_prompt()
+        # Sanity-check we're hitting the unclear branch at all.
+        self.assertEqual(pt.label, "Unclear project type")
+
+        # New wording — must be present.
+        self.assertIn("Infer the project shape first", text)
+        self.assertIn(
+            "Only ask the user for clarification after this "
+            "inspection",
+            text,
+        )
+
+        # Old contradictory wording — must be gone.
+        self.assertNotIn(
+            "Wait for their answer before proposing any "
+            "concrete next step",
+            text,
+        )
+        self.assertNotIn(
+            "Ask the user explicitly: what is this project?",
+            text,
+        )
 
     def test_new_sections_present_in_single_stack_prompt(self):
         self._make_single_stack_repo()

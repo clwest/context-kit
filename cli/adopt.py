@@ -2041,14 +2041,16 @@ def _agent_first_action_for(project_type: ProjectType,
 
     if label == "Unclear project type":
         return (
-            f"Do NOT write code yet. Clarify the project shape "
+            f"Do not write code yet. Infer the project shape "
             f"first.\n"
-            f"- Read all generated docs and the user's project "
-            f"description.\n"
-            f"- Ask the user explicitly: what is this project? "
-            f"what stack does it use? what are you trying to do?\n"
-            f"- Wait for their answer before proposing any "
-            f"concrete next step."
+            f"- Perform a structured read-through of the "
+            f"repository (README, main files, routing, "
+            f"configs) to infer the system on your own.\n"
+            f"- Read any generated docs and the user's project "
+            f"description for additional signal.\n"
+            f"- Only ask the user for clarification after this "
+            f"inspection, and only for specific gaps that "
+            f"cannot be determined from the codebase."
         )
 
     # Generic fallback for JS app/tooling, Python app/tooling,
