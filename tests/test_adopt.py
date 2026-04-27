@@ -5339,5 +5339,104 @@ class TestPlaceholdersDoNotBlockInspection(unittest.TestCase):
         self.assertNotIn("fill them in or ask the user", body)
 
 
+class TestPostWriteAgentLaunchFlow(unittest.TestCase):
+    """v0.10.x — make the Agent Launch Prompt the canonical
+    post-write next step. After `adopt --write`, the user should
+    see a clear "paste this into your agent" pointer, the same
+    prompt should land in 00-START-NEXT-SESSION.md, and CLAUDE.md
+    should name the prompt as the session opener.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_and_capture(self):
+        # Run adopt with --write against a small fixture and
+        # capture the CLI output for assertion.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=True,
+                          description="x", next_step="y"))
+        return buf.getvalue()
+
+    # ---- 1. CLI --write footer points at the prompt ---------------
+
+    def test_cli_write_footer_names_agent_launch_prompt(self):
+        out = self._write_and_capture()
+        # The full prompt is still printed earlier in the output
+        # (the dry-run block runs unconditionally).
+        self.assertIn("AGENT LAUNCH PROMPT", out)
+        # New post-write footer points back at it.
+        self.assertIn("Next step: paste the Agent Launch Prompt", out)
+        # And tells the user about the persisted copy.
+        self.assertIn("00-START-NEXT-SESSION.md", out)
+        # Old hesitant "Review the [adopt: please describe]"
+        # footer is gone.
+        self.assertNotIn("Done. Review the [adopt: please describe]",
+                         out)
+        # Soft placeholder framing in the footer.
+        self.assertIn("don't block read-only inspection", out)
+
+    # ---- 2. Generated 00-START-NEXT-SESSION.md has the prompt ----
+
+    def test_start_here_doc_contains_fenced_agent_launch_prompt(self):
+        # Write the doc, then verify the file content (not just
+        # the planned content) carries the prompt.
+        self._write_and_capture()
+        start_path = self.repo / "00-START-NEXT-SESSION.md"
+        self.assertTrue(start_path.is_file(),
+                        "adopt --write should have created "
+                        "00-START-NEXT-SESSION.md")
+        body = start_path.read_text(encoding="utf-8")
+        # Section header.
+        self.assertIn("## Agent Launch Prompt", body)
+        # Paste guidance.
+        self.assertIn("Paste this into Claude Code, Cursor, or any "
+                      "AI coding agent", body)
+        # Fenced text block.
+        self.assertIn("```text\n", body)
+        # Body content of the prompt is present.
+        self.assertIn("WHAT THIS PROJECT APPEARS TO BE", body)
+        self.assertIn("SAFETY INSTRUCTIONS", body)
+        # Section appears BEFORE "What's next" so it's the first
+        # actionable thing in the file.
+        self.assertLess(
+            body.index("## Agent Launch Prompt"),
+            body.index("## What's next"),
+            "Agent Launch Prompt must appear above 'What's next' "
+            "in the start-here doc",
+        )
+
+    # ---- 3. Generated CLAUDE.md names the prompt as session opener -
+
+    def test_claude_md_intro_names_prompt_as_session_opener(self):
+        self._write_and_capture()
+        claude_path = self.repo / "CLAUDE.md"
+        self.assertTrue(claude_path.is_file(),
+                        "adopt --write should have created CLAUDE.md")
+        body = claude_path.read_text(encoding="utf-8")
+        # "Read this first" intro now leads with the Agent Launch
+        # Prompt as the canonical session opener.
+        self.assertIn("Agent Launch Prompt", body)
+        self.assertIn("canonical first message for your session", body)
+        # Placeholder soft-framing still present (regression
+        # check from the previous commit).
+        self.assertIn("do not block read-only inspection", body.lower())
+        # Old session-opener wording (which only listed numbered
+        # docs without highlighting the prompt) is gone — the
+        # new intro replaces it.
+        self.assertIn("If you're an AI agent starting a session",
+                      body)
+
+
 if __name__ == "__main__":
     unittest.main()
