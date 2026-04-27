@@ -922,11 +922,40 @@ def _is_data_only_subdir(u: UnclassifiedSubdir) -> bool:
     )
 
 
+def _workspace_covered_containers(stack: StackProfile) -> set[str]:
+    """Container names already represented by entries in workspace_children.
+
+    v0.8 dedup helper. When ``apps/forge`` and ``apps/next`` appear in
+    ``workspace_children``, the depth-1 view of ``apps/`` in
+    ``unclassified_subdirs`` becomes a redundant — and often
+    misleading — second-rendering of the same data (the per-container
+    counts cap at ``MAX_FILES_PER_SUBDIR`` and don't agree with the
+    per-child counts). Renderers use this set to suppress the
+    container row from "Unknown but present" so each workspace shape
+    is described exactly once.
+    """
+    covered: set[str] = set()
+    for c in stack.workspace_children:
+        head, sep, _ = c.name.partition("/")
+        if sep:
+            covered.add(head)
+    return covered
+
+
 def _partition_unclassified(stack: StackProfile) -> tuple[list[UnclassifiedSubdir], list[UnclassifiedSubdir]]:
-    """Return (signal_subdirs, data_only_subdirs) preserving order."""
+    """Return (signal_subdirs, data_only_subdirs) preserving order.
+
+    Subdirs whose names appear as workspace-container heads in
+    ``stack.workspace_children`` are filtered out — the per-child
+    rendering supersedes the container row. See
+    ``_workspace_covered_containers``.
+    """
+    covered = _workspace_covered_containers(stack)
     signal: list[UnclassifiedSubdir] = []
     data_only: list[UnclassifiedSubdir] = []
     for u in stack.unclassified_subdirs:
+        if u.name in covered:
+            continue
         (data_only if _is_data_only_subdir(u) else signal).append(u)
     return signal, data_only
 
@@ -944,6 +973,11 @@ def _unknown_present_block_dryrun(stack: StackProfile) -> list[str]:
     if not stack.unclassified_subdirs:
         return []
     signal, data_only = _partition_unclassified(stack)
+    if not signal and not data_only:
+        # All depth-1 candidates were workspace containers already
+        # surfaced via workspace_children (v0.8 dedup) — nothing
+        # left for this section to say.
+        return []
     out = ["", "Unknown but present (depth 1):"]
     for u in signal:
         out.extend(_format_unclassified_for_dryrun(u))
@@ -967,10 +1001,13 @@ def _workspace_children_block_dryrun(stack: StackProfile) -> list[str]:
     and (if any) the leading clause of its hint. Empty list when no
     workspace children, so callers can ``for line in ...`` without
     an outer guard.
+
+    Header carries the count so the section is scannable at a glance
+    (matches the "Detected issues (N):" pattern).
     """
     if not stack.workspace_children:
         return []
-    out = ["", "Workspace children (depth-2):"]
+    out = ["", f"Workspace children ({len(stack.workspace_children)}):"]
     name_width = max(len(c.name) for c in stack.workspace_children)
     for c in stack.workspace_children:
         bits: list[str] = []
@@ -1033,6 +1070,10 @@ def _unknown_present_markdown(stack: StackProfile) -> list[str]:
     if not stack.unclassified_subdirs:
         return []
     signal, data_only = _partition_unclassified(stack)
+    if not signal and not data_only:
+        # v0.8 dedup: all candidates were workspace containers
+        # already surfaced via workspace_children. Section omitted.
+        return []
     out = [
         "",
         "### Unknown but present",
@@ -1070,14 +1111,15 @@ def _workspace_children_markdown(stack: StackProfile) -> list[str]:
     """
     if not stack.workspace_children:
         return []
+    n = len(stack.workspace_children)
     out = [
         "",
-        "### Workspace children (depth-2)",
+        f"### Workspace children ({n})",
         "",
-        "`adopt` walked one level deeper inside known workspace",
-        "containers (`apps/`, `packages/`, ...) and surfaced these",
-        "child projects. Names + hints only — see the CLI dry-run or",
-        "the `--html` report for full per-child detail.",
+        "`adopt` walked one level deeper (depth-2) inside known",
+        "workspace containers (`apps/`, `packages/`, ...) and surfaced",
+        "these child projects. Names + hints only — see the CLI",
+        "dry-run or the `--html` report for full per-child detail.",
         "",
     ]
     for c in stack.workspace_children:
@@ -1426,7 +1468,10 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     # recognized source extensions)" cards.
     signal_subdirs, data_only_subdirs = _partition_unclassified(stack)
     unknown_html: list[str] = []
-    if stack.unclassified_subdirs:
+    # v0.8 dedup: the section may be empty after filtering out
+    # workspace containers covered by workspace_children. Gate on
+    # the partitioned lists, not the raw unclassified_subdirs field.
+    if signal_subdirs or data_only_subdirs:
         unknown_html = [
             '<section class="card card-warn">',
             '  <h2>Unknown but present</h2>',
@@ -1536,13 +1581,16 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     # Depth-2 children of known workspace containers (apps/<child>,
     # packages/<child>, ...). Reuses the .unc / .unc-body styling
     # from the unknown-but-present section since the visual shape
-    # is the same — the section title and intro copy are what
-    # distinguish them. Silent when no workspace children exist.
+    # is the same. Trivial children (only `package.json`, no notable
+    # extensions) render as a non-collapsible row — clicking adds
+    # nothing the summary didn't already say. Hint shown once via
+    # the summary badge; not duplicated inside the body.
     workspace_html: list[str] = []
     if stack.workspace_children:
+        n = len(stack.workspace_children)
         workspace_html = [
             '<section class="card">',
-            '  <h2>Workspace children</h2>',
+            f'  <h2>Workspace children ({n})</h2>',
             '  <p class="meta">Depth-2 walk inside known workspace '
             'containers (<code>apps/</code>, <code>packages/</code>, '
             '<code>services/</code>, <code>crates/</code>, '
@@ -1567,16 +1615,31 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             for ext in wsc_domain + wsc_generic:
                 summary_bits.append(f"{c.notable_extensions[ext]}{_esc(ext)}")
             summary = " · ".join(summary_bits) if summary_bits else "(no signals)"
+            hint_badge = (
+                f' <span class="hint-badge">'
+                f'{_esc(c.hint.split(";")[0])}</span>'
+                if c.hint else ""
+            )
+            # Trivial child: nothing in the body would beat the
+            # summary, so render a non-collapsible div instead of
+            # a <details> with an empty disclosure.
+            trivial = (
+                c.manifest_files == ["package.json"]
+                and not c.notable_extensions
+            )
+            if trivial:
+                workspace_html.append(
+                    f'  <div class="unc unc-trivial">'
+                    f'<code class="dirname">{_esc(c.name)}</code> '
+                    f'<span class="dim">{summary}</span>{hint_badge}'
+                    f'</div>'
+                )
+                continue
             workspace_html.append(
                 f'  <details class="unc"><summary>'
                 f'<code class="dirname">{_esc(c.name)}</code> '
-                f'<span class="dim">{summary}</span>'
-                + (
-                    f' <span class="hint-badge">'
-                    f'{_esc(c.hint.split(";")[0])}</span>'
-                    if c.hint else ""
-                )
-                + '</summary>'
+                f'<span class="dim">{summary}</span>{hint_badge}'
+                '</summary>'
             )
             workspace_html.append('    <div class="unc-body">')
             if c.manifest_files:
@@ -1594,10 +1657,8 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                         f'{"s" if count != 1 else ""}</li>'
                     )
                 workspace_html.append('      </ul>')
-            if c.hint:
-                workspace_html.append(
-                    f'      <p class="hint">{_esc(c.hint)}</p>'
-                )
+            # Hint already shown via .hint-badge in the summary —
+            # don't repeat inside the expanded body.
             workspace_html.append('    </div>')
             workspace_html.append('  </details>')
         workspace_html.append('</section>')
@@ -2460,14 +2521,9 @@ def analyze_failures(repo: Path, stack: StackProfile,
             severity="high",
             surface_area="visibility",
             description=(
-                f"{u.name}/ is a workspace container — adopt's "
-                f"depth-1 scan saw the directory and (via the "
-                f"depth-2 source walk) counted files inside, but "
-                f"the individual child projects under "
-                f"{u.name}/<name>/ are invisible to classification. "
-                f"Real package.json / foundry.toml / pubspec.yaml "
-                f"manifests likely live one level deeper than "
-                f"adopt currently reads."
+                f"{u.name}/ is a workspace container. Child projects "
+                f"are surfaced but not yet classified into the "
+                f"primary stack."
             ),
             detected_in=u.name,
             example=deepest,

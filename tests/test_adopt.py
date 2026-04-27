@@ -2117,7 +2117,8 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
             run_adopt(_ns(self.repo, write=False,
                           description="demo", next_step="ship v1"))
         out = buf.getvalue()
-        self.assertIn("Workspace children (depth-2):", out,
+        # v0.8 polish: header carries the count, not "(depth-2)".
+        self.assertIn("Workspace children (2):", out,
                       f"missing workspace children header in:\n{out}")
         self.assertIn("apps/forge", out)
         self.assertIn("apps/next", out)
@@ -2130,7 +2131,7 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
         # The section sits between "Unknown but present" (no
         # depth-1 unclassified subdirs in this fixture) and "Plan:".
         plan_idx = out.index("Plan:")
-        ws_idx = out.index("Workspace children (depth-2):")
+        ws_idx = out.index("Workspace children (2):")
         self.assertLess(ws_idx, plan_idx,
                         "Workspace children must appear BEFORE the Plan section")
 
@@ -2158,7 +2159,8 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
         plan = plan_files(self.repo, stack, self.inputs)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
-        self.assertIn("<h2>Workspace children</h2>", html)
+        # v0.8 polish: header carries the count.
+        self.assertIn("<h2>Workspace children (2)</h2>", html)
         # Each child gets a <details> block with the container/child
         # name as a code span. _esc keeps the slash literal.
         self.assertIn('<code class="dirname">apps/forge</code>', html)
@@ -2182,7 +2184,8 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
         plan = plan_files(self.repo, stack, self.inputs)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
-        self.assertNotIn("<h2>Workspace children</h2>", html)
+        self.assertNotIn("Workspace children", html,
+                         "section must be omitted entirely when no children")
 
     # ---- BUILD_PLAN.md --------------------------------------------------
 
@@ -2193,12 +2196,13 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
         stack = detect_stack(self.repo)
         title = "Test"
         md = generate_build_plan(stack, self.inputs, title)
-        self.assertIn("### Workspace children (depth-2)", md)
+        # v0.8 polish: header carries the count.
+        self.assertIn("### Workspace children (2)", md)
         # Slice just the workspace section — assertions about
         # "skimmable, no overwhelming detail" should look at this
         # section only, not at unrelated hint text from the
         # "Unknown but present" section above.
-        ws_start = md.index("### Workspace children (depth-2)")
+        ws_start = md.index("### Workspace children (2)")
         ws_end = md.find("\n## ", ws_start)
         ws_section = md[ws_start:ws_end] if ws_end != -1 else md[ws_start:]
         self.assertIn("**apps/forge**", ws_section)
@@ -2224,7 +2228,249 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         stack = detect_stack(self.repo)
         md = generate_build_plan(stack, self.inputs, "Test")
-        self.assertNotIn("Workspace children (depth-2)", md)
+        self.assertNotIn("Workspace children", md)
+
+
+class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
+    """v0.8 polish — dedup, header count, MONOREPO_DEPTH_LIMIT description,
+    body-hint dedup, and trivial-child shortcut. All render-layer only;
+    classification and the failure taxonomy are unchanged.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _build_fns_fixture(self):
+        # Same shape used elsewhere: root package.json + apps/forge
+        # (Foundry) + apps/next (Next-style with .tsx).
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+    # ---- Required regression: fns-monorepo dedup ----------------------
+
+    def test_fns_monorepo_dedup_apps_not_in_unknown_but_present(self):
+        # The headline UX bug from the v0.8 dogfood: apps/ rendered
+        # in BOTH "Unknown but present" (with truncated/aggregated
+        # counts) AND "Workspace children" (with per-child counts).
+        # After v0.8 polish, apps/ MUST disappear from unknown-but-
+        # present whenever any apps/<child> appears in
+        # workspace_children. apps/forge and apps/next must still
+        # appear in workspace_children.
+        self._build_fns_fixture()
+        stack = detect_stack(self.repo)
+
+        # CLI dry-run.
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        out = buf.getvalue()
+        # No "Unknown but present" header at all in this fixture
+        # (apps/ was the only depth-1 unclassified subdir, now
+        # suppressed).
+        self.assertNotIn("Unknown but present", out,
+                         f"apps/ should be suppressed since its children "
+                         f"are surfaced via workspace_children:\n{out}")
+        # Workspace children section still present, both children
+        # individually named.
+        self.assertIn("Workspace children (2):", out)
+        self.assertIn("apps/forge", out)
+        self.assertIn("apps/next", out)
+
+        # HTML report.
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        self.assertNotIn("<h2>Unknown but present</h2>", html,
+                         "apps/ container must be suppressed from "
+                         "Unknown-but-present in HTML when its "
+                         "children render in Workspace children")
+        self.assertIn("<h2>Workspace children (2)</h2>", html)
+        self.assertIn('<code class="dirname">apps/forge</code>', html)
+        self.assertIn('<code class="dirname">apps/next</code>', html)
+
+        # BUILD_PLAN.md.
+        md = generate_build_plan(stack, self.inputs, "Test")
+        self.assertNotIn("Unknown but present", md,
+                         "apps/ must be suppressed from Unknown-but-"
+                         "present in BUILD_PLAN.md as well")
+        self.assertIn("### Workspace children (2)", md)
+        self.assertIn("**apps/forge**", md)
+        self.assertIn("**apps/next**", md)
+
+    # ---- Dedup applies to the data-only footer too --------------------
+
+    def test_dedup_also_removes_packages_from_data_only_footer(self):
+        # turborepo-style shape: packages/ contains 4 child projects
+        # whose contents (config-only) would otherwise classify the
+        # container as a "data-only" subdir. Once workspace_children
+        # surfaces packages/foo, packages/bar, etc., the data-only
+        # footer mention of packages/ must disappear too.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "packages").mkdir()
+        for name in ("ui", "shared", "tsconfig"):
+            d = self.repo / "packages" / name
+            d.mkdir()
+            (d / "package.json").write_text("{}", encoding="utf-8")
+        # An unrelated data-only directory must still appear.
+        (self.repo / "fixtures").mkdir()
+        (self.repo / "fixtures" / "data.json").write_text("{}", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        # Find the unknown-but-present section if it exists.
+        if "<h2>Unknown but present</h2>" in html:
+            ubp_start = html.index("<h2>Unknown but present</h2>")
+            ubp_end = html.find("</section>", ubp_start)
+            ubp = html[ubp_start:ubp_end]
+            self.assertNotIn(">packages/<", ubp,
+                             "packages/ must not appear in the "
+                             "data-only footer when its children "
+                             "are surfaced in workspace_children")
+            self.assertIn("fixtures", ubp,
+                          "unrelated data-only dirs must still appear")
+        # Workspace children covers all three packages.
+        self.assertIn("packages/ui", html)
+        self.assertIn("packages/shared", html)
+        self.assertIn("packages/tsconfig", html)
+
+    # ---- Header count -------------------------------------------------
+
+    def test_header_count_matches_workspace_children_length(self):
+        # Three children → "(3):" / "(3)" in all three renderers.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for name in ("a", "b", "c"):
+            d = self.repo / "apps" / name
+            d.mkdir()
+            (d / "package.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        # CLI
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        self.assertIn("Workspace children (3):", buf.getvalue())
+        # HTML
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        self.assertIn("<h2>Workspace children (3)</h2>", html)
+        # BUILD_PLAN
+        md = generate_build_plan(stack, self.inputs, "Test")
+        self.assertIn("### Workspace children (3)", md)
+
+    # ---- MONOREPO_DEPTH_LIMIT description text ------------------------
+
+    def test_monorepo_depth_limit_description_updated(self):
+        # The label still fires on the same fns-monorepo shape, but
+        # the description text is updated to reflect that children
+        # ARE surfaced (just not classified into the primary stack).
+        self._build_fns_fixture()
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        records = analyze_failures(self.repo, stack, plan)
+        depth = next(r for r in records
+                     if r.failure_type == FAILURE_MONOREPO_DEPTH_LIMIT)
+        self.assertIn("surfaced but not yet classified", depth.description)
+        # Old wording about "invisible to classification" must be gone.
+        self.assertNotIn("invisible to classification", depth.description)
+        # Label, severity, surface_area unchanged (taxonomy intact).
+        self.assertEqual(depth.severity, "high")
+        self.assertEqual(depth.surface_area, "visibility")
+        self.assertEqual(depth.detected_in, "apps")
+
+    # ---- Trivial-child shortcut + body-hint dedup (HTML only) ---------
+
+    def test_trivial_child_renders_without_collapsible_body(self):
+        # A child with only `package.json` and no notable extensions
+        # gets a non-collapsible <div class="unc unc-trivial">,
+        # not a <details>. Saves the user a useless click.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "packages").mkdir()
+        triv = self.repo / "packages" / "trivial"
+        triv.mkdir()
+        (triv / "package.json").write_text("{}", encoding="utf-8")
+        # A non-trivial sibling proves the contrast.
+        rich = self.repo / "packages" / "rich"
+        rich.mkdir()
+        (rich / "package.json").write_text("{}", encoding="utf-8")
+        (rich / "src").mkdir()
+        for n in range(3):
+            (rich / "src" / f"x{n}.tsx").write_text("// x\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        # Trivial child: non-collapsible div.
+        self.assertIn(
+            '<div class="unc unc-trivial">'
+            '<code class="dirname">packages/trivial</code>',
+            html,
+            "trivial child must render as <div class='unc unc-trivial'>",
+        )
+        # Non-trivial child: still a <details> element.
+        # Search for the rich child's name inside a <details> block.
+        details_with_rich = (
+            '<details class="unc"><summary>'
+            '<code class="dirname">packages/rich</code>' in html
+        )
+        self.assertTrue(details_with_rich,
+                        "non-trivial child must still render as <details>")
+
+    def test_workspace_html_body_does_not_duplicate_hint(self):
+        # The expanded body must NOT repeat the hint that's already
+        # in the summary's hint-badge. fns-monorepo apps/forge has
+        # a Solidity hint — it appears once via the badge and once
+        # in the description below the manifest section was the
+        # bug. Now: appears once via the badge only.
+        self._build_fns_fixture()
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        # Slice just the workspace children section.
+        ws_start = html.index("<h2>Workspace children")
+        ws_end = html.find("</section>", ws_start)
+        ws = html[ws_start:ws_end]
+        # Hint phrase appears at most once inside the workspace
+        # section — the hint-badge in the summary. The body's
+        # <p class="hint">...</p> for workspace children is gone.
+        # (Search for the full hint phrase including the "; verify
+        # with user" tail since the badge truncates at the semicolon.)
+        full_hint_count = ws.count(
+            ".sol files suggest Solidity / EVM smart contracts; "
+            "verify with user"
+        )
+        self.assertEqual(full_hint_count, 0,
+                         "the long-form hint (with 'verify with user') "
+                         "must not appear inside the workspace body — "
+                         "only the shorter badge in the summary")
 
 
 if __name__ == "__main__":
