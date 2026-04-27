@@ -2068,5 +2068,164 @@ class TestWorkspaceChildren(unittest.TestCase):
                       f"MONOREPO_DEPTH_LIMIT must still fire; got {types!r}")
 
 
+class TestWorkspaceChildrenRendering(unittest.TestCase):
+    """v0.8 — workspace_children must surface in CLI dry-run, HTML
+    report, and BUILD_PLAN markdown. Renderers are additive — none
+    of the v0.7 sections (Detection, Unknown but present, Plan,
+    Detected issues) change.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _build_fns_fixture(self):
+        # The fns-monorepo shape used in the data-model tests.
+        # Reproduced here so render assertions don't depend on
+        # rerunning the data-model class fixtures.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+    # ---- CLI dry-run ----------------------------------------------------
+
+    def test_cli_dryrun_includes_workspace_children_section(self):
+        # The CLI dry-run must print "Workspace children (depth-2):"
+        # with one line per child between the unknown-but-present
+        # section and the Plan section.
+        self._build_fns_fixture()
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        out = buf.getvalue()
+        self.assertIn("Workspace children (depth-2):", out,
+                      f"missing workspace children header in:\n{out}")
+        self.assertIn("apps/forge", out)
+        self.assertIn("apps/next", out)
+        # Manifests appear in the compact suffix.
+        self.assertIn("foundry.toml", out)
+        # Hint clause appears for forge (Solidity DOMAIN_HINTS fallback).
+        self.assertIn("Solidity", out,
+                      "forge child's Solidity hint should appear in the "
+                      "CLI dry-run line")
+        # The section sits between "Unknown but present" (no
+        # depth-1 unclassified subdirs in this fixture) and "Plan:".
+        plan_idx = out.index("Plan:")
+        ws_idx = out.index("Workspace children (depth-2):")
+        self.assertLess(ws_idx, plan_idx,
+                        "Workspace children must appear BEFORE the Plan section")
+
+    def test_cli_dryrun_silent_when_no_workspace_children(self):
+        # No apps/, no packages/ — the new section must not appear,
+        # preserving the v0.7 dry-run shape on plain projects.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        out = buf.getvalue()
+        self.assertNotIn("Workspace children", out,
+                         "section must be silent when no workspace children")
+
+    # ---- HTML report ----------------------------------------------------
+
+    def test_html_report_includes_workspace_children_section(self):
+        # The --html report must contain a "Workspace children"
+        # section with one collapsible <details> per child.
+        self._build_fns_fixture()
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        self.assertIn("<h2>Workspace children</h2>", html)
+        # Each child gets a <details> block with the container/child
+        # name as a code span. _esc keeps the slash literal.
+        self.assertIn('<code class="dirname">apps/forge</code>', html)
+        self.assertIn('<code class="dirname">apps/next</code>', html)
+        # Manifests render as inline <code> in the body.
+        self.assertIn("<code>foundry.toml</code>", html)
+        # The forge child's Solidity hint surfaces in the body.
+        self.assertIn("Solidity", html)
+        # Reuses the existing `unc` collapsible class so styling
+        # matches the unknown-but-present section.
+        # (Two children + any unclassified-subdir details elsewhere.)
+        self.assertGreaterEqual(html.count('<details class="unc">'), 2,
+                                "expected two .unc <details> blocks for "
+                                "the workspace children")
+
+    def test_html_report_omits_workspace_section_when_empty(self):
+        # Plain project with no workspace containers must not get
+        # the new section at all (avoids visual noise on simple repos).
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        self.assertNotIn("<h2>Workspace children</h2>", html)
+
+    # ---- BUILD_PLAN.md --------------------------------------------------
+
+    def test_build_plan_includes_workspace_children_section(self):
+        # BUILD_PLAN.md must list each workspace child by name.
+        # Hints render in italic when present; bare name when not.
+        self._build_fns_fixture()
+        stack = detect_stack(self.repo)
+        title = "Test"
+        md = generate_build_plan(stack, self.inputs, title)
+        self.assertIn("### Workspace children (depth-2)", md)
+        # Slice just the workspace section — assertions about
+        # "skimmable, no overwhelming detail" should look at this
+        # section only, not at unrelated hint text from the
+        # "Unknown but present" section above.
+        ws_start = md.index("### Workspace children (depth-2)")
+        ws_end = md.find("\n## ", ws_start)
+        ws_section = md[ws_start:ws_end] if ws_end != -1 else md[ws_start:]
+        self.assertIn("**apps/forge**", ws_section)
+        self.assertIn("**apps/next**", ws_section)
+        # Forge's Solidity hint surfaces inside this section, not
+        # only in unrelated text above.
+        self.assertIn("Solidity", ws_section,
+                      "forge's Solidity hint should appear in the "
+                      "workspace children section of BUILD_PLAN.md")
+        # Skimmable: per-extension counts must NOT appear in this
+        # section (e.g. "3 `.tsx`" or "1 `.sol`"). Counts live in
+        # CLI / HTML, not BUILD_PLAN.
+        self.assertNotIn("`.tsx`", ws_section,
+                         "BUILD_PLAN workspace section must not list "
+                         "extension counts (per 'do not overwhelm')")
+        self.assertNotIn("`.sol`", ws_section,
+                         "BUILD_PLAN workspace section must not list "
+                         "extension counts")
+
+    def test_build_plan_omits_workspace_section_when_empty(self):
+        # Same omission rule for the markdown — clean projects keep
+        # the v0.7 BUILD_PLAN shape.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        md = generate_build_plan(stack, self.inputs, "Test")
+        self.assertNotIn("Workspace children (depth-2)", md)
+
+
 if __name__ == "__main__":
     unittest.main()

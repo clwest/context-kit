@@ -958,6 +958,33 @@ def _unknown_present_block_dryrun(stack: StackProfile) -> list[str]:
     return out
 
 
+def _workspace_children_block_dryrun(stack: StackProfile) -> list[str]:
+    """The "Workspace children" section for the CLI dry-run output.
+
+    v0.8 — additive surface for ``StackProfile.workspace_children``.
+    One line per child: name padded to a common column, then a
+    parenthesized compact summary of the child's manifest filenames
+    and (if any) the leading clause of its hint. Empty list when no
+    workspace children, so callers can ``for line in ...`` without
+    an outer guard.
+    """
+    if not stack.workspace_children:
+        return []
+    out = ["", "Workspace children (depth-2):"]
+    name_width = max(len(c.name) for c in stack.workspace_children)
+    for c in stack.workspace_children:
+        bits: list[str] = []
+        if c.manifest_files:
+            bits.append(", ".join(c.manifest_files))
+        if c.hint:
+            # First clause before "; verify with user" — same compact
+            # treatment used for hint-badge in the HTML summary.
+            bits.append(c.hint.split(";")[0].strip())
+        suffix = f"  ({', '.join(bits)})" if bits else ""
+        out.append(f"  {c.name.ljust(name_width)}{suffix}")
+    return out
+
+
 def _format_unclassified_for_markdown(u: UnclassifiedSubdir) -> str:
     """One subdir's bullet for the Markdown 'Unknown but present' lists.
 
@@ -1029,6 +1056,35 @@ def _unknown_present_markdown(stack: StackProfile) -> list[str]:
             "as source (likely config / data / documentation). Listed compactly "
             "so the high-signal directories above stay visible._",
         ]
+    return out
+
+
+def _workspace_children_markdown(stack: StackProfile) -> list[str]:
+    """The "Workspace children" section for BUILD_PLAN.md.
+
+    v0.8 — short by design: names + hints only. Manifest details and
+    extension counts live in the HTML report and CLI dry-run; this
+    section is meant to be skimmable, not exhaustive. Returns an
+    empty list when there are no workspace children so the section
+    is omitted on classified-only / non-monorepo projects.
+    """
+    if not stack.workspace_children:
+        return []
+    out = [
+        "",
+        "### Workspace children (depth-2)",
+        "",
+        "`adopt` walked one level deeper inside known workspace",
+        "containers (`apps/`, `packages/`, ...) and surfaced these",
+        "child projects. Names + hints only — see the CLI dry-run or",
+        "the `--html` report for full per-child detail.",
+        "",
+    ]
+    for c in stack.workspace_children:
+        if c.hint:
+            out.append(f"- **{c.name}** — *{c.hint}*")
+        else:
+            out.append(f"- **{c.name}**")
     return out
 
 
@@ -1105,6 +1161,9 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str)
     # unclassified to surface — clean classified projects still get
     # the same compact tech-stack section as v0.1.
     body += _unknown_present_markdown(stack)
+    # v0.8: depth-2 workspace children (apps/<child>, packages/<child>,
+    # ...). Short by design — names + hints only. Silent when none.
+    body += _workspace_children_markdown(stack)
     body += [
         "",
         "## Next milestone",
@@ -1473,6 +1532,76 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             unknown_html.append('  </details>')
         unknown_html.append('</section>')
 
+    # ---- Section 4.25: workspace children (v0.8) ----
+    # Depth-2 children of known workspace containers (apps/<child>,
+    # packages/<child>, ...). Reuses the .unc / .unc-body styling
+    # from the unknown-but-present section since the visual shape
+    # is the same — the section title and intro copy are what
+    # distinguish them. Silent when no workspace children exist.
+    workspace_html: list[str] = []
+    if stack.workspace_children:
+        workspace_html = [
+            '<section class="card">',
+            '  <h2>Workspace children</h2>',
+            '  <p class="meta">Depth-2 walk inside known workspace '
+            'containers (<code>apps/</code>, <code>packages/</code>, '
+            '<code>services/</code>, <code>crates/</code>, '
+            '<code>members/</code>, <code>workspaces/</code>). '
+            'Click each to expand. Pure data — adopt\'s primary '
+            'classification is unchanged.</p>',
+        ]
+        for c in stack.workspace_children:
+            wsc_domain = sorted(
+                [e for e in c.notable_extensions if e in DOMAIN_HINTS],
+                key=lambda e: (-c.notable_extensions[e], e)
+            )
+            wsc_generic = sorted(
+                [e for e in c.notable_extensions if e in GENERIC_EXTENSIONS],
+                key=lambda e: (-c.notable_extensions[e], e)
+            )
+            summary_bits: list[str] = []
+            if c.manifest_files:
+                summary_bits.append(
+                    f"manifests: {', '.join(_esc(m) for m in c.manifest_files)}"
+                )
+            for ext in wsc_domain + wsc_generic:
+                summary_bits.append(f"{c.notable_extensions[ext]}{_esc(ext)}")
+            summary = " · ".join(summary_bits) if summary_bits else "(no signals)"
+            workspace_html.append(
+                f'  <details class="unc"><summary>'
+                f'<code class="dirname">{_esc(c.name)}</code> '
+                f'<span class="dim">{summary}</span>'
+                + (
+                    f' <span class="hint-badge">'
+                    f'{_esc(c.hint.split(";")[0])}</span>'
+                    if c.hint else ""
+                )
+                + '</summary>'
+            )
+            workspace_html.append('    <div class="unc-body">')
+            if c.manifest_files:
+                m_str = ", ".join(f"<code>{_esc(m)}</code>" for m in c.manifest_files)
+                workspace_html.append(
+                    f'      <p><strong>Manifest files:</strong> {m_str}</p>'
+                )
+            if wsc_domain or wsc_generic:
+                workspace_html.append('      <p><strong>Source extensions:</strong></p>')
+                workspace_html.append('      <ul>')
+                for ext in wsc_domain + wsc_generic:
+                    count = c.notable_extensions[ext]
+                    workspace_html.append(
+                        f'        <li>{count} <code>{_esc(ext)}</code> file'
+                        f'{"s" if count != 1 else ""}</li>'
+                    )
+                workspace_html.append('      </ul>')
+            if c.hint:
+                workspace_html.append(
+                    f'      <p class="hint">{_esc(c.hint)}</p>'
+                )
+            workspace_html.append('    </div>')
+            workspace_html.append('  </details>')
+        workspace_html.append('</section>')
+
     # ---- Section 4.5: detected issues (v0.2.x failure taxonomy) ----
     # Pure metadata — adopt's classification, plan, and writes are
     # unchanged. The section is silently omitted on clean projects.
@@ -1714,6 +1843,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     out.extend(detection_html)
     out.extend(parts_html)
     out.extend(unknown_html)
+    out.extend(workspace_html)
     out.extend(failures_html)
     out.extend(plan_html)
     out.extend(cta_html)
@@ -2379,6 +2509,10 @@ def run_adopt(args: argparse.Namespace) -> int:
     # stack line and the plan so the user reads them before scanning
     # the file list. Silent when there's nothing to surface.
     for line in _unknown_present_block_dryrun(stack):
+        print(line)
+    # v0.8: workspace children (depth-2). Compact one-line-per-child
+    # summary; silent when no workspace_children present.
+    for line in _workspace_children_block_dryrun(stack):
         print(line)
     print()
     print("Plan:")
