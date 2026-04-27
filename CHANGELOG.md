@@ -9,6 +9,94 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-04-27
+
+**Agent-behavior shaping in the launch prompt.** Two scoped
+prompt-body improvements driven by real-repo testing
+(mentorforge, flow-name-service, norman-handyman-mvp). No new
+flags, no API changes, no detection logic changes — just the
+text agents read.
+
+### Added — three-tier inspection rule
+
+- **New `HOW TO APPROACH THIS REPO` section** sits between the
+  recommended first action and the safety instructions. Scales
+  inspection depth to confidence:
+  - **Low / unclear** — full structured read-through (entry
+    points → system map → inconsistencies)
+  - **Medium** — quick inspection (README + top-level + 1–2
+    main files), then decide whether deeper analysis is
+    needed
+  - **High** — skip the read-through and go directly to the
+    highest-value next task
+- **Why this exists.** Most repos adopt sees land in "medium"
+  confidence. The single-tier rule shipped in v0.11.0 made
+  agents over-prepare on simple cases and under-prepare on
+  hard ones. The three-tier rule lets the agent right-size
+  its own ramp.
+
+### Added — anti-doc-fallback priority rule
+
+- **New `WHAT TO PRIORITIZE` section** in the same
+  between-first-action-and-safety block:
+  > Prefer identifying real risks, inconsistencies, missing
+  > wiring, or unused / incomplete features over surface-level
+  > tasks. Do not default to documentation updates unless the
+  > user explicitly asked for them.
+- **Why this exists.** Real-repo testing showed agents
+  defaulting to "let me update the README" when handed a
+  clear, healthy project — burning the chance to surface
+  actual production bugs (Stripe redirect issues, CORS
+  problems, customer-merge bugs, etc.).
+
+### Fixed — contradictory unclear-project first action
+
+- The unclear-project `RECOMMENDED FIRST ACTION` used to say
+  "Do NOT write code yet. Clarify the project shape first" +
+  "Wait for their answer before proposing any concrete next
+  step" — which directly contradicted the new HOW TO APPROACH
+  rule that tells the agent to do a structured read-through
+  on low confidence. Agents were ignoring the "wait for the
+  user" instruction and inspecting anyway (the right
+  behavior). New wording codifies that:
+  > Do not write code yet. Infer the project shape first.
+  > - Perform a structured read-through of the repository
+  >   (README, main files, routing, configs) to infer the
+  >   system on your own.
+  > - Read any generated docs and the user's project
+  >   description for additional signal.
+  > - Only ask the user for clarification after this
+  >   inspection, and only for specific gaps that cannot be
+  >   determined from the codebase.
+- Other six first-action branches (Full-stack, Smart contract,
+  Mobile, Web3 dApp, Rust, Go) and the generic catch-all are
+  unchanged.
+
+### Validated against
+
+Three real local repos where the prior prompt was producing
+shallow or generic responses:
+
+- **mentorforge** — agent now identifies real risks (Stripe
+  DB mismatch, CORS, auth issues) and pushes back on an
+  inaccurate project summary instead of accepting it
+- **flow-name-service** — agent does deep Cadence + Next.js
+  inspection and finds runtime + logic bugs, not just
+  documentation gaps
+- **norman-handyman-mvp** — agent surfaces production-bug-
+  level issues (Stripe redirect, customer merge logic) in
+  a 3-way Django/Next.js/Expo split
+
+### Tests
+
+10 new tests in `TestAgentPromptBehaviorRules` plus the
+updated unclear-first-action test in `TestAgentLaunchPrompt`
+lock the new wording, the three-tier ordering, the priority
+rule, the anti-doc language, the placement contract
+(FIRST ACTION → HOW TO APPROACH → WHAT TO PRIORITIZE →
+SAFETY), determinism, and the absence of the old
+contradictory phrases. 481/481 tests green.
+
 ## [0.11.0] — 2026-04-27
 
 **Discovered-notes preservation.** `context-kit adopt` gains a
