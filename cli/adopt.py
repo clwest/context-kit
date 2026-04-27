@@ -2066,12 +2066,13 @@ def derive_agent_launch_prompt(
     message to their AI agent (Claude Code, Cursor, Aider, etc.)
     after running ``context-kit adopt``.
 
-    ``inputs`` (optional) carries the two answers the user gave
-    to the adopt prompts. When provided, a USER CONTEXT block
-    surfaces them verbatim so the agent sees both adopt's
-    derived view and the human's framing in one place. Defaults
-    to a placeholder so existing test callers that don't thread
-    inputs still work.
+    ``inputs`` (optional) carries the two answers the user
+    provided during adopt — either via the interactive prompts
+    or the ``--project-summary`` / ``--next-task`` flags. When
+    provided, a USER CONTEXT block surfaces them verbatim so the
+    agent sees both adopt's derived view and the human's framing
+    in one place. Defaults to a placeholder so existing test
+    callers that don't thread inputs still work.
 
     Confidence mirrors ``reality.confidence`` (lowercased) — if
     adopt isn't sure about the project shape, the prompt isn't
@@ -2107,7 +2108,7 @@ def derive_agent_launch_prompt(
         f"confidence)\n"
         f"Reasoning: {project_type.reason}\n"
         "\n"
-        "USER CONTEXT (from the two adopt prompts)\n"
+        "USER CONTEXT (provided during adopt)\n"
         f"- Project (per the user): {user_desc_for_prompt}\n"
         f"- Next task (per the user): {user_next_for_prompt}\n"
         "\n"
