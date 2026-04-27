@@ -867,6 +867,167 @@ def _workspace_stack_pairs(stack: StackProfile) -> list[tuple[str, str]]:
     return out
 
 
+@dataclass
+class StackReality:
+    """Phase 4.1 derived assessment of the project's stack shape.
+
+    Pure summary — no detection, no classification logic. Built from
+    the existing primary classification, the Phase 3 workspace stack
+    summary, and the failure taxonomy. Helps a reader (human or AI
+    session) decide *how much to trust* the primary classification
+    line before making changes.
+    """
+
+    assessment: str  # "Single-stack project" | "Mixed workspace project" | "Unclear project shape"
+    confidence: str  # "High" | "Medium" | "Low"
+    why: str
+    primary: str            # readable primary stack label, recap of _stack_summary
+    workspace_signals: list[str] = field(default_factory=list)
+
+
+def derive_stack_reality(stack: StackProfile,
+                         failures: list[FailureRecord]) -> StackReality:
+    """Apply Phase 4.1 rules and return a ``StackReality``.
+
+    Rules in priority order:
+
+    1. ``stack.language == 'unknown'`` — *Unclear project shape* / Low.
+       Primary detection failed; the reader needs to clarify what's
+       there before adopt's other outputs are useful.
+    2. Workspace-stack summary non-empty — *Mixed workspace project*
+       / Medium. The primary label captures only root tooling; child
+       projects carry their own distinct stacks.
+    3. ``stack.parts`` non-empty (v0.1 split monorepo with recognized
+       subdir names backend/frontend/...) — *Mixed workspace project*
+       / Medium. Same shape, different surfacing.
+    4. ROOT_SIGNAL_OVERRIDE or MISLEADING_CLASSIFICATION fires —
+       *Single-stack project* / Medium with a why that flags the
+       framework underselling.
+    5. Default — *Single-stack project* / High.
+
+    Pure function. No I/O.
+    """
+    primary = _stack_summary(stack)
+    pairs = _workspace_stack_pairs(stack)
+    workspace_signals = sorted({label for _, label in pairs})
+
+    if stack.language == "unknown":
+        signal_subs, data_only_subs = _partition_unclassified(stack)
+        clar_count = len(signal_subs) + len(data_only_subs)
+        if clar_count >= 1:
+            why = (
+                f"No project-defining manifest at root; {clar_count} "
+                f"candidate director{'y' if clar_count == 1 else 'ies'} "
+                f"need{'s' if clar_count == 1 else ''} clarification."
+            )
+        else:
+            why = ("No project-defining manifest at root and no signal "
+                   "directories surfaced.")
+        return StackReality(
+            assessment="Unclear project shape",
+            confidence="Low",
+            why=why,
+            primary=primary,
+            workspace_signals=workspace_signals,
+        )
+
+    if pairs:
+        n_children = len(pairs)
+        sig_str = ", ".join(workspace_signals)
+        why = (
+            f"Root manifest set the primary label, but {n_children} "
+            f"workspace child project{'s' if n_children != 1 else ''} carry "
+            f"their own distinct stack label{'s' if len(workspace_signals) != 1 else ''} "
+            f"({sig_str}) not yet part of primary classification."
+        )
+        return StackReality(
+            assessment="Mixed workspace project",
+            confidence="Medium",
+            why=why,
+            primary=primary,
+            workspace_signals=workspace_signals,
+        )
+
+    if stack.parts:
+        names = sorted(stack.parts.keys())
+        labels = sorted({_lang_label(l) for l in stack.parts.values()})
+        why = (
+            f"Recognized subdirs ({', '.join(names)}) carry distinct "
+            f"stacks ({', '.join(labels)})."
+        )
+        return StackReality(
+            assessment="Mixed workspace project",
+            confidence="Medium",
+            why=why,
+            primary=primary,
+            workspace_signals=workspace_signals,
+        )
+
+    misleading = any(
+        f.failure_type in (
+            FAILURE_ROOT_SIGNAL_OVERRIDE,
+            FAILURE_MISLEADING_CLASSIFICATION,
+        )
+        for f in failures
+    )
+    if misleading:
+        return StackReality(
+            assessment="Single-stack project",
+            confidence="Medium",
+            why=("Root manifest matches a single stack, but a stronger "
+                 "framework signal at root suggests the primary label "
+                 "may undersell the actual stack."),
+            primary=primary,
+            workspace_signals=workspace_signals,
+        )
+    return StackReality(
+        assessment="Single-stack project",
+        confidence="High",
+        why=("Root manifest matches a single stack and no workspace "
+             "containers were found."),
+        primary=primary,
+        workspace_signals=workspace_signals,
+    )
+
+
+def _stack_reality_block_dryrun(reality: StackReality) -> list[str]:
+    """The "Stack reality" derived-summary block for the CLI dry-run.
+
+    Always emitted (every project has a reality assessment). Compact
+    indented bullet list under a header, mirrors the user's spec
+    output format.
+    """
+    out = ["", "Stack reality:"]
+    out.append(f"  - Primary detection: {reality.primary}")
+    if reality.workspace_signals:
+        out.append(
+            f"  - Workspace signals: "
+            f"{', '.join(reality.workspace_signals)}"
+        )
+    out.append(f"  - Assessment: {reality.assessment}")
+    out.append(f"  - Confidence: {reality.confidence}")
+    out.append(f"  - Why: {reality.why}")
+    return out
+
+
+def _stack_reality_markdown(reality: StackReality) -> list[str]:
+    """The "Stack reality" section for Markdown docs (BUILD_PLAN + CLAUDE).
+
+    Always emitted. Bold-bullet format mirrors ``_workspace_stack_markdown``.
+    """
+    out = ["", "### Stack reality", ""]
+    out.append(f"- **Primary detection:** {reality.primary}")
+    if reality.workspace_signals:
+        out.append(
+            f"- **Workspace signals:** "
+            f"{', '.join(reality.workspace_signals)}"
+        )
+    out.append(f"- **Assessment:** {reality.assessment}")
+    out.append(f"- **Confidence:** {reality.confidence}")
+    out.append(f"- **Why:** {reality.why}")
+    return out
+
+
 def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -1028,7 +1189,7 @@ def _unknown_present_block_dryrun(stack: StackProfile) -> list[str]:
         # surfaced via workspace_children (v0.8 dedup) — nothing
         # left for this section to say.
         return []
-    out = ["", "Unknown but present (depth 1):"]
+    out = ["", "Needs clarification (depth 1):"]
     for u in signal:
         out.extend(_format_unclassified_for_dryrun(u))
     if data_only:
@@ -1169,12 +1330,11 @@ def _unknown_present_markdown(stack: StackProfile) -> list[str]:
         return []
     out = [
         "",
-        "### Unknown but present",
+        "### Needs clarification",
         "",
-        "The following directories exist and contain notable files but",
-        "`adopt` does not yet recognize their type. An AI session reading",
-        "this should ask the user what these are before writing code that",
-        "touches them.",
+        "These directories contain files adopt can see, but it cannot",
+        "confidently identify their role yet. Confirm what they are",
+        "before making changes.",
         "",
     ]
     for u in signal:
@@ -1264,12 +1424,19 @@ def _wrap_in_managed_block(content: str) -> str:
     )
 
 
-def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str) -> str:
+def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
+                        *, reality: Optional[StackReality] = None) -> str:
     """The minimum BUILD_PLAN.md a freshly-adopted project needs.
 
     The strengthened first prompt (Step 8 of the wizard) tells agents
     to read this file before writing code, so it has to carry real
     signal even in v0.
+
+    ``reality`` is the v0.8 Phase 4.1 derived assessment. When
+    provided, a "Stack reality" section is rendered below the
+    workspace stack summary. Callers that don't compute reality
+    (older tests, ad-hoc rendering) can omit it and the section
+    is silently skipped.
     """
     body = [
         f"# {title} — Build Plan",
@@ -1295,6 +1462,10 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str)
     # v0.8 Phase 3: derived workspace stack summary. Read-only —
     # primary classification (Tech stack above) is unchanged.
     body += _workspace_stack_markdown(stack)
+    # v0.8 Phase 4.1: stack reality assessment. Always emitted when
+    # reality is provided (run_adopt always supplies one).
+    if reality is not None:
+        body += _stack_reality_markdown(reality)
     # v0.2: visibility-first. Only added when there's something
     # unclassified to surface — clean classified projects still get
     # the same compact tech-stack section as v0.1.
@@ -1383,11 +1554,17 @@ def generate_start_here(inputs: AdoptionInputs, title: str) -> str:
     return frontmatter + "\n" + _wrap_in_managed_block("\n".join(body))
 
 
-def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: str) -> str:
+def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: str,
+                          *, reality: Optional[StackReality] = None) -> str:
     """The managed block we append (or insert) into CLAUDE.md.
 
     Wrapped in markers so re-running ``adopt`` updates these facts in
     place without disturbing surrounding human-written content.
+
+    ``reality`` is the v0.8 Phase 4.1 stack reality assessment. When
+    provided, a "Stack reality" H3 is added inside the managed
+    block alongside the workspace stack summary so the AI session
+    sees the same self-contained assessment that BUILD_PLAN carries.
     """
     lines = [
         START_MARKER,
@@ -1416,6 +1593,10 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
     # the managed block too so the AI session sees per-child stack
     # info in CLAUDE.md without cross-reading BUILD_PLAN.md.
     lines += _workspace_stack_markdown(stack)
+    # v0.8 Phase 4.1: stack reality assessment travels with the
+    # managed block so re-runs refresh it in place.
+    if reality is not None:
+        lines += _stack_reality_markdown(reality)
     if stack.unclassified_subdirs:
         lines += _unknown_present_markdown(stack)
     # v0.8: workspace children get a compact mention in the CLAUDE
@@ -1449,7 +1630,8 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
     return "\n".join(lines)
 
 
-def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title: str) -> str:
+def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title: str,
+                             *, reality: Optional[StackReality] = None) -> str:
     """Full CLAUDE.md when none exists yet.
 
     Mirrors the shape of cli/_starter/root/CLAUDE.md but tighter — we
@@ -1457,7 +1639,7 @@ def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title:
     seen the docs-pattern yet. They'll get the full thing if they
     later run ``context-kit init . --force``.
     """
-    block = generate_claude_block(stack, inputs, title)
+    block = generate_claude_block(stack, inputs, title, reality=reality)
     return "\n".join([
         f"# CLAUDE / AGENTS — {title}",
         "",
@@ -1514,7 +1696,8 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                       inputs: AdoptionInputs,
                       plan: list,
                       write_mode: bool,
-                      failures: Optional[list] = None) -> str:
+                      failures: Optional[list] = None,
+                      reality: Optional[StackReality] = None) -> str:
     """Build the full self-contained HTML report.
 
     Six sections per §21:
@@ -1594,7 +1777,38 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             )
         workspace_stack_html += ['  </ul>', '</section>']
 
-    # ---- Section 4: unknown but present (THE main focus) ----
+    # ---- Section 3.75: stack reality (v0.8 Phase 4.1) ----
+    # Always rendered when reality is provided — every project has
+    # an assessment. Card color reflects confidence: ok / warn / warn
+    # for High / Medium / Low so the reader gets a visual signal of
+    # how much to trust the primary classification line.
+    reality_html: list[str] = []
+    if reality is not None:
+        conf_card = {"High": "card-ok", "Medium": "card-warn",
+                     "Low": "card-warn"}.get(reality.confidence, "card-warn")
+        reality_html = [
+            f'<section class="card {conf_card}">',
+            '  <h2>Stack reality</h2>',
+            '  <ul class="parts">',
+            f'    <li><strong>Primary detection:</strong> '
+            f'{_esc(reality.primary)}</li>',
+        ]
+        if reality.workspace_signals:
+            reality_html.append(
+                f'    <li><strong>Workspace signals:</strong> '
+                f'{_esc(", ".join(reality.workspace_signals))}</li>'
+            )
+        reality_html += [
+            f'    <li><strong>Assessment:</strong> '
+            f'{_esc(reality.assessment)}</li>',
+            f'    <li><strong>Confidence:</strong> '
+            f'{_esc(reality.confidence)}</li>',
+            f'    <li><strong>Why:</strong> {_esc(reality.why)}</li>',
+            '  </ul>',
+            '</section>',
+        ]
+
+    # ---- Section 4: needs clarification (formerly Unknown but present) ----
     # v0.2.x: split into "signal" (manifests / extensions / hints / empty)
     # vs "data-only" (just a file count, no recognized signals). The
     # signal cards render individually; the data-only ones get
@@ -1610,10 +1824,10 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     if signal_subdirs or data_only_subdirs:
         unknown_html = [
             '<section class="card card-warn">',
-            '  <h2>Unknown but present</h2>',
-            '  <p class="meta">Directories adopt found but couldn\'t classify. '
-            'Click each to expand. The hint lines are *suggestions* — '
-            'verify with what you know about the project.</p>',
+            '  <h2>Needs clarification</h2>',
+            '  <p class="meta">These directories contain files adopt can see, '
+            'but it cannot confidently identify their role yet. Confirm what '
+            'they are before making changes. Click each to expand.</p>',
         ]
         for u in signal_subdirs:
             # One <details> block per subdir. Native collapse, no JS.
@@ -2077,6 +2291,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     out.extend(detection_html)
     out.extend(parts_html)
     out.extend(workspace_stack_html)
+    out.extend(reality_html)
     out.extend(unknown_html)
     out.extend(workspace_html)
     out.extend(failures_html)
@@ -2131,6 +2346,8 @@ def plan_files(
     repo: Path,
     stack: StackProfile,
     inputs: AdoptionInputs,
+    *,
+    reality: Optional[StackReality] = None,
 ) -> list[PlannedFile]:
     """Build the list of files we'd create / augment / skip, without writing.
 
@@ -2143,13 +2360,17 @@ def plan_files(
       ``_plan_managed_doc`` — CREATE if absent, AUGMENT if our markers
       already exist, SKIP if the file exists without markers (don't
       clobber hand-written content).
+
+    ``reality`` is the v0.8 Phase 4.1 derived assessment. When
+    provided, BUILD_PLAN.md and CLAUDE.md inherit it so the same
+    self-contained Stack reality block lands in every output path.
     """
     title = derive_project_title(repo)
     plan: list[PlannedFile] = []
 
     plan.append(_plan_managed_doc(
         repo / "docs" / "BUILD_PLAN.md",
-        generate_build_plan(stack, inputs, title),
+        generate_build_plan(stack, inputs, title, reality=reality),
     ))
     # v0 uses a fixed filename (``PROJECT_WHAT_IT_IS.md``) rather than
     # the slug-based ``<APP>_WHAT_IT_IS.md`` the rest of context-kit
@@ -2170,13 +2391,13 @@ def plan_files(
     if claude_path.is_file():
         plan.append(PlannedFile(
             path=claude_path,
-            content=generate_claude_block(stack, inputs, title),
+            content=generate_claude_block(stack, inputs, title, reality=reality),
             kind="augment",
         ))
     else:
         plan.append(PlannedFile(
             path=claude_path,
-            content=generate_claude_md_fresh(stack, inputs, title),
+            content=generate_claude_md_fresh(stack, inputs, title, reality=reality),
             kind="create",
         ))
     return plan
@@ -2722,7 +2943,17 @@ def run_adopt(args: argparse.Namespace) -> int:
         description=getattr(args, "description", None),
         next_step=getattr(args, "next_step", None),
     )
-    plan = plan_files(repo, stack, inputs)
+
+    # v0.8 Phase 4.1 — two-pass failure analysis. Pass 1 derives
+    # the failures set with an empty plan so the StackReality
+    # assessment (which depends on ROOT_SIGNAL_OVERRIDE /
+    # MISLEADING_CLASSIFICATION but never on plan content) can be
+    # built BEFORE plan_files. Pass 2 re-runs after plan_files so
+    # IDEMPOTENCY_RISK (the only plan-dependent detector) surfaces
+    # in the final dry-run / HTML output.
+    prelim_failures = analyze_failures(repo, stack, [])
+    reality = derive_stack_reality(stack, prelim_failures)
+    plan = plan_files(repo, stack, inputs, reality=reality)
 
     write = bool(getattr(args, "write", False))
     actions = apply_plan(plan, dry_run=not write)
@@ -2739,6 +2970,11 @@ def run_adopt(args: argparse.Namespace) -> int:
     # under the primary detection line so the AI session sees them
     # together. Silent when no labelled children.
     for line in _workspace_stack_block_dryrun(stack):
+        print(line)
+    # v0.8 Phase 4.1: derived stack reality assessment. Reality
+    # was computed once above (with prelim failures) and threaded
+    # through plan_files so BUILD_PLAN / CLAUDE see the same block.
+    for line in _stack_reality_block_dryrun(reality):
         print(line)
     # v0.2: visibility-first. Surface unclassified subdirs between the
     # stack line and the plan so the user reads them before scanning
@@ -2788,7 +3024,8 @@ def run_adopt(args: argparse.Namespace) -> int:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(
                 render_adopt_html(repo, stack, inputs, plan,
-                                  write_mode=write, failures=failures),
+                                  write_mode=write, failures=failures,
+                                  reality=reality),
                 encoding="utf-8",
             )
         except OSError as exc:

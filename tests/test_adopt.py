@@ -613,7 +613,7 @@ class TestVisibilityFirstScan(unittest.TestCase):
             AdoptionInputs(project_description="x", next_step="y"),
             "Test",
         )
-        self.assertIn("Unknown but present", bp)
+        self.assertIn("Needs clarification", bp)
         self.assertIn("contracts/", bp)
         self.assertIn(".sol", bp)
         self.assertIn("Solidity", bp)
@@ -632,7 +632,7 @@ class TestVisibilityFirstScan(unittest.TestCase):
             AdoptionInputs(project_description="x", next_step="y"),
             "Test",
         )
-        self.assertIn("Unknown but present", block)
+        self.assertIn("Needs clarification", block)
         self.assertIn("contracts/", block)
 
     def test_no_unknown_section_when_unclassified_empty(self):
@@ -651,13 +651,13 @@ class TestVisibilityFirstScan(unittest.TestCase):
             AdoptionInputs(project_description="x", next_step="y"),
             "Test",
         )
-        self.assertNotIn("Unknown but present", bp)
+        self.assertNotIn("Needs clarification", bp)
         block = generate_claude_block(
             stack,
             AdoptionInputs(project_description="x", next_step="y"),
             "Test",
         )
-        self.assertNotIn("Unknown but present", block)
+        self.assertNotIn("Needs clarification", block)
 
 
 # ---------------------------------------------------------------------------
@@ -693,7 +693,7 @@ class TestAdoptHtmlReport(unittest.TestCase):
     - CLI dry-run stdout is byte-equal with or without --html.
     - HTML escapes user-supplied content.
     - Re-runs against the same project overwrite the same file.
-    - The "Unknown but present" section is rendered as the visual focus
+    - The "Needs clarification" section is rendered as the visual focus
       when there's anything to surface, and silently omitted otherwise.
     """
 
@@ -847,7 +847,7 @@ class TestAdoptHtmlReport(unittest.TestCase):
 
     def test_html_omits_unknown_but_present_when_classifier_covers_everything(self):
         # Clean classified projects (no leftover subdirs) must NOT have
-        # the "Unknown but present" section. The visual focus is dynamic;
+        # the "Needs clarification" section. The visual focus is dynamic;
         # silent on tidy projects so it doesn't add noise.
         with tempfile.TemporaryDirectory() as clean:
             clean_path = Path(clean)
@@ -862,7 +862,7 @@ class TestAdoptHtmlReport(unittest.TestCase):
             explicit = clean_path / "report.html"
             run_adopt(_ns_html(clean_path, html_out=explicit))
             body = explicit.read_text(encoding="utf-8")
-            self.assertNotIn("Unknown but present", body)
+            self.assertNotIn("Needs clarification", body)
             # And the classified parts card IS present.
             self.assertIn("Classified parts", body)
 
@@ -2072,7 +2072,7 @@ class TestWorkspaceChildren(unittest.TestCase):
 class TestWorkspaceChildrenRendering(unittest.TestCase):
     """v0.8 — workspace_children must surface in CLI dry-run, HTML
     report, and BUILD_PLAN markdown. Renderers are additive — none
-    of the v0.7 sections (Detection, Unknown but present, Plan,
+    of the v0.7 sections (Detection, Needs clarification, Plan,
     Detected issues) change.
     """
 
@@ -2129,7 +2129,7 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
         self.assertIn("Solidity", out,
                       "forge child's Solidity hint should appear in the "
                       "CLI dry-run line")
-        # The section sits between "Unknown but present" (no
+        # The section sits between "Needs clarification" (no
         # depth-1 unclassified subdirs in this fixture) and "Plan:".
         plan_idx = out.index("Plan:")
         ws_idx = out.index("Workspace children (2):")
@@ -2203,7 +2203,7 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
         # Slice just the workspace section — assertions about
         # "skimmable, no overwhelming detail" should look at this
         # section only, not at unrelated hint text from the
-        # "Unknown but present" section above.
+        # "Needs clarification" section above.
         ws_start = md.index("### Workspace children (2)")
         ws_end = md.find("\n## ", ws_start)
         ws_section = md[ws_start:ws_end] if ws_end != -1 else md[ws_start:]
@@ -2270,7 +2270,7 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
 
     def test_fns_monorepo_dedup_apps_not_in_unknown_but_present(self):
         # The headline UX bug from the v0.8 dogfood: apps/ rendered
-        # in BOTH "Unknown but present" (with truncated/aggregated
+        # in BOTH "Needs clarification" (with truncated/aggregated
         # counts) AND "Workspace children" (with per-child counts).
         # After v0.8 polish, apps/ MUST disappear from unknown-but-
         # present whenever any apps/<child> appears in
@@ -2287,10 +2287,10 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
             run_adopt(_ns(self.repo, write=False,
                           description="demo", next_step="ship v1"))
         out = buf.getvalue()
-        # No "Unknown but present" header at all in this fixture
+        # No "Needs clarification" header at all in this fixture
         # (apps/ was the only depth-1 unclassified subdir, now
         # suppressed).
-        self.assertNotIn("Unknown but present", out,
+        self.assertNotIn("Needs clarification", out,
                          f"apps/ should be suppressed since its children "
                          f"are surfaced via workspace_children:\n{out}")
         # Workspace children section still present, both children
@@ -2303,7 +2303,7 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
         plan = plan_files(self.repo, stack, self.inputs)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
-        self.assertNotIn("<h2>Unknown but present</h2>", html,
+        self.assertNotIn("<h2>Needs clarification</h2>", html,
                          "apps/ container must be suppressed from "
                          "Unknown-but-present in HTML when its "
                          "children render in Workspace children")
@@ -2313,7 +2313,7 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
 
         # BUILD_PLAN.md.
         md = generate_build_plan(stack, self.inputs, "Test")
-        self.assertNotIn("Unknown but present", md,
+        self.assertNotIn("Needs clarification", md,
                          "apps/ must be suppressed from Unknown-but-"
                          "present in BUILD_PLAN.md as well")
         self.assertIn("### Workspace children (2)", md)
@@ -2343,8 +2343,8 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
         # Find the unknown-but-present section if it exists.
-        if "<h2>Unknown but present</h2>" in html:
-            ubp_start = html.index("<h2>Unknown but present</h2>")
+        if "<h2>Needs clarification</h2>" in html:
+            ubp_start = html.index("<h2>Needs clarification</h2>")
             ubp_end = html.find("</section>", ubp_start)
             ubp = html[ubp_start:ubp_end]
             self.assertNotIn(">packages/<", ubp,
@@ -2681,7 +2681,7 @@ class TestUnknownButPresentDirNameVisible(unittest.TestCase):
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
         # Section present.
-        self.assertIn("<h2>Unknown but present</h2>", html)
+        self.assertIn("<h2>Needs clarification</h2>", html)
         # Directory name appears as a dir-name span (block header
         # treatment), not inline as a grey code dirname.
         self.assertIn('<span class="dir-name">server/</span>', html,
@@ -2729,7 +2729,7 @@ class TestUnknownButPresentDirNameVisible(unittest.TestCase):
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
         # No code.dirname inside an Unknown-but-present <details>.
-        m = re.search(r'<h2>Unknown but present</h2>.*?</section>',
+        m = re.search(r'<h2>Needs clarification</h2>.*?</section>',
                       html, re.DOTALL)
         if m:
             self.assertNotIn('<code class="dirname">', m.group(0),
@@ -3008,6 +3008,197 @@ class TestWorkspaceStackSummary(unittest.TestCase):
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
         self.assertIn('<p class="lede">JavaScript / Node.js</p>', html)
+
+
+class TestStackRealityCheck(unittest.TestCase):
+    """v0.8 Phase 4.1 — derived stack reality assessment.
+
+    Checks the assessment / confidence categorization for the four
+    user-spec scenarios plus the "Needs clarification" rename.
+    Also verifies the section surfaces in CLI, HTML, BUILD_PLAN,
+    and CLAUDE managed block.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run_cli(self):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        return buf.getvalue()
+
+    def _build_fns_fixture(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+    # ---- assessment categorization ----------------------------------
+
+    def test_fns_monorepo_assessment_is_mixed_workspace_project(self):
+        # Spec example: primary=JS + workspace=Solidity+Next.js
+        # → Mixed workspace project / Medium.
+        self._build_fns_fixture()
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        self.assertEqual(reality.assessment, "Mixed workspace project")
+        self.assertEqual(reality.confidence, "Medium")
+        self.assertIn("Solidity / EVM smart contracts", reality.workspace_signals)
+        self.assertIn("Next.js / React web app", reality.workspace_signals)
+        self.assertIn("distinct stack", reality.why)
+
+    def test_plain_python_project_assessment_is_single_stack_high(self):
+        # Spec example: primary=Python, no workspace children.
+        (self.repo / "pyproject.toml").write_text("# py\n", encoding="utf-8")
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "main.py").write_text("# py\n", encoding="utf-8")
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        self.assertEqual(reality.assessment, "Single-stack project")
+        self.assertEqual(reality.confidence, "High")
+        self.assertEqual(reality.workspace_signals, [])
+
+    def test_plain_js_project_assessment_is_single_stack_high(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "main.js").write_text("// js\n", encoding="utf-8")
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        self.assertEqual(reality.assessment, "Single-stack project")
+        self.assertEqual(reality.confidence, "High")
+
+    def test_unknown_with_clarification_dirs_is_unclear_low(self):
+        # Spec example: primary unknown + clarification dirs
+        # → Unclear project shape / Low.
+        (self.repo / "wrapper").mkdir()
+        (self.repo / "wrapper" / "src").mkdir()
+        (self.repo / "wrapper" / "src" / "lib.rs").write_text("// rs\n", encoding="utf-8")
+        (self.repo / "extras").mkdir()
+        (self.repo / "extras" / "data.json").write_text("{}", encoding="utf-8")
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        self.assertEqual(reality.assessment, "Unclear project shape")
+        self.assertEqual(reality.confidence, "Low")
+        self.assertIn("candidate", reality.why)
+
+    def test_misleading_classification_drops_single_stack_to_medium(self):
+        # Hardhat project — root has package.json + hardhat.config.ts.
+        # MISLEADING_CLASSIFICATION fires; reality should be
+        # Single-stack / Medium with a why that flags the gap.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "hardhat.config.ts").write_text("// hh\n", encoding="utf-8")
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        self.assertEqual(reality.assessment, "Single-stack project")
+        self.assertEqual(reality.confidence, "Medium")
+        self.assertIn("undersell", reality.why)
+
+    # ---- surface in all four output paths ---------------------------
+
+    def test_stack_reality_surfaces_in_all_outputs(self):
+        self._build_fns_fixture()
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+
+        out = self._run_cli()
+        self.assertIn("Stack reality:", out)
+        self.assertIn("- Primary detection:", out)
+        self.assertIn("- Workspace signals:", out)
+        self.assertIn("- Assessment: Mixed workspace project", out)
+        self.assertIn("- Confidence: Medium", out)
+        self.assertIn("- Why:", out)
+
+        plan = plan_files(self.repo, stack, self.inputs, reality=reality)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 reality=reality)
+        self.assertIn("<h2>Stack reality</h2>", html)
+        self.assertIn("<strong>Primary detection:</strong>", html)
+        self.assertIn("<strong>Workspace signals:</strong>", html)
+        self.assertIn("<strong>Assessment:</strong> Mixed workspace project", html)
+        self.assertIn("<strong>Confidence:</strong> Medium", html)
+        self.assertIn("<strong>Why:</strong>", html)
+
+        md = generate_build_plan(stack, self.inputs, "Test", reality=reality)
+        self.assertIn("### Stack reality", md)
+        self.assertIn("**Primary detection:**", md)
+        self.assertIn("**Assessment:** Mixed workspace project", md)
+        self.assertIn("**Confidence:** Medium", md)
+
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      reality=reality)
+        self.assertIn("### Stack reality", block)
+        self.assertIn("**Assessment:** Mixed workspace project", block)
+        self.assertIn(START_MARKER, block)
+        self.assertIn(END_MARKER, block)
+
+    # ---- "Needs clarification" rename in user-facing outputs --------
+
+    def test_needs_clarification_renamed_in_all_outputs(self):
+        # Use a fixture that produces a Needs-clarification entry
+        # across CLI / HTML / BUILD_PLAN / CLAUDE.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "scripts").mkdir()
+        (self.repo / "scripts" / "Deploy.s.sol").write_text(
+            "// sol\n", encoding="utf-8")
+
+        out = self._run_cli()
+        self.assertIn("Needs clarification (depth 1):", out)
+        self.assertNotIn("Unknown but present", out)
+
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        plan = plan_files(self.repo, stack, self.inputs, reality=reality)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 reality=reality)
+        self.assertIn("<h2>Needs clarification</h2>", html)
+        self.assertNotIn("<h2>Unknown but present</h2>", html)
+        self.assertIn("Confirm what they are before making changes", html)
+
+        md = generate_build_plan(stack, self.inputs, "Test", reality=reality)
+        self.assertIn("### Needs clarification", md)
+        self.assertNotIn("### Unknown but present", md)
+
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      reality=reality)
+        self.assertIn("### Needs clarification", block)
+        self.assertNotIn("### Unknown but present", block)
 
 
 if __name__ == "__main__":
