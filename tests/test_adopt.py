@@ -5043,6 +5043,34 @@ class TestAgentLaunchPrompt(unittest.TestCase):
         self.assertIn("WHAT THIS PROJECT APPEARS TO BE", out)
         self.assertIn("SAFETY INSTRUCTIONS", out)
 
+    # ---- Pre-write safety: prompt works without generated docs ----
+
+    def test_safety_instructions_handle_missing_generated_docs(self):
+        # v0.10.x — real-world testing on contract-concierge
+        # showed the agent reported BUILD_PLAN.md / PROJECT_WHAT_
+        # IT_IS.md / CLAUDE.md as missing because adopt --html
+        # without --write doesn't create them. The prompt's
+        # safety instructions now handle both cases (docs exist
+        # vs docs not yet written) and explicitly tell the agent
+        # not to treat the missing docs as an error.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        _, _, _, _, prompt = self._derive_full_chain()
+        text = prompt.prompt_text
+        # Conditional read instruction (both branches).
+        self.assertIn("If generated docs exist", text)
+        self.assertIn("If they do not exist yet", text)
+        # Names the fallback sources to read.
+        self.assertIn("README", text)
+        self.assertIn("package/manifests", text)
+        # The "do not treat that as an error" line is present.
+        self.assertIn("do not treat that as an error", text)
+        self.assertIn("propose the first safe task", text)
+        # Old "Read all generated docs" wording (which assumed
+        # docs always exist) must be gone — defense against
+        # re-introduction.
+        self.assertNotIn("Read all generated docs (BUILD_PLAN.md", text)
+
 
 class TestSplitMonorepoFullStackProjectType(unittest.TestCase):
     """v0.10.x — close the v0.1 split-monorepo gap in
