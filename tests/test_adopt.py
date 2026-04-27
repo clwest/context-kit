@@ -5712,5 +5712,268 @@ class TestStreamlinedPromptFlow(unittest.TestCase):
         self.assertIn("non-interactive next task", out)
 
 
+class TestDiscoveredNotes(unittest.TestCase):
+    """v0.10.x — `--notes TEXT` preserves discovered context.
+
+    Locks the trust-preservation contract: when a user passes
+    findings from a prior dry-run / inspection pass, those notes
+    must surface verbatim in the Agent Launch Prompt and in
+    every generated doc that backs the launch flow. Section
+    must NOT appear at all when `--notes` is omitted (no empty
+    headings cluttering the output).
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        # A minimal recognized stack so adopt has something to
+        # describe; details don't matter for the notes contract.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _ns_with_notes(self, *, write: bool, notes: str | None) -> argparse.Namespace:
+        return argparse.Namespace(
+            command="adopt",
+            path=str(self.repo),
+            write=write,
+            project_summary="Demo project for notes tests",
+            next_task="Verify notes flow end-to-end",
+            notes=notes,
+        )
+
+    def _capture_dry_run(self, ns: argparse.Namespace) -> str:
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(ns)
+        return buf.getvalue()
+
+    # ---- 1. argparse: --notes is wired up ----
+
+    def test_notes_flag_present_in_parser(self):
+        from context_kit import build_parser
+        parser = build_parser()
+        args = parser.parse_args([
+            "adopt", str(self.repo),
+            "--project-summary", "x",
+            "--next-task", "y",
+            "--notes", "found a port collision in start.sh",
+        ])
+        self.assertEqual(args.notes,
+                         "found a port collision in start.sh")
+
+    def test_notes_flag_default_is_none_when_omitted(self):
+        # When --notes is not passed, argparse should leave the
+        # attribute at None so collect_inputs can fall back to "".
+        from context_kit import build_parser
+        parser = build_parser()
+        args = parser.parse_args([
+            "adopt", str(self.repo),
+            "--project-summary", "x",
+            "--next-task", "y",
+        ])
+        self.assertIsNone(args.notes)
+
+    def test_notes_flag_in_help_text(self):
+        from context_kit import build_parser
+        parser = build_parser()
+        # adopt is a subparser; format its own help.
+        help_text = ""
+        for action in parser._actions:  # type: ignore[attr-defined]
+            if hasattr(action, "choices") and action.choices:
+                adopt_parser = action.choices.get("adopt")
+                if adopt_parser is not None:
+                    help_text = adopt_parser.format_help()
+                    break
+        self.assertIn("--notes", help_text,
+                      "adopt --help must list --notes")
+
+    # ---- 2. Agent Launch Prompt (dry-run) shows notes ----
+
+    def test_dry_run_agent_prompt_includes_notes_section(self):
+        ns = self._ns_with_notes(
+            write=False,
+            notes="Backend uses uvicorn on :8002; frontend on :5174.",
+        )
+        out = self._capture_dry_run(ns)
+        self.assertIn("DISCOVERED NOTES / CONTEXT", out)
+        self.assertIn(
+            "The user provided these notes from prior "
+            "inspection or context:",
+            out,
+        )
+        self.assertIn(
+            "- Backend uses uvicorn on :8002; "
+            "frontend on :5174.",
+            out,
+        )
+
+    def test_dry_run_agent_prompt_omits_section_when_no_notes(self):
+        ns = self._ns_with_notes(write=False, notes=None)
+        out = self._capture_dry_run(ns)
+        self.assertNotIn("DISCOVERED NOTES", out,
+                         "no notes => no DISCOVERED NOTES heading")
+        self.assertNotIn(
+            "prior inspection or context",
+            out,
+            "no notes => no prelude line either",
+        )
+
+    def test_dry_run_agent_prompt_omits_section_when_notes_whitespace(self):
+        # Whitespace-only notes count as "no notes" — the user
+        # didn't actually provide anything.
+        ns = self._ns_with_notes(write=False, notes="   \n  \n")
+        out = self._capture_dry_run(ns)
+        self.assertNotIn("DISCOVERED NOTES", out)
+
+    # ---- 3. Generated docs (--write) preserve notes ----
+
+    def test_build_plan_includes_notes(self):
+        ns = self._ns_with_notes(
+            write=True,
+            notes="Smoke test from .venv hits /api/health.",
+        )
+        self._capture_dry_run(ns)
+        text = (self.repo / "docs" / "BUILD_PLAN.md").read_text(encoding="utf-8")
+        self.assertIn("## Discovered notes", text)
+        self.assertIn(
+            "The user provided these notes from prior "
+            "inspection or context:",
+            text,
+        )
+        self.assertIn(
+            "- Smoke test from .venv hits /api/health.",
+            text,
+        )
+
+    def test_start_here_includes_notes(self):
+        ns = self._ns_with_notes(
+            write=True,
+            notes="Demo login: demo@example.dev / demo123",
+        )
+        self._capture_dry_run(ns)
+        text = (self.repo / "00-START-NEXT-SESSION.md").read_text(encoding="utf-8")
+        self.assertIn("## Discovered notes", text)
+        self.assertIn(
+            "- Demo login: demo@example.dev / demo123",
+            text,
+        )
+
+    def test_claude_block_includes_notes(self):
+        ns = self._ns_with_notes(
+            write=True,
+            notes="Render config under render.yaml uses free tier.",
+        )
+        self._capture_dry_run(ns)
+        text = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        # Section lives inside the adopt-managed block so re-runs
+        # refresh in place — verify both heading and content.
+        self.assertIn("### Discovered notes", text)
+        self.assertIn(
+            "- Render config under render.yaml uses free tier.",
+            text,
+        )
+        # Sanity: stays inside the managed markers (so subsequent
+        # --write passes don't double-write the section).
+        block_start = text.index(START_MARKER)
+        block_end = text.index(END_MARKER)
+        notes_idx = text.index("### Discovered notes")
+        self.assertGreater(notes_idx, block_start)
+        self.assertLess(notes_idx, block_end)
+
+    # ---- 4. Omitted notes => no empty sections anywhere ----
+
+    def test_omitted_notes_produce_no_section_in_any_doc(self):
+        ns = self._ns_with_notes(write=True, notes=None)
+        self._capture_dry_run(ns)
+        for relpath, label in [
+            ("docs/BUILD_PLAN.md", "BUILD_PLAN"),
+            ("00-START-NEXT-SESSION.md", "00-START-NEXT-SESSION"),
+            ("CLAUDE.md", "CLAUDE.md"),
+        ]:
+            text = (self.repo / relpath).read_text(encoding="utf-8")
+            self.assertNotIn(
+                "Discovered notes", text,
+                f"{label}: no notes => no 'Discovered notes' heading",
+            )
+            self.assertNotIn(
+                "prior inspection or context", text,
+                f"{label}: no notes => no notes prelude either",
+            )
+        # docs/PROJECT_WHAT_IT_IS.md should also be clean.
+        what_it_is = (self.repo / "docs" / "PROJECT_WHAT_IT_IS.md").read_text(encoding="utf-8")
+        self.assertNotIn("Discovered notes", what_it_is)
+
+    # ---- 5. Multiline notes preserve line breaks ----
+
+    def test_multiline_notes_preserve_line_breaks_in_agent_prompt(self):
+        multiline = (
+            "Port collision: backend wants :8000 but redis dev "
+            "uses :8000 too.\n"
+            "Workaround: export PORT=8002 before start.sh.\n"
+            "TODO: codify in render.yaml."
+        )
+        ns = self._ns_with_notes(write=False, notes=multiline)
+        out = self._capture_dry_run(ns)
+        # First line gets the bullet prefix.
+        self.assertIn(
+            "- Port collision: backend wants :8000 but redis "
+            "dev uses :8000 too.",
+            out,
+        )
+        # Subsequent lines indent under the bullet (markdown
+        # continuation) and the literal newlines must survive.
+        self.assertIn(
+            "  Workaround: export PORT=8002 before start.sh.",
+            out,
+        )
+        self.assertIn(
+            "  TODO: codify in render.yaml.",
+            out,
+        )
+
+    def test_multiline_notes_preserve_line_breaks_in_all_docs(self):
+        multiline = "First line of notes.\nSecond line.\nThird line."
+        ns = self._ns_with_notes(write=True, notes=multiline)
+        self._capture_dry_run(ns)
+        for relpath in [
+            "docs/BUILD_PLAN.md",
+            "00-START-NEXT-SESSION.md",
+            "CLAUDE.md",
+        ]:
+            text = (self.repo / relpath).read_text(encoding="utf-8")
+            self.assertIn("- First line of notes.", text,
+                          f"{relpath}: bullet on first line")
+            self.assertIn("  Second line.", text,
+                          f"{relpath}: continuation indented")
+            self.assertIn("  Third line.", text,
+                          f"{relpath}: third continuation indented")
+
+    # ---- 6. Re-running --write refreshes notes inside markers ----
+
+    def test_rerunning_write_refreshes_notes_in_managed_block(self):
+        # Ship 1: initial notes.
+        self._capture_dry_run(self._ns_with_notes(
+            write=True, notes="Initial finding from probe pass."
+        ))
+        first = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("Initial finding from probe pass.", first)
+
+        # Ship 2: same project, refined notes — managed block
+        # refreshes in place, no duplication.
+        self._capture_dry_run(self._ns_with_notes(
+            write=True, notes="Refined finding after deeper probe."
+        ))
+        second = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("Refined finding after deeper probe.", second)
+        self.assertNotIn("Initial finding from probe pass.", second,
+                         "managed block must replace stale notes")
+        # Exactly one ### Discovered notes heading in the file.
+        self.assertEqual(second.count("### Discovered notes"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

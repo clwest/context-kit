@@ -167,10 +167,21 @@ class WorkspaceChild:
 
 @dataclass
 class AdoptionInputs:
-    """The two answers we collect from the user."""
+    """The user-provided context we collect during adopt.
+
+    ``project_description`` and ``next_step`` are the two
+    interactive prompts (also settable via
+    ``--project-summary`` / ``--next-task``). ``notes`` is a
+    flag-only addition (``--notes``) for findings the user
+    already discovered during a prior dry-run / probe pass —
+    they're preserved verbatim in the Agent Launch Prompt and
+    every generated doc so trust isn't lost when the user later
+    runs ``--write`` with a refined summary.
+    """
 
     project_description: str
     next_step: str
+    notes: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -2052,6 +2063,31 @@ def _agent_first_action_for(project_type: ProjectType,
     )
 
 
+def _format_notes_block(notes: str) -> str:
+    """Render user-supplied notes as a single bullet block.
+
+    Single-line notes become ``"- {line}"``. Multi-line notes
+    keep their line breaks: the first line gets the ``"- "``
+    prefix and subsequent lines are indented two spaces so they
+    render as a continuation of the same bullet in markdown
+    while still reading naturally in plain text. Used by the
+    Agent Launch Prompt and the three doc generators that
+    surface notes.
+
+    Returns the empty string when ``notes`` is empty or
+    whitespace-only — callers use that to decide whether to
+    render the notes section at all.
+    """
+    text = notes.rstrip()
+    if not text.strip():
+        return ""
+    lines = text.splitlines() or [text]
+    if len(lines) == 1:
+        return f"- {lines[0]}"
+    indented = "\n".join(f"  {line}" for line in lines[1:])
+    return f"- {lines[0]}\n{indented}"
+
+
 def derive_agent_launch_prompt(
     stack: StackProfile,
     reality: StackReality,
@@ -2099,6 +2135,21 @@ def derive_agent_launch_prompt(
         inputs.next_step.strip() if inputs else ""
     ) or placeholder
 
+    # DISCOVERED NOTES / CONTEXT — opt-in (--notes flag).
+    # Surfaces verbatim findings the user gathered during a
+    # prior dry-run / probe pass so the agent doesn't lose them
+    # when the user later runs --write. Section is omitted
+    # entirely when notes are empty.
+    notes_text = inputs.notes if inputs else ""
+    notes_block = _format_notes_block(notes_text)
+    notes_section = (
+        "DISCOVERED NOTES / CONTEXT\n"
+        "The user provided these notes from prior inspection "
+        "or context:\n"
+        f"{notes_block}\n"
+        "\n"
+    ) if notes_block else ""
+
     prompt_text = (
         "You are working in a project that context-kit just "
         "adopted. Before writing any code, do the following.\n"
@@ -2112,6 +2163,7 @@ def derive_agent_launch_prompt(
         f"- Project (per the user): {user_desc_for_prompt}\n"
         f"- Next task (per the user): {user_next_for_prompt}\n"
         "\n"
+        f"{notes_section}"
         "PRIMARY DETECTION\n"
         f"{reality.primary}\n"
         "\n"
@@ -2671,6 +2723,24 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
         "",
         inputs.project_description.strip() or "[adopt: please describe]",
         "",
+    ]
+    # v0.10.x — Discovered notes (opt-in via --notes). Sits
+    # between "What this project is" and "Tech stack" so a
+    # reader meets the user's own framing before the
+    # auto-detected scaffolding. Section is omitted when
+    # notes are empty.
+    notes_block = _format_notes_block(inputs.notes)
+    if notes_block:
+        body += [
+            "## Discovered notes",
+            "",
+            "The user provided these notes from prior inspection "
+            "or context:",
+            "",
+            notes_block,
+            "",
+        ]
+    body += [
         "## Tech stack",
         "",
     ]
@@ -2795,6 +2865,23 @@ def generate_start_here(inputs: AdoptionInputs, title: str,
         "",
         inputs.next_step.strip() or "[adopt: please describe]",
         "",
+    ]
+    # v0.10.x — Discovered notes (opt-in via --notes). Sits
+    # between "What's next" and "How to start the session" so
+    # the agent reads the user's own findings before following
+    # the start-here checklist.
+    notes_block = _format_notes_block(inputs.notes)
+    if notes_block:
+        body += [
+            "## Discovered notes",
+            "",
+            "The user provided these notes from prior inspection "
+            "or context:",
+            "",
+            notes_block,
+            "",
+        ]
+    body += [
         "## How to start the session",
         "",
         "1. Read `docs/BUILD_PLAN.md` — confirm the stack matches reality.",
@@ -2881,6 +2968,24 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
         f"- **What this project is:** {inputs.project_description.strip() or '[adopt: please describe]'}",
         f"- **What's next:** {inputs.next_step.strip() or '[adopt: please describe]'}",
         "",
+    ]
+    # v0.10.x — Discovered notes (opt-in via --notes). Inside
+    # the managed block so re-running adopt --write refreshes
+    # them in place (the trust-preservation goal: a refined
+    # --project-summary doesn't blow away findings from the
+    # earlier dry-run pass).
+    notes_block = _format_notes_block(inputs.notes)
+    if notes_block:
+        lines += [
+            "### Discovered notes",
+            "",
+            "The user provided these notes from prior inspection "
+            "or context:",
+            "",
+            notes_block,
+            "",
+        ]
+    lines += [
         "### Rule for this session",
         "",
         "- Always read `docs/BUILD_PLAN.md` before choosing a stack or writing",
@@ -3994,6 +4099,7 @@ def collect_inputs(
     prompt_fn: Optional[Callable[[str], str]] = None,
     description: Optional[str] = None,
     next_step: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> AdoptionInputs:
     """Ask the two questions exactly once each.
 
@@ -4005,6 +4111,11 @@ def collect_inputs(
     previews). Callers that already have the answers (CLI flags
     ``--project-summary`` / ``--next-task``, tests, the wizard)
     pass them as overrides and no prompt fires.
+
+    ``notes`` (v0.10.x ``--notes`` flag) is opt-in and never
+    prompted — when omitted, the resulting ``AdoptionInputs.notes``
+    is the empty string and downstream renderers omit the
+    notes section entirely.
 
     ``prompt_fn`` defaults to ``builtins.input`` resolved at call
     time (NOT capture-at-import) so tests can monkey-patch
@@ -4023,6 +4134,7 @@ def collect_inputs(
     return AdoptionInputs(
         project_description=description,
         next_step=next_step,
+        notes=(notes or ""),
     )
 
 
@@ -4455,9 +4567,14 @@ def run_adopt(args: argparse.Namespace) -> int:
         getattr(args, "next_task", None)
         or getattr(args, "next_step", None)
     )
+    # v0.10.x — --notes is flag-only (never prompted). When
+    # absent, the resulting inputs.notes is "" and every
+    # downstream renderer omits the notes section entirely.
+    notes_override = getattr(args, "notes", None)
     inputs = collect_inputs(
         description=desc_override,
         next_step=next_override,
+        notes=notes_override,
     )
 
     # v0.8 Phase 4.1 — two-pass failure analysis. Pass 1 derives

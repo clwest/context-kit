@@ -332,6 +332,24 @@ def build_parser() -> argparse.ArgumentParser:
             "the CLI / HTML preview."
         ),
     )
+    adopt.add_argument(
+        "--notes",
+        dest="notes",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "Discovered notes / context from a prior dry-run or "
+            "inspection pass. Flag-only (never prompted). When "
+            "provided, the notes are preserved verbatim under a "
+            "'DISCOVERED NOTES / CONTEXT' section in the Agent "
+            "Launch Prompt and a 'Discovered notes' section in "
+            "BUILD_PLAN.md, 00-START-NEXT-SESSION.md, and the "
+            "CLAUDE.md managed block — so refining "
+            "--project-summary on a later --write pass doesn't "
+            "lose findings from earlier inspection. Multi-line "
+            "notes preserve line breaks."
+        ),
+    )
 
     return parser
 
