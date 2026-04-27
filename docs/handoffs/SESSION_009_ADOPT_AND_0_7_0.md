@@ -1,7 +1,7 @@
 ---
 title: "Session 009 — context-kit adopt (v0 → v0.3) + 0.7.0 release prep"
 date: 2026-04-26
-status: built-locally — unpushed, unpublished, untagged
+status: published — pushed to main, on PyPI, tagged v0.7.0; GitHub release pending
 ---
 
 # Session 009 — `context-kit adopt` (v0 → v0.3) + 0.7.0 release prep
@@ -250,35 +250,30 @@ Closes the audit's release blockers:
 
 ## Where state actually is right now
 
-- **Local commit:** `a0ae625 chore(release): prepare 0.7.0`
-- **Pushed to `origin/main`:** **No.** Local is one commit ahead.
+- **Local commit (HEAD):** `ff5b87c docs(handoff): session 009
+  adopt and 0.7.0 release state` — matches `origin/main`.
+- **Pushed to `origin/main`:** **Yes.**
 - **Tests:** **328/328 passing.**
-- **Inventory:** **current** (regenerated as part of this handoff
-  + the prep commit).
+- **Inventory:** **current.**
 - **Build:** clean. `dist/contextkit_ai-0.7.0-py3-none-any.whl`
   + `.tar.gz` exist locally.
 - **`twine check`:** PASSED for both artifacts.
-- **Fresh-venv install smoke:** passed end-to-end. `pip install`
-  the local wheel, `context-kit adopt --help` shows all four
-  flags, `context-kit adopt <fixture> --html --no-browser` runs
-  to exit 0 against a small JS+Solidity test fixture.
-- **PyPI:** **NOT published.** Live PyPI version is still 0.6.1.
-- **Git tag:** **NOT created.** No `v0.7.0` tag yet.
-- **GitHub release:** **NOT created.**
+- **Fresh-venv install smoke (local wheel):** passed end-to-end.
+- **PyPI:** **PUBLISHED.** `contextkit-ai==0.7.0` is live;
+  fresh-venv `pip install contextkit-ai==0.7.0` then
+  `context-kit adopt --help` works end-to-end against the
+  PyPI artifact.
+- **Git tag:** **`v0.7.0` created and pushed to `origin`**
+  (annotated, message "v0.7.0 — adopt existing projects",
+  points at `ff5b87c`).
+- **GitHub release:** **NOT created** — the only outstanding
+  release step.
 
 ## Next steps (in order)
 
-1. **`git push origin main`** — single commit (`a0ae625`).
-2. **`python3 -m twine upload dist/*`** — uploads
-   `contextkit_ai-0.7.0` to PyPI. (Or upload to TestPyPI first
-   if you want a dry run.)
-3. **Verify fresh install** from PyPI (not the local wheel):
-   `pip install contextkit-ai==0.7.0` in a new venv, run
-   `context-kit adopt --help` to confirm the install works
-   end-to-end against the published artifact.
-4. **`git tag -a v0.7.0 -m "..."`** then `git push origin v0.7.0`.
-5. **GitHub release** for `v0.7.0` — body can come from the
-   CHANGELOG `[0.7.0]` section verbatim, or be summarized.
+1. **GitHub release** for `v0.7.0` — body from the CHANGELOG
+   `[0.7.0]` section verbatim, or summarized. Tag already exists
+   on `origin`, so the release just needs to attach to it.
 
 ## Open design questions (deferred to v0.8.0+)
 

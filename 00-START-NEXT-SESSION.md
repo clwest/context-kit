@@ -12,24 +12,26 @@
 
 ## Where state actually is right now
 
-**Version is staged at 0.7.0** locally. Not yet pushed, not yet
-published to PyPI, not yet tagged, no GitHub release.
+**Version 0.7.0 is published.** Code is on `origin/main`, the
+package is live on PyPI, and the `v0.7.0` tag is created and pushed.
+Only the GitHub release remains.
 
-- **Local commit:** `a0ae625 chore(release): prepare 0.7.0`
-  is one ahead of `origin/main`.
+- **Local commit:** `ff5b87c docs(handoff): session 009 adopt and
+  0.7.0 release state` — matches `origin/main`.
 - **Tests:** **328/328 passing**.
 - **Inventory:** current.
 - **Build:** clean. `dist/contextkit_ai-0.7.0-py3-none-any.whl` +
   `.tar.gz` exist locally.
 - **`twine check`:** PASSED for both artifacts.
-- **Fresh-venv install smoke:** passed end-to-end —
-  `pip install` the local wheel, `context-kit adopt --help`
-  shows all four flags (`--write`, `--html`, `--html-out`,
-  `--no-browser`), `context-kit adopt <fixture> --html
-  --no-browser` runs to exit 0.
-- **PyPI:** still on **0.6.1**. 0.7.0 NOT published.
-- **Git tag:** `v0.6.0` is the latest. **No `v0.7.0` tag yet.**
-- **GitHub release:** none for 0.7.0.
+- **Fresh-venv install smoke (local wheel):** passed end-to-end.
+- **PyPI:** **0.7.0 PUBLISHED.** `pip install
+  contextkit-ai==0.7.0` in a fresh venv works; `context-kit adopt
+  --help` runs from the PyPI install.
+- **Git tag:** **`v0.7.0` created and pushed to `origin`**
+  (annotated, message "v0.7.0 — adopt existing projects",
+  points at `ff5b87c`).
+- **GitHub release:** still **NOT created** — the only remaining
+  step.
 
 ## What 0.7.0 ships
 
@@ -82,17 +84,13 @@ in `docs/proposals/SESSION_009_ADOPT.md`.
 
 ## Next steps (in order)
 
-1. **`git push origin main`** — single commit (`a0ae625`).
-2. **`python3 -m twine upload dist/*`** — uploads
-   `contextkit_ai-0.7.0` to PyPI. (Or upload to TestPyPI first
-   if you want a dry run.)
-3. **Verify fresh install** from PyPI (not the local wheel):
-   `pip install contextkit-ai==0.7.0` in a new venv, run
-   `context-kit adopt --help` to confirm the install works
-   end-to-end against the published artifact.
-4. **`git tag -a v0.7.0 -m "..."`** then `git push origin v0.7.0`.
-5. **GitHub release** for `v0.7.0`. Body can come from the
-   `[0.7.0]` section of `CHANGELOG.md` verbatim, or be summarized.
+1. **GitHub release** for `v0.7.0` — the only remaining release
+   step. Body can come from the `[0.7.0]` section of
+   `CHANGELOG.md` verbatim, or be summarized. Tag already
+   exists on `origin`, so the release just needs to attach to it.
+
+After the release lands, the next session is free to pick up
+v0.8.0 work (see "Open design questions" below).
 
 ## Open design questions (deferred, NOT for this release)
 
