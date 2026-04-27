@@ -2220,8 +2220,20 @@ def render_adopt_html(repo: Path, stack: StackProfile,
         det_label = "Split monorepo"
         det_color = "ok"
     elif stack.language == "unknown":
-        det_label = "Unknown stack"
-        det_color = "warn"
+        # v0.8 Phase 4.5: when workspace inference produced a
+        # primary, surface it here too — otherwise the Detection
+        # card silently disagrees with the rest of the report
+        # (Adopt Summary, Reality, Project type all reflect
+        # inference; this card is the only holdout that didn't).
+        if stack.inferred_primary is not None:
+            det_label = (
+                f"{stack.inferred_primary} "
+                f"(inferred from workspace children)"
+            )
+            det_color = "ok"
+        else:
+            det_label = "Unknown stack"
+            det_color = "warn"
     else:
         det_label = _lang_label(stack.language)
         det_color = "ok"

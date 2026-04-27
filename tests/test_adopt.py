@@ -4077,6 +4077,49 @@ class TestWorkspaceAwarePrimaryDetection(unittest.TestCase):
 
     # ---- 6. Stack reality treats inferred as a real primary ------
 
+    def test_inferred_primary_replaces_html_detection_card_label(self):
+        # Regression: the HTML <h2>Detection</h2> card's lede must
+        # mirror the inferred primary, not the bare "Unknown stack"
+        # string. Caught after Phase 4.5 first-ship — the Detection
+        # card had a separate hard-coded label branch that didn't
+        # consult inferred_primary, so the top card disagreed with
+        # the rest of the report.
+        self._build_flutter_fixture()
+        from cli.adopt import (
+            derive_adopt_summary, derive_project_type,
+            derive_stack_reality, derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality)
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 summary=summary)
+        # Detection card lede uses inferred primary.
+        self.assertIn(
+            '<p class="lede">Flutter / Dart '
+            '(inferred from workspace children)</p>',
+            html,
+        )
+        # The "Unknown stack" string must be gone from the
+        # Detection card. (It still appears as a substring in
+        # `stack.notes` text, so don't search the whole HTML —
+        # slice to the Detection card.)
+        det_re = re.search(r'<h2>Detection</h2>.*?</section>',
+                           html, re.DOTALL)
+        self.assertIsNotNone(det_re)
+        self.assertNotIn('<p class="lede">Unknown stack</p>',
+                         det_re.group(0))
+        # Card color flips from card-warn (Unknown) to card-ok (OK).
+        self.assertIn('<section class="card card-ok">',
+                      html.split('<h2>Detection</h2>')[0]
+                      + '<h2>Detection</h2>'
+                      + html.split('<h2>Detection</h2>')[1].split('</section>')[0])
+
     def test_inferred_primary_changes_stack_reality(self):
         # Without inference, flutter monorepo would land in
         # "Unclear project shape" / Low. With Phase 4.5 inference
