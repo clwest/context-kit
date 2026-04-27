@@ -224,7 +224,7 @@ class FailureRecord:
 
     Pure metadata — emitting a FailureRecord doesn't change adopt's
     classification or written output. The records surface in the
-    "Detected Issues" section of the HTML report and a compact CLI
+    "Diagnostic signals" section of the HTML report and a compact CLI
     summary so a reviewer can spot patterns without re-deriving them
     from the dry-run text every time.
     """
@@ -1745,7 +1745,7 @@ def _workspace_children_block_dryrun(stack: StackProfile) -> list[str]:
     an outer guard.
 
     Header carries the count so the section is scannable at a glance
-    (matches the "Detected issues (N):" pattern).
+    (matches the "Diagnostic signals (N):" pattern).
     """
     if not stack.workspace_children:
         return []
@@ -2678,11 +2678,11 @@ def render_adopt_html(repo: Path, stack: StackProfile,
         sev_class = {"high": "sev-high", "medium": "sev-medium", "low": "sev-low"}
         failures_html = [
             '<section class="card card-warn">',
-            '  <h2>Detected issues</h2>',
-            f'  <p class="meta">{len(failures)} labeled signal'
-            f"{'s' if len(failures) != 1 else ''} from adopt's failure "
-            f"taxonomy. Each is metadata only — classification, plan, "
-            f"and writes are unchanged.</p>",
+            '  <h2>Diagnostic signals</h2>',
+            '  <p class="meta">Signals from adopt\'s internal failure '
+            'taxonomy. These help explain classification limits and '
+            'review priorities; they do not mean the project is '
+            'broken.</p>',
         ]
         # Order: high severity first, then by failure_type for stable
         # rendering across runs.
@@ -3659,7 +3659,11 @@ def run_adopt(args: argparse.Namespace) -> int:
     # no failures detected. Detail lives in --html.
     if failures:
         print()
-        print(f"Detected issues ({len(failures)}):")
+        print(f"Diagnostic signals ({len(failures)}):")
+        print("  Signals from adopt's internal failure taxonomy. "
+              "These help explain classification")
+        print("  limits and review priorities; they do not mean the "
+              "project is broken.")
         # Stable order: high severity first, then by failure_type.
         ordered = sorted(failures, key=lambda f: (
             {"high": 0, "medium": 1, "low": 2}.get(f.severity, 3),

@@ -1536,7 +1536,9 @@ class TestFailureRendering(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def test_html_includes_detected_issues_section(self):
+    def test_html_includes_diagnostic_signals_section(self):
+        # v0.8 Phase 4.5.1: section renamed "Detected issues"
+        # -> "Diagnostic signals" with softer description copy.
         explicit = self.repo / "report.html"
         run_adopt(argparse.Namespace(
             command="adopt", path=str(self.repo), write=False,
@@ -1544,11 +1546,14 @@ class TestFailureRendering(unittest.TestCase):
             description="x", next_step="y",
         ))
         body = explicit.read_text(encoding="utf-8")
-        self.assertIn("Detected issues", body)
+        self.assertIn("Diagnostic signals", body)
+        self.assertNotIn("Detected issues", body,
+                         "old 'Detected issues' header must be gone")
+        # Softer description copy is present.
+        self.assertIn("they do not mean the project is broken", body)
+        # Failure type names unchanged — still surface verbatim.
         self.assertIn("ROOT_SIGNAL_OVERRIDE", body)
-        # Severity badge class fires for the high-severity case.
         self.assertIn("sev-high", body)
-        # Surface-area annotation visible in the summary line.
         self.assertIn("classification", body)
 
     def test_cli_dryrun_includes_compact_failure_summary(self):
@@ -1562,14 +1567,20 @@ class TestFailureRendering(unittest.TestCase):
                 description="x", next_step="y",
             ))
         out = buf.getvalue()
-        self.assertIn("Detected issues", out)
+        # v0.8 Phase 4.5.1: section renamed in CLI too.
+        self.assertIn("Diagnostic signals", out)
+        self.assertNotIn("Detected issues", out,
+                         "old CLI 'Detected issues' line must be gone")
+        # Softer description copy is present.
+        self.assertIn("they do not mean the project is broken", out)
+        # Failure type names unchanged.
         self.assertIn("ROOT_SIGNAL_OVERRIDE", out)
-        # High-severity surfaces with its severity tag.
         self.assertIn("high", out)
 
-    def test_html_omits_detected_issues_when_no_failures(self):
-        # A clean classified project: no failures should produce no
-        # "Detected issues" card. Visual hygiene.
+    def test_html_omits_diagnostic_signals_when_no_failures(self):
+        # Clean classified project: no failures -> no Diagnostic
+        # signals card. Visual hygiene preserved from the old
+        # "Detected issues" behavior.
         with tempfile.TemporaryDirectory() as clean:
             cp = Path(clean)
             (cp / "backend").mkdir()
@@ -1583,8 +1594,7 @@ class TestFailureRendering(unittest.TestCase):
                 description="x", next_step="y",
             ))
             body = explicit.read_text(encoding="utf-8")
-            # Either no failures section at all, OR a section that
-            # doesn't claim "Detected issues" as a header.
+            self.assertNotIn("Diagnostic signals", body)
             self.assertNotIn("Detected issues", body)
 
 
