@@ -199,6 +199,8 @@ Run `python3 context_kit.py <command> --help` for per-command options.
 | `--html` | off | Also generate a static, self-contained HTML review report (single file, no server). Default destination is `/tmp`; the file opens in your default browser unless `--no-browser` is set |
 | `--html-out PATH` | (none) | Explicit destination for the HTML report (implies `--html`). Default keeps the source tree untouched by writing under the system temp dir |
 | `--no-browser` | off | Don't auto-open the HTML report in the browser (tests, headless, CI) |
+| `--project-summary TEXT` | (none) | One-sentence project summary. When provided, adopt skips the matching prompt and reuses this string verbatim everywhere project context appears (BUILD_PLAN, PROJECT_WHAT_IT_IS, CLAUDE.md, Agent Launch Prompt) |
+| `--next-task TEXT` | (none) | What the next AI session should help with. When provided, adopt skips the matching prompt and reuses this string verbatim across the same docs |
 
 `adopt` is the entry point when you have an *existing* project
 and want context-kit's docs layer wrapped around it. It detects
@@ -247,6 +249,17 @@ updates the managed block in place rather than stacking
 duplicates. Pass `--html` to also write a single self-contained
 review report that's much easier to scan than terminal output
 on large repos.
+
+Every `adopt` run — dry-run or `--write` — also produces an
+**Agent Launch Prompt**: a single self-contained block you can
+paste as the first message to your AI coding agent (Claude Code,
+Cursor, Aider, etc.). It carries the detected project shape,
+the user's own framing (via `--project-summary` / `--next-task`
+or the two interactive prompts), a recommended read-only first
+action, and explicit safety rules so the agent starts safely
+without a question loop. After `--write`, the same prompt is
+embedded in `00-START-NEXT-SESSION.md`, `CLAUDE.md`, and
+`docs/BUILD_PLAN.md` for later sessions.
 
 The full design lives in `docs/proposals/SESSION_009_ADOPT.md`;
 the v0.8.0 decision-layer ships are documented in

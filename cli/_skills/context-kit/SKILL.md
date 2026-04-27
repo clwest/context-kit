@@ -175,6 +175,15 @@ internal failure taxonomy — when classification limits or
 review priorities are worth flagging. (Diagnostic signals are
 informational, not errors in the user's repo.)
 
+Every adopt run also produces an **Agent Launch Prompt** — a
+single copy-paste block that tells the next AI agent the
+project's shape, the user's framing, a recommended read-only
+first action, and explicit safety rules. Suggest the user
+hand this prompt to their AI agent as the first message of
+the next session. Two flags make adopt fully non-interactive:
+``--project-summary "..."`` and ``--next-task "..."`` — useful
+for scripted demos and CI.
+
 The dry-run plus `--html` (`context-kit adopt . --html`) opens
 a single self-contained static review report that's much easier
 to scan than terminal output on large repos.

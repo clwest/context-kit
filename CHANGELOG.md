@@ -9,6 +9,105 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-04-27
+
+**Agent Launch Prompt milestone.** Adopt now produces a single
+copy-paste block the user can hand to any AI coding agent
+(Claude Code, Cursor, Aider, etc.) as the first message of a
+session. The prompt is self-contained — project shape, primary
+detection, recommended first action, safety rules, and the
+user's own framing — so the agent starts safely without a
+question loop. Two new flags (`--project-summary`, `--next-task`)
+make the whole adopt run non-interactive when paired.
+
+### Added — Agent Launch Prompt (Phase 6.1)
+
+- **`derive_agent_launch_prompt`** assembles a
+  ``AgentLaunchPrompt`` from the same data the Adopt Summary
+  already uses. Output is a single text block with five fixed
+  sections: WHAT THIS PROJECT APPEARS TO BE, USER CONTEXT,
+  PRIMARY DETECTION, WORKSPACE / PROJECT STRUCTURE, RECOMMENDED
+  FIRST ACTION, and SAFETY INSTRUCTIONS. Confidence mirrors
+  ``StackReality.confidence``.
+- **`_agent_first_action_for`** picks a project-type-aware first
+  action from 7 branches: Full-stack, Smart contract, Mobile app
+  suite, Web3 dApp, Rust workspace, Go project, plus a generic
+  catch-all. Each branch is 3–4 read-only inspection steps.
+- **Surfaces in three places after `--write`:**
+  ``00-START-NEXT-SESSION.md`` under "Agent Launch Prompt",
+  ``CLAUDE.md`` under "Agent launch prompt", and
+  ``docs/BUILD_PLAN.md`` under "Agent launch prompt". Same prompt
+  block in each, embedded in the adopt-managed marker so re-runs
+  refresh in place.
+- **Surfaces before `--write`:** the dry-run preview prints the
+  prompt above the plan so the user can copy it without
+  generating any files.
+
+### Added — Non-interactive flags
+
+- **`--project-summary TEXT`** answers "In one sentence, what
+  is this project?" up-front; skips the matching prompt.
+- **`--next-task TEXT`** answers "What should the next AI
+  session help with?" up-front; skips the matching prompt.
+- **Both flags can be combined** for a fully non-interactive
+  adopt run — useful for CI, scripted dogfood, and recorded
+  demos. Without them, adopt prompts each question exactly once.
+- **Answers are reused verbatim everywhere**: the Agent Launch
+  Prompt USER CONTEXT block, BUILD_PLAN.md "What this project
+  is" + "Next milestone", PROJECT_WHAT_IT_IS.md "In one
+  paragraph", 00-START-NEXT-SESSION.md "What's next", and
+  CLAUDE.md "What the user told adopt". The user types each
+  answer once, regardless of where it surfaces.
+
+### Fixed — Split-monorepo Full-stack project type
+
+- **Repos with `backend/` + `frontend/` (or `server/` + `web/`,
+  `api/` + `client/`) at root now classify as "Full-stack web
+  app".** Closes the contract-concierge gap where adopt fell back
+  to "Unclear project type" despite a clean split. Rule names
+  the parts in the reason text and stays Medium confidence.
+- **Recognized roles:** ``_BACKEND_ROLES = ("backend", "server",
+  "api")`` and ``_FRONTEND_ROLES = ("frontend", "web",
+  "client")``. Matching is case-sensitive and depth-1.
+
+### Fixed — Pre-`--write` and missing-doc behavior
+
+- **Agent Launch Prompt now works before `--write`.** Earlier
+  versions assumed the generated docs existed when rendering
+  the recommended first action. The prompt now self-fences
+  with explicit safety language: "If they do not exist yet,
+  read README, package/manifests, and inspect the detected
+  project structure first."
+- **Placeholder soft-framing in three doc generators.** When
+  adopt cannot infer a value (``Why it exists``, ``Who it's
+  for``, etc.), it writes ``[adopt: please describe]`` and
+  every doc that mentions the placeholder now adds: "Do not
+  block read-only inspection on these placeholders. Proceed
+  with the recommended first action if it's safe and read-only."
+  Prevents agents from stalling on unfilled context.
+
+### Changed — Post-write CLI footer
+
+- **Replaces the prior generic next-steps line** with an
+  Agent-Launch-Prompt-centric next step: "Next step: paste the
+  Agent Launch Prompt above into your AI coding agent (Claude
+  Code, Cursor, Aider, etc.). The same prompt is saved in
+  00-START-NEXT-SESSION.md under 'Agent Launch Prompt' for
+  later reference."
+- **`generate_claude_md_fresh` "Read this first"** now leads
+  with the Agent Launch Prompt as the canonical session opener,
+  followed by pointers to BUILD_PLAN / PROJECT_WHAT_IT_IS / the
+  start-here doc as deeper context.
+
+### UX wording
+
+- **USER CONTEXT header** in the Agent Launch Prompt is now
+  "(provided during adopt)" — accurate whether the answers
+  came from the interactive prompts or the new flags.
+- **Adopt's two prompts** sharpened to "In one sentence, what
+  is this project?" and "What should the next AI session help
+  with?" Each fires exactly once per run.
+
 ## [0.9.0] — 2026-04-27
 
 **Ecosystem coverage milestone.** Five fixes driven by the
