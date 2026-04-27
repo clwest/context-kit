@@ -1494,6 +1494,9 @@ def render_adopt_html(repo: Path, stack: StackProfile,
         ]
         for u in signal_subdirs:
             # One <details> block per subdir. Native collapse, no JS.
+            # v0.8 polish: same dir-head/dir-name/dir-meta layout as
+            # workspace-children cards so the directory name reads as
+            # the card header rather than blending into the metadata.
             summary_bits: list[str] = []
             if u.manifest_files:
                 summary_bits.append(
@@ -1514,19 +1517,19 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             elif not summary_bits and u.total_file_count > 0:
                 summary_bits.append(f"{u.total_file_count} files (no recognized source extensions)")
             summary = " · ".join(summary_bits) if summary_bits else "(no signals)"
+            ubp_hint_badge = (
+                f' <span class="hint-badge">'
+                f'{_esc(u.manifest_hint.split(";")[0])}</span>'
+                if u.manifest_hint else ""
+            )
             unknown_html.append(
                 f'  <details class="unc"><summary>'
-                f'<code class="dirname">{_esc(u.name)}/</code> '
-                f'<span class="dim">{summary}</span>'
-                + (
-                    # Surface the manifest hint inline in the summary so
-                    # it's visible without expanding — restores some
-                    # visual contrast on common monorepos where no
-                    # DOMAIN_HINTS notes fire.
-                    f' <span class="hint-badge">{_esc(u.manifest_hint.split(";")[0])}</span>'
-                    if u.manifest_hint else ""
-                )
-                + '</summary>'
+                f'<div class="dir-head">'
+                f'<span class="dir-name">{_esc(u.name)}/</span>'
+                f'{ubp_hint_badge}'
+                f'</div>'
+                f'<div class="dir-meta">{summary}</div>'
+                '</summary>'
             )
             # Body contents.
             unknown_html.append('    <div class="unc-body">')
@@ -1647,21 +1650,21 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             if trivial:
                 workspace_html.append(
                     f'  <div class="unc unc-trivial">'
-                    f'<div class="wsc-head">'
-                    f'<span class="wsc-name">{_esc(c.name)}</span>'
+                    f'<div class="dir-head">'
+                    f'<span class="dir-name">{_esc(c.name)}</span>'
                     f'{hint_badge}'
                     f'</div>'
-                    f'<div class="wsc-meta">{summary}</div>'
+                    f'<div class="dir-meta">{summary}</div>'
                     f'</div>'
                 )
                 continue
             workspace_html.append(
                 f'  <details class="unc"><summary>'
-                f'<div class="wsc-head">'
-                f'<span class="wsc-name">{_esc(c.name)}</span>'
+                f'<div class="dir-head">'
+                f'<span class="dir-name">{_esc(c.name)}</span>'
                 f'{hint_badge}'
                 f'</div>'
-                f'<div class="wsc-meta">{summary}</div>'
+                f'<div class="dir-meta">{summary}</div>'
                 '</summary>'
             )
             workspace_html.append('    <div class="unc-body">')
@@ -1850,22 +1853,29 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     details.unc summary, details.planfile summary {
       cursor: pointer; user-select: none; font-size: .95rem;
     }
-    details.unc summary code.dirname { font-weight: 600; }
-    /* Workspace child cards (v0.8): the child name is the load-bearing
-       label, so it gets its own line with bigger/bolder weight than the
-       inherited summary text. The meta line beneath stays muted so the
-       eye reads the names first when scanning down the section. */
-    .wsc-head {
+    /* Directory cards (v0.8 polish): the directory / child-project
+       name is the load-bearing label of every card in the
+       Unknown-but-present and Workspace-children sections, so it
+       gets its own block-level line above the metadata. Bolder
+       weight + accent color + slightly larger font lets the eye
+       scan names down the left edge of the section without
+       expanding cards. The dir-meta line beneath stays muted. */
+    .dir-head {
       display: flex; align-items: baseline; gap: .55rem;
-      flex-wrap: wrap;
+      flex-wrap: wrap; margin-bottom: .15rem;
     }
-    .wsc-name {
-      font-family: var(--mono); font-weight: 700; font-size: 1.02rem;
+    .dir-name {
+      font-family: var(--mono); font-weight: 700; font-size: 1.05rem;
       color: var(--accent-strong); letter-spacing: -0.005em;
     }
-    .wsc-meta {
-      color: var(--muted); font-size: .85rem; margin-top: .2rem;
-      font-family: var(--mono);
+    .dir-meta {
+      display: block; color: var(--muted); font-size: .85rem;
+      font-family: var(--mono); margin-top: .15rem;
+    }
+    /* Override the legacy code.dirname rule so any caller still
+       using that class picks up the same prominent treatment. */
+    details.unc summary code.dirname {
+      font-weight: 700; font-size: 1.05rem; color: var(--accent-strong);
     }
     .unc-trivial { padding: .55rem .85rem; }
     .unc-body { margin-top: .75rem; padding-top: .5rem; border-top: 1px solid var(--border); font-size: .9rem; }

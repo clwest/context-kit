@@ -2163,10 +2163,10 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
         # v0.8 polish: header carries the count.
         self.assertIn("<h2>Workspace children (2)</h2>", html)
         # Each child gets a <details> block. v0.8 polish renders the
-        # name as a block-level <span class="wsc-name"> so the user
+        # name as a block-level <span class="dir-name"> so the user
         # can scan child names down the left edge of the section.
-        self.assertIn('<span class="wsc-name">apps/forge</span>', html)
-        self.assertIn('<span class="wsc-name">apps/next</span>', html)
+        self.assertIn('<span class="dir-name">apps/forge</span>', html)
+        self.assertIn('<span class="dir-name">apps/next</span>', html)
         # Manifests render as inline <code> in the body.
         self.assertIn("<code>foundry.toml</code>", html)
         # The forge child's Solidity hint surfaces in the body.
@@ -2308,8 +2308,8 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
                          "Unknown-but-present in HTML when its "
                          "children render in Workspace children")
         self.assertIn("<h2>Workspace children (2)</h2>", html)
-        self.assertIn('<span class="wsc-name">apps/forge</span>', html)
-        self.assertIn('<span class="wsc-name">apps/next</span>', html)
+        self.assertIn('<span class="dir-name">apps/forge</span>', html)
+        self.assertIn('<span class="dir-name">apps/next</span>', html)
 
         # BUILD_PLAN.md.
         md = generate_build_plan(stack, self.inputs, "Test")
@@ -2430,27 +2430,27 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
         # Trivial child: non-collapsible div with the name as a
-        # visible header (wsc-name) so it still reads as a card title.
+        # visible header (dir-name) so it still reads as a card title.
         self.assertIn('<div class="unc unc-trivial">', html)
-        # The trivial card contains the wsc-name for "packages/trivial"
+        # The trivial card contains the dir-name for "packages/trivial"
         # — search for them adjacent in the same div.
         self.assertIn(
             '<div class="unc unc-trivial">'
-            '<div class="wsc-head">'
-            '<span class="wsc-name">packages/trivial</span>',
+            '<div class="dir-head">'
+            '<span class="dir-name">packages/trivial</span>',
             html,
-            "trivial child must render with wsc-name as visible header",
+            "trivial child must render with dir-name as visible header",
         )
         # Non-trivial child: still a <details> element with the same
-        # wsc-name treatment in the summary.
+        # dir-name treatment in the summary.
         details_with_rich = (
             '<details class="unc"><summary>'
-            '<div class="wsc-head">'
-            '<span class="wsc-name">packages/rich</span>' in html
+            '<div class="dir-head">'
+            '<span class="dir-name">packages/rich</span>' in html
         )
         self.assertTrue(details_with_rich,
                         "non-trivial child must still render as "
-                        "<details> with wsc-name in the summary")
+                        "<details> with dir-name in the summary")
 
     def test_workspace_html_body_does_not_duplicate_hint(self):
         # The expanded body must NOT repeat the hint that's already
@@ -2521,7 +2521,7 @@ class TestWorkspaceChildNameVisibility(unittest.TestCase):
         # The child name must be present near the card header — i.e.
         # inside the <summary> for collapsible cards, inside the
         # <div class="unc unc-trivial"> for trivial cards. It must
-        # also be in the load-bearing wsc-name span (block-level
+        # also be in the load-bearing dir-name span (block-level
         # header treatment, not mixed inline with manifest text).
         self._build_fns_fixture()
         # Add a trivial child to cover both code paths.
@@ -2535,10 +2535,10 @@ class TestWorkspaceChildNameVisibility(unittest.TestCase):
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
 
-        # Names appear in wsc-name spans (block header treatment).
+        # Names appear in dir-name spans (block header treatment).
         for name in ("apps/forge", "apps/next", "packages/tsconfig"):
-            self.assertIn(f'<span class="wsc-name">{name}</span>', html,
-                          f"{name} must render as a wsc-name header")
+            self.assertIn(f'<span class="dir-name">{name}</span>', html,
+                          f"{name} must render as a dir-name header")
 
         # The name must be visible at the card header, not buried.
         # For collapsible: name is inside <summary>. For trivial:
@@ -2553,7 +2553,7 @@ class TestWorkspaceChildNameVisibility(unittest.TestCase):
                              "expected at least one collapsible workspace card")
         # Find which one is forge.
         any_summary_has_forge = any(
-            'wsc-name">apps/forge<' in m.group(1)
+            'dir-name">apps/forge<' in m.group(1)
             for m in re.finditer(
                 r'<details class="unc"><summary>(.*?)</summary>',
                 html, re.DOTALL,
@@ -2574,25 +2574,25 @@ class TestWorkspaceChildNameVisibility(unittest.TestCase):
                       "trivial card's div")
 
     def test_html_card_renders_meta_below_name(self):
-        # The wsc-meta line (manifests / extensions) must appear in
-        # the same card as wsc-name, AFTER the name in DOM order.
+        # The dir-meta line (manifests / extensions) must appear in
+        # the same card as dir-name, AFTER the name in DOM order.
         # That ordering is what makes the name visible as a header.
         self._build_fns_fixture()
         stack = detect_stack(self.repo)
         plan = plan_files(self.repo, stack, self.inputs)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
-        # Find the apps/forge card slice and verify wsc-name appears
-        # before wsc-meta in DOM order.
+        # Find the apps/forge card slice and verify dir-name appears
+        # before dir-meta in DOM order.
         forge_slice = re.search(
-            r'<span class="wsc-name">apps/forge</span>.*?</summary>',
+            r'<span class="dir-name">apps/forge</span>.*?</summary>',
             html, re.DOTALL,
         )
         self.assertIsNotNone(forge_slice,
-                             "apps/forge wsc-name must precede </summary>")
-        self.assertIn('wsc-meta', forge_slice.group(0),
-                      "wsc-meta line (manifests/extensions) must appear "
-                      "after the wsc-name in the same summary")
+                             "apps/forge dir-name must precede </summary>")
+        self.assertIn('dir-meta', forge_slice.group(0),
+                      "dir-meta line (manifests/extensions) must appear "
+                      "after the dir-name in the same summary")
 
     # ---- CLAUDE.md: workspace children block --------------------------
 
@@ -2632,6 +2632,143 @@ class TestWorkspaceChildNameVisibility(unittest.TestCase):
         self.assertNotIn("Workspace children", block,
                          "CLAUDE block must omit section when no "
                          "workspace children exist")
+
+
+class TestUnknownButPresentDirNameVisible(unittest.TestCase):
+    """v0.8 polish — Unknown-but-present cards must visibly show the
+    directory name as the card header, same dir-head / dir-name /
+    dir-meta layout as Workspace-children cards. The bug: prior
+    rendering put the dirname inline with the metadata as a small
+    grey monospace string, so the user couldn't tell which card was
+    which without expanding it.
+
+    Bonus regression: Workspace-children cards must still show
+    apps/docs / apps/web names visibly under the renamed class set.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # ---- Unknown-but-present: directory name visible -----------------
+
+    def test_html_unknown_but_present_card_shows_dir_name_header(self):
+        # turborepo-style fixture: server/ is a recognized subdir
+        # holding manage.py at depth-2, so it triggers the
+        # SILENT_SUBDIR_DROP path AND surfaces in unknown-but-present.
+        # The card MUST visibly show "server/" via the dir-name span.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "backend").mkdir()
+        (self.repo / "server" / "backend" / "manage.py").write_text(
+            "# d\n", encoding="utf-8")
+        for n in range(5):
+            (self.repo / "server" / "backend" / f"v{n}.py").write_text(
+                "# x\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        # Section present.
+        self.assertIn("<h2>Unknown but present</h2>", html)
+        # Directory name appears as a dir-name span (block header
+        # treatment), not inline as a grey code dirname.
+        self.assertIn('<span class="dir-name">server/</span>', html,
+                      "unknown-but-present card must render server/ "
+                      "as a dir-name header")
+
+    def test_html_unknown_but_present_meta_below_name(self):
+        # The dir-name span must appear BEFORE the dir-meta line in
+        # DOM order so the eye reads the directory name first when
+        # scanning the section.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "backend").mkdir()
+        (self.repo / "server" / "backend" / "manage.py").write_text(
+            "# d\n", encoding="utf-8")
+        for n in range(5):
+            (self.repo / "server" / "backend" / f"v{n}.py").write_text(
+                "# x\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        # Slice the server/ card.
+        m = re.search(
+            r'<span class="dir-name">server/</span>.*?</summary>',
+            html, re.DOTALL,
+        )
+        self.assertIsNotNone(m, "expected server/ dir-name span in summary")
+        self.assertIn('dir-meta', m.group(0),
+                      "dir-meta line must appear after dir-name in the "
+                      "same summary block")
+
+    def test_html_unknown_but_present_no_legacy_code_dirname(self):
+        # Defense: the old <code class="dirname">...</code> pattern
+        # must no longer wrap the directory name in unknown-but-
+        # present cards. (The CSS still keeps a fallback rule for
+        # safety, but adopt itself should never emit it now.)
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "manage.py").write_text("# d\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        # No code.dirname inside an Unknown-but-present <details>.
+        m = re.search(r'<h2>Unknown but present</h2>.*?</section>',
+                      html, re.DOTALL)
+        if m:
+            self.assertNotIn('<code class="dirname">', m.group(0),
+                             "unknown-but-present must use dir-name, "
+                             "not the legacy code.dirname markup")
+
+    # ---- Workspace children: apps/docs + apps/web visible -----------
+
+    def test_html_workspace_children_apps_docs_and_web_visible(self):
+        # Replays the turborepo fixture from the dogfood batch.
+        # Every workspace child — including non-trivial ones with
+        # extra manifests — must render its name via dir-name so
+        # the cards are scannable.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app in ("docs", "web"):
+            d = self.repo / "apps" / app
+            d.mkdir()
+            (d / "package.json").write_text("{}", encoding="utf-8")
+            (d / "next.config.js").write_text("// next\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        # Both children get dir-name headers.
+        self.assertIn('<span class="dir-name">apps/docs</span>', html,
+                      "apps/docs name must be a visible dir-name header")
+        self.assertIn('<span class="dir-name">apps/web</span>', html,
+                      "apps/web name must be a visible dir-name header")
+        # Both render as collapsible <details> (next.config.js +
+        # package.json makes them non-trivial).
+        self.assertIn(
+            '<details class="unc"><summary>'
+            '<div class="dir-head">'
+            '<span class="dir-name">apps/docs</span>',
+            html,
+        )
+        self.assertIn(
+            '<details class="unc"><summary>'
+            '<div class="dir-head">'
+            '<span class="dir-name">apps/web</span>',
+            html,
+        )
 
 
 if __name__ == "__main__":
