@@ -868,6 +868,25 @@ def _workspace_stack_pairs(stack: StackProfile) -> list[tuple[str, str]]:
 
 
 @dataclass
+class ProjectType:
+    """Phase 4.2 derived project-type label.
+
+    Pure summary built from ``StackProfile`` + ``StackReality`` —
+    no detection, no classification logic, no fresh I/O. Designed
+    to give the AI session and the human reader a one-line answer
+    to "what kind of project is this?" without having to interpret
+    primary stack + workspace signals separately.
+
+    Six fixed labels for now (see ``derive_project_type``); rule
+    cascade is deterministic and additions require a code change.
+    """
+
+    label: str        # short human-readable category
+    confidence: str   # "low" | "medium" | "high" (lowercase per spec)
+    reason: str       # one-sentence rationale
+
+
+@dataclass
 class StackReality:
     """Phase 4.1 derived assessment of the project's stack shape.
 
@@ -988,6 +1007,121 @@ def derive_stack_reality(stack: StackProfile,
         primary=primary,
         workspace_signals=workspace_signals,
     )
+
+
+def derive_project_type(stack: StackProfile,
+                        reality: StackReality) -> ProjectType:
+    """Apply Phase 4.2 deterministic rules; return a ``ProjectType``.
+
+    Rules in priority order (more specific first):
+
+    1. Solidity + Next.js workspace signals -> "Web3 dApp" / medium
+    2. Python/Django anywhere + Next.js workspace -> "Full-stack web
+       app" / medium. Python signal is detected via primary, parts,
+       OR an unclassified subdir containing ``manage.py`` / ``.py``
+       files (handles the turborepo-django shape where Django lives
+       under ``server/`` and the classifier doesn't pick it up).
+    3. Flutter only in workspace, no other web/contract signals
+       -> "Mobile app suite" / medium
+    4. Single primary JavaScript with no parts and no workspace
+       children -> "JavaScript app/tooling project" / medium
+    5. Single primary Python with no parts and no workspace
+       children -> "Python app/tooling project" / medium
+    6. Catch-all -> "Unclear project type" / low
+
+    Pure function. No I/O. Reason text adapts per rule so a reader
+    sees a one-line rationale, not just a label.
+    """
+    signals = set(reality.workspace_signals)
+    has_solidity = "Solidity / EVM smart contracts" in signals
+    has_nextjs = "Next.js / React web app" in signals
+    has_flutter = "Flutter / Dart app" in signals
+
+    python_anywhere = (
+        stack.language == "python"
+        or "python" in stack.parts.values()
+        or any("manage.py" in u.manifest_files
+               for u in stack.unclassified_subdirs)
+        or any(".py" in u.notable_extensions
+               for u in stack.unclassified_subdirs)
+    )
+
+    if has_solidity and has_nextjs:
+        return ProjectType(
+            label="Web3 dApp",
+            confidence="medium",
+            reason=("Workspace combines Solidity / EVM smart contracts "
+                    "with a Next.js / React web app."),
+        )
+
+    if python_anywhere and has_nextjs:
+        return ProjectType(
+            label="Full-stack web app",
+            confidence="medium",
+            reason=("Python (likely Django) backend plus a Next.js / "
+                    "React frontend in the workspace."),
+        )
+
+    if has_flutter and not has_solidity and not has_nextjs:
+        return ProjectType(
+            label="Mobile app suite",
+            confidence="medium",
+            reason="Workspace contains Flutter / Dart app(s) only.",
+        )
+
+    if (stack.language == "javascript"
+            and not stack.parts
+            and not stack.workspace_children):
+        return ProjectType(
+            label="JavaScript app/tooling project",
+            confidence="medium",
+            reason=("Single root JavaScript / Node manifest with no "
+                    "workspace containers."),
+        )
+
+    if (stack.language == "python"
+            and not stack.parts
+            and not stack.workspace_children):
+        return ProjectType(
+            label="Python app/tooling project",
+            confidence="medium",
+            reason=("Single root Python manifest with no workspace "
+                    "containers."),
+        )
+
+    workspace_str = (", ".join(reality.workspace_signals)
+                     if reality.workspace_signals else "none")
+    return ProjectType(
+        label="Unclear project type",
+        confidence="low",
+        reason=(
+            f"No deterministic rule matched. Primary detection: "
+            f"{reality.primary}; workspace signals: {workspace_str}."
+        ),
+    )
+
+
+def _project_type_block_dryrun(ptype: ProjectType) -> list[str]:
+    """The "Project type" block for the CLI dry-run output."""
+    return [
+        "",
+        "Project type:",
+        f"  - Label: {ptype.label}",
+        f"  - Confidence: {ptype.confidence}",
+        f"  - Reason: {ptype.reason}",
+    ]
+
+
+def _project_type_markdown(ptype: ProjectType) -> list[str]:
+    """The "Project type" section for Markdown docs (BUILD_PLAN + CLAUDE)."""
+    return [
+        "",
+        "### Project type",
+        "",
+        f"- **Label:** {ptype.label}",
+        f"- **Confidence:** {ptype.confidence}",
+        f"- **Reason:** {ptype.reason}",
+    ]
 
 
 def _stack_reality_block_dryrun(reality: StackReality) -> list[str]:
@@ -1425,7 +1559,8 @@ def _wrap_in_managed_block(content: str) -> str:
 
 
 def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
-                        *, reality: Optional[StackReality] = None) -> str:
+                        *, reality: Optional[StackReality] = None,
+                        project_type: Optional[ProjectType] = None) -> str:
     """The minimum BUILD_PLAN.md a freshly-adopted project needs.
 
     The strengthened first prompt (Step 8 of the wizard) tells agents
@@ -1466,6 +1601,11 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
     # reality is provided (run_adopt always supplies one).
     if reality is not None:
         body += _stack_reality_markdown(reality)
+    # v0.8 Phase 4.2: derived project type. Sits next to Stack
+    # reality so the reader gets "what is this?" + "how confident
+    # are we?" together.
+    if project_type is not None:
+        body += _project_type_markdown(project_type)
     # v0.2: visibility-first. Only added when there's something
     # unclassified to surface — clean classified projects still get
     # the same compact tech-stack section as v0.1.
@@ -1555,7 +1695,8 @@ def generate_start_here(inputs: AdoptionInputs, title: str) -> str:
 
 
 def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: str,
-                          *, reality: Optional[StackReality] = None) -> str:
+                          *, reality: Optional[StackReality] = None,
+                          project_type: Optional[ProjectType] = None) -> str:
     """The managed block we append (or insert) into CLAUDE.md.
 
     Wrapped in markers so re-running ``adopt`` updates these facts in
@@ -1597,6 +1738,9 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
     # managed block so re-runs refresh it in place.
     if reality is not None:
         lines += _stack_reality_markdown(reality)
+    # v0.8 Phase 4.2: project type carries the same way.
+    if project_type is not None:
+        lines += _project_type_markdown(project_type)
     if stack.unclassified_subdirs:
         lines += _unknown_present_markdown(stack)
     # v0.8: workspace children get a compact mention in the CLAUDE
@@ -1631,7 +1775,8 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
 
 
 def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title: str,
-                             *, reality: Optional[StackReality] = None) -> str:
+                             *, reality: Optional[StackReality] = None,
+                             project_type: Optional[ProjectType] = None) -> str:
     """Full CLAUDE.md when none exists yet.
 
     Mirrors the shape of cli/_starter/root/CLAUDE.md but tighter — we
@@ -1639,7 +1784,8 @@ def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title:
     seen the docs-pattern yet. They'll get the full thing if they
     later run ``context-kit init . --force``.
     """
-    block = generate_claude_block(stack, inputs, title, reality=reality)
+    block = generate_claude_block(stack, inputs, title, reality=reality,
+                                  project_type=project_type)
     return "\n".join([
         f"# CLAUDE / AGENTS — {title}",
         "",
@@ -1697,7 +1843,8 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                       plan: list,
                       write_mode: bool,
                       failures: Optional[list] = None,
-                      reality: Optional[StackReality] = None) -> str:
+                      reality: Optional[StackReality] = None,
+                      project_type: Optional[ProjectType] = None) -> str:
     """Build the full self-contained HTML report.
 
     Six sections per §21:
@@ -1804,6 +1951,30 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             f'    <li><strong>Confidence:</strong> '
             f'{_esc(reality.confidence)}</li>',
             f'    <li><strong>Why:</strong> {_esc(reality.why)}</li>',
+            '  </ul>',
+            '</section>',
+        ]
+
+    # ---- Section 3.85: project type (v0.8 Phase 4.2) ----
+    # Sits right after Stack reality so the reader sees "what is
+    # this project, really?" answered twice — once as the
+    # assessment/confidence/why triad, once as a single human-
+    # readable label. Card color tracks confidence the same way
+    # Stack reality does.
+    project_type_html: list[str] = []
+    if project_type is not None:
+        pt_card = {"high": "card-ok", "medium": "card-warn",
+                   "low": "card-warn"}.get(project_type.confidence, "card-warn")
+        project_type_html = [
+            f'<section class="card {pt_card}">',
+            '  <h2>Project type</h2>',
+            '  <ul class="parts">',
+            f'    <li><strong>Label:</strong> '
+            f'{_esc(project_type.label)}</li>',
+            f'    <li><strong>Confidence:</strong> '
+            f'{_esc(project_type.confidence)}</li>',
+            f'    <li><strong>Reason:</strong> '
+            f'{_esc(project_type.reason)}</li>',
             '  </ul>',
             '</section>',
         ]
@@ -2292,6 +2463,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     out.extend(parts_html)
     out.extend(workspace_stack_html)
     out.extend(reality_html)
+    out.extend(project_type_html)
     out.extend(unknown_html)
     out.extend(workspace_html)
     out.extend(failures_html)
@@ -2348,6 +2520,7 @@ def plan_files(
     inputs: AdoptionInputs,
     *,
     reality: Optional[StackReality] = None,
+    project_type: Optional[ProjectType] = None,
 ) -> list[PlannedFile]:
     """Build the list of files we'd create / augment / skip, without writing.
 
@@ -2370,7 +2543,8 @@ def plan_files(
 
     plan.append(_plan_managed_doc(
         repo / "docs" / "BUILD_PLAN.md",
-        generate_build_plan(stack, inputs, title, reality=reality),
+        generate_build_plan(stack, inputs, title, reality=reality,
+                            project_type=project_type),
     ))
     # v0 uses a fixed filename (``PROJECT_WHAT_IT_IS.md``) rather than
     # the slug-based ``<APP>_WHAT_IT_IS.md`` the rest of context-kit
@@ -2391,13 +2565,15 @@ def plan_files(
     if claude_path.is_file():
         plan.append(PlannedFile(
             path=claude_path,
-            content=generate_claude_block(stack, inputs, title, reality=reality),
+            content=generate_claude_block(stack, inputs, title, reality=reality,
+                                          project_type=project_type),
             kind="augment",
         ))
     else:
         plan.append(PlannedFile(
             path=claude_path,
-            content=generate_claude_md_fresh(stack, inputs, title, reality=reality),
+            content=generate_claude_md_fresh(stack, inputs, title, reality=reality,
+                                             project_type=project_type),
             kind="create",
         ))
     return plan
@@ -2953,7 +3129,9 @@ def run_adopt(args: argparse.Namespace) -> int:
     # in the final dry-run / HTML output.
     prelim_failures = analyze_failures(repo, stack, [])
     reality = derive_stack_reality(stack, prelim_failures)
-    plan = plan_files(repo, stack, inputs, reality=reality)
+    project_type = derive_project_type(stack, reality)
+    plan = plan_files(repo, stack, inputs, reality=reality,
+                      project_type=project_type)
 
     write = bool(getattr(args, "write", False))
     actions = apply_plan(plan, dry_run=not write)
@@ -2975,6 +3153,10 @@ def run_adopt(args: argparse.Namespace) -> int:
     # was computed once above (with prelim failures) and threaded
     # through plan_files so BUILD_PLAN / CLAUDE see the same block.
     for line in _stack_reality_block_dryrun(reality):
+        print(line)
+    # v0.8 Phase 4.2: derived project type, single human-readable
+    # label answering "what kind of project is this?".
+    for line in _project_type_block_dryrun(project_type):
         print(line)
     # v0.2: visibility-first. Surface unclassified subdirs between the
     # stack line and the plan so the user reads them before scanning
@@ -3025,7 +3207,8 @@ def run_adopt(args: argparse.Namespace) -> int:
             out_path.write_text(
                 render_adopt_html(repo, stack, inputs, plan,
                                   write_mode=write, failures=failures,
-                                  reality=reality),
+                                  reality=reality,
+                                  project_type=project_type),
                 encoding="utf-8",
             )
         except OSError as exc:

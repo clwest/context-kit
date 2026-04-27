@@ -3201,5 +3201,192 @@ class TestStackRealityCheck(unittest.TestCase):
         self.assertNotIn("### Unknown but present", block)
 
 
+class TestProjectTypeInference(unittest.TestCase):
+    """v0.8 Phase 4.2 — derived single-line project type label.
+
+    Five spec'd dogfood-shaped fixtures (Web3 dApp, Full-stack web
+    app, Mobile app suite, JavaScript app/tooling, Unclear). Each
+    asserts both the dataclass values and that the section
+    surfaces in CLI / HTML / BUILD_PLAN / CLAUDE.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _derive(self):
+        from cli.adopt import derive_project_type, derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality)
+        return stack, reality, ptype
+
+    def _run_cli(self):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        return buf.getvalue()
+
+    # ---- 1. fns-monorepo -> Web3 dApp ------------------------------
+
+    def test_fns_monorepo_is_web3_dapp(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        _, _, ptype = self._derive()
+        self.assertEqual(ptype.label, "Web3 dApp")
+        self.assertEqual(ptype.confidence, "medium")
+        self.assertIn("Solidity", ptype.reason)
+        self.assertIn("Next.js", ptype.reason)
+
+    # ---- 2. turborepo-next-django-starter -> Full-stack web app -----
+
+    def test_turborepo_django_is_full_stack_web_app(self):
+        # apps/web (Next.js) + server/ contains Django (manage.py at
+        # depth-2 surfaces as .py in unclassified_subdirs).
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        web = self.repo / "apps" / "web"
+        web.mkdir()
+        (web / "package.json").write_text("{}", encoding="utf-8")
+        (web / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (web / "app").mkdir()
+        for n in range(3):
+            (web / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "backend").mkdir()
+        (self.repo / "server" / "backend" / "manage.py").write_text(
+            "# d\n", encoding="utf-8")
+        for n in range(5):
+            (self.repo / "server" / "backend" / f"v{n}.py").write_text(
+                "# x\n", encoding="utf-8")
+
+        _, _, ptype = self._derive()
+        self.assertEqual(ptype.label, "Full-stack web app")
+        self.assertEqual(ptype.confidence, "medium")
+        self.assertIn("Python", ptype.reason)
+        self.assertIn("Next.js", ptype.reason)
+
+    # ---- 3. flutter-monorepo-example -> Mobile app suite -----------
+
+    def test_flutter_monorepo_is_mobile_app_suite(self):
+        (self.repo / "melos.yaml").write_text("name: x\n", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app in ("buyer_app", "seller_app"):
+            d = self.repo / "apps" / app
+            d.mkdir()
+            (d / "pubspec.yaml").write_text(
+                f"name: {app}\n", encoding="utf-8")
+            (d / "lib").mkdir()
+            (d / "lib" / "main.dart").write_text("// dart\n", encoding="utf-8")
+
+        _, _, ptype = self._derive()
+        self.assertEqual(ptype.label, "Mobile app suite")
+        self.assertEqual(ptype.confidence, "medium")
+        self.assertIn("Flutter", ptype.reason)
+
+    # ---- 4. plain JS -> JavaScript app/tooling project --------------
+
+    def test_plain_js_is_javascript_app_tooling(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "main.js").write_text("// js\n", encoding="utf-8")
+        _, _, ptype = self._derive()
+        self.assertEqual(ptype.label, "JavaScript app/tooling project")
+        self.assertEqual(ptype.confidence, "medium")
+        self.assertIn("JavaScript", ptype.reason)
+
+    # ---- 5. unknown -> Unclear project type -------------------------
+
+    def test_unknown_repo_is_unclear_project_type(self):
+        (self.repo / "wrapper").mkdir()
+        (self.repo / "wrapper" / "src").mkdir()
+        (self.repo / "wrapper" / "src" / "lib.rs").write_text(
+            "// rs\n", encoding="utf-8")
+        _, _, ptype = self._derive()
+        self.assertEqual(ptype.label, "Unclear project type")
+        self.assertEqual(ptype.confidence, "low")
+        # Reason mentions primary detection and workspace signals.
+        self.assertIn("Primary detection", ptype.reason)
+        self.assertIn("workspace signals", ptype.reason)
+
+    # ---- surface in all four output paths --------------------------
+
+    def test_project_type_surfaces_in_all_outputs(self):
+        # Use the fns-monorepo fixture (Web3 dApp).
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        stack, reality, ptype = self._derive()
+
+        # CLI dry-run.
+        out = self._run_cli()
+        self.assertIn("Project type:", out)
+        self.assertIn("- Label: Web3 dApp", out)
+        self.assertIn("- Confidence: medium", out)
+        self.assertIn("- Reason:", out)
+
+        # HTML report.
+        plan = plan_files(self.repo, stack, self.inputs,
+                          reality=reality, project_type=ptype)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 reality=reality, project_type=ptype)
+        self.assertIn("<h2>Project type</h2>", html)
+        self.assertIn("<strong>Label:</strong> Web3 dApp", html)
+        self.assertIn("<strong>Confidence:</strong> medium", html)
+        self.assertIn("<strong>Reason:</strong>", html)
+
+        # BUILD_PLAN.md.
+        md = generate_build_plan(stack, self.inputs, "Test",
+                                 reality=reality, project_type=ptype)
+        self.assertIn("### Project type", md)
+        self.assertIn("**Label:** Web3 dApp", md)
+        self.assertIn("**Confidence:** medium", md)
+
+        # CLAUDE managed block.
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      reality=reality, project_type=ptype)
+        self.assertIn("### Project type", block)
+        self.assertIn("**Label:** Web3 dApp", block)
+        self.assertIn(START_MARKER, block)
+        self.assertIn(END_MARKER, block)
+
+
 if __name__ == "__main__":
     unittest.main()
