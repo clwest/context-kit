@@ -3388,5 +3388,271 @@ class TestProjectTypeInference(unittest.TestCase):
         self.assertIn(END_MARKER, block)
 
 
+class TestSuggestedActions(unittest.TestCase):
+    """v0.8 Phase 4.3 — derived suggested next actions.
+
+    Five spec'd dogfood-shaped fixtures verifying the rule cascade
+    plus a surface-in-all-outputs test.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _derive_actions(self, *, with_plan=True):
+        """Return (stack, reality, project_type, failures, actions).
+
+        ``with_plan=True`` builds a prelim plan first so
+        IDEMPOTENCY_RISK can fire (mirrors run_adopt's two-pass).
+        """
+        from cli.adopt import (
+            derive_project_type,
+            derive_stack_reality,
+            derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality)
+        if with_plan:
+            prelim_plan = plan_files(self.repo, stack, self.inputs,
+                                     reality=reality, project_type=ptype)
+            failures = analyze_failures(self.repo, stack, prelim_plan)
+        else:
+            failures = prelim
+        actions = derive_suggested_actions(stack, reality, ptype, failures)
+        return stack, reality, ptype, failures, actions
+
+    def _titles(self, actions):
+        return {a.title for a in actions}
+
+    def _run_cli(self):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        return buf.getvalue()
+
+    # ---- 1. fns-monorepo: Web3 dApp + child workspaces -------------
+
+    def test_fns_monorepo_has_contract_workspace_and_inspect_children(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        _, _, _, _, actions = self._derive_actions()
+        titles = self._titles(actions)
+        self.assertIn("Confirm contract workspace", titles,
+                      f"Web3 dApp must include the contract workspace "
+                      f"action; got {titles!r}")
+        self.assertIn("Inspect child workspaces", titles,
+                      f"MONOREPO_DEPTH_LIMIT must trigger the inspect "
+                      f"action; got {titles!r}")
+        # Both should be high priority.
+        for a in actions:
+            if a.title in ("Confirm contract workspace",
+                           "Inspect child workspaces"):
+                self.assertEqual(a.priority, "high")
+
+    # ---- 2. unknown shape: Clarify project shape ------------------
+
+    def test_unknown_repo_has_clarify_project_shape(self):
+        # No root manifest, just a wrapper subdir with a .rs file →
+        # Unclear / Low confidence.
+        (self.repo / "wrapper").mkdir()
+        (self.repo / "wrapper" / "src").mkdir()
+        (self.repo / "wrapper" / "src" / "lib.rs").write_text(
+            "// rs\n", encoding="utf-8")
+        _, reality, _, _, actions = self._derive_actions()
+        self.assertEqual(reality.confidence, "Low")
+        titles = self._titles(actions)
+        self.assertIn("Clarify project shape before coding", titles,
+                      f"Low confidence must trigger clarify action; "
+                      f"got {titles!r}")
+
+    # ---- 3. existing context docs without markers: IDEMPOTENCY_RISK -
+
+    def test_existing_docs_without_markers_triggers_preserve_action(self):
+        # Pre-existing 00-START-NEXT-SESSION.md without our adopt
+        # markers triggers IDEMPOTENCY_RISK during the prelim plan
+        # pass. Suggested actions should pick it up.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "00-START-NEXT-SESSION.md").write_text(
+            "# Hand-written start here\n", encoding="utf-8")
+        _, _, _, failures, actions = self._derive_actions()
+        from cli.adopt import FAILURE_IDEMPOTENCY_RISK
+        self.assertIn(FAILURE_IDEMPOTENCY_RISK,
+                      {f.failure_type for f in failures},
+                      "IDEMPOTENCY_RISK must fire on hand-written "
+                      "00-START-NEXT-SESSION.md")
+        titles = self._titles(actions)
+        self.assertIn("Preserve existing context docs before writing",
+                      titles,
+                      f"IDEMPOTENCY_RISK must trigger the preserve "
+                      f"action; got {titles!r}")
+
+    # ---- 4. clean plain JS fixture: catch-all "Run with --write" ---
+
+    def test_clean_plain_js_fixture_has_run_with_write_action(self):
+        # Truly clean: just root package.json + a root-level .js
+        # file. No subdirs means no needs-clarification entries,
+        # no workspace containers, no IDEMPOTENCY_RISK trigger.
+        # The catch-all is the only action.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        _, _, _, _, actions = self._derive_actions()
+        titles = self._titles(actions)
+        self.assertIn("Run adopt with --write when ready", titles,
+                      f"Clean fixture should hit the catch-all action; "
+                      f"got {titles!r}")
+        # Catch-all is low priority and is the ONLY action when clean.
+        self.assertEqual(len(actions), 1,
+                         f"clean fixture should yield exactly one action; "
+                         f"got {len(actions)}: {titles!r}")
+        self.assertEqual(actions[0].priority, "low")
+
+    # ---- 5. Full-stack web app: Confirm backend/frontend ----------
+
+    def test_full_stack_fixture_has_confirm_boundaries_action(self):
+        # turborepo-django-style: apps/web Next.js + server/ Django.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        web = self.repo / "apps" / "web"
+        web.mkdir()
+        (web / "package.json").write_text("{}", encoding="utf-8")
+        (web / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (web / "app").mkdir()
+        for n in range(3):
+            (web / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "backend").mkdir()
+        (self.repo / "server" / "backend" / "manage.py").write_text(
+            "# d\n", encoding="utf-8")
+        for n in range(5):
+            (self.repo / "server" / "backend" / f"v{n}.py").write_text(
+                "# x\n", encoding="utf-8")
+
+        _, _, ptype, _, actions = self._derive_actions()
+        self.assertEqual(ptype.label, "Full-stack web app")
+        titles = self._titles(actions)
+        self.assertIn("Confirm backend/frontend boundaries", titles,
+                      f"Full-stack web app must include the boundaries "
+                      f"action; got {titles!r}")
+
+    # ---- cap + dedup invariants ----------------------------------
+
+    def test_actions_are_capped_and_deduped(self):
+        # Maximum-rule fixture: Web3 dApp + workspace children + an
+        # existing CLAUDE.md without markers (IDEMPOTENCY_RISK) +
+        # an unrelated unclassified subdir for "Review unclassified
+        # directories". Should fire 4 distinct rules; cap at 5
+        # never reached, but the dedup-by-title invariant holds.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+        (self.repo / "00-START-NEXT-SESSION.md").write_text(
+            "# Hand-written\n", encoding="utf-8")
+        # An unrelated dir for the clarification rule.
+        (self.repo / "scripts").mkdir()
+        (self.repo / "scripts" / "tool.py").write_text("# x\n", encoding="utf-8")
+
+        _, _, _, _, actions = self._derive_actions()
+        # No duplicates by title.
+        titles = [a.title for a in actions]
+        self.assertEqual(len(titles), len(set(titles)),
+                         f"actions must be deduped by title; got {titles!r}")
+        # Capped at 5.
+        self.assertLessEqual(len(actions), 5)
+        # Sorted with high priority first (defensive — implementation
+        # detail but a stable contract for renderers).
+        priority_rank = {"high": 0, "medium": 1, "low": 2}
+        ranks = [priority_rank[a.priority] for a in actions]
+        self.assertEqual(ranks, sorted(ranks),
+                         "actions must be sorted by priority "
+                         "(high before medium before low)")
+
+    # ---- surface in all four output paths ------------------------
+
+    def test_suggested_actions_surface_in_all_outputs(self):
+        # Web3 dApp fixture so we get two rules (Web3 + child
+        # workspaces), enough to verify the section structure.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        stack, reality, ptype, _, actions = self._derive_actions()
+
+        out = self._run_cli()
+        self.assertIn("Suggested next actions (", out)
+        self.assertIn("Confirm contract workspace", out)
+        self.assertIn("[high]", out)
+        self.assertIn("Reason:", out)
+
+        plan = plan_files(self.repo, stack, self.inputs,
+                          reality=reality, project_type=ptype,
+                          actions=actions)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 reality=reality, project_type=ptype,
+                                 actions=actions)
+        self.assertIn("<h2>Suggested next actions (", html)
+        self.assertIn("[high] Confirm contract workspace", html)
+
+        md = generate_build_plan(stack, self.inputs, "Test",
+                                 reality=reality, project_type=ptype,
+                                 actions=actions)
+        self.assertIn("### Suggested next actions (", md)
+        self.assertIn("**[high] Confirm contract workspace**", md)
+
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      reality=reality, project_type=ptype,
+                                      actions=actions)
+        self.assertIn("### Suggested next actions (", block)
+        self.assertIn("**[high] Confirm contract workspace**", block)
+        self.assertIn(START_MARKER, block)
+        self.assertIn(END_MARKER, block)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -868,6 +868,23 @@ def _workspace_stack_pairs(stack: StackProfile) -> list[tuple[str, str]]:
 
 
 @dataclass
+class SuggestedAction:
+    """Phase 4.3 suggested next action.
+
+    Pure derivation — built from ``StackReality`` + ``ProjectType``
+    + the already-detected ``unclassified_subdirs`` + the
+    ``FailureRecord`` list. No new I/O, no AI calls, no extra
+    ecosystem detection. The point is to give the human reader
+    (and the AI session reading the docs) a short prioritized
+    checklist to react to.
+    """
+
+    title: str
+    reason: str
+    priority: str  # "high" | "medium" | "low"
+
+
+@dataclass
 class ProjectType:
     """Phase 4.2 derived project-type label.
 
@@ -1122,6 +1139,134 @@ def _project_type_markdown(ptype: ProjectType) -> list[str]:
         f"- **Confidence:** {ptype.confidence}",
         f"- **Reason:** {ptype.reason}",
     ]
+
+
+# Constants for the suggested-actions cap (Phase 4.3).
+_MAX_SUGGESTED_ACTIONS = 5
+
+
+def derive_suggested_actions(
+    stack: StackProfile,
+    reality: StackReality,
+    project_type: ProjectType,
+    failures: list[FailureRecord],
+) -> list[SuggestedAction]:
+    """Apply Phase 4.3 deterministic rules; return up to 5 actions.
+
+    Rules in priority order (high before medium before low). Each
+    rule emits at most one action; duplicates by title are
+    collapsed; final list is sorted by priority then preserved
+    insertion order; capped at ``_MAX_SUGGESTED_ACTIONS``.
+
+    Pure function. No I/O.
+    """
+    failure_types = {f.failure_type for f in failures}
+    out: list[SuggestedAction] = []
+
+    if project_type.label == "Web3 dApp":
+        out.append(SuggestedAction(
+            title="Confirm contract workspace",
+            reason=("Smart-contract code and frontend code appear to "
+                    "live in separate workspaces."),
+            priority="high",
+        ))
+
+    if reality.confidence == "Low":
+        out.append(SuggestedAction(
+            title="Clarify project shape before coding",
+            reason=("Adopt couldn't infer the project shape; clarifying "
+                    "upfront avoids misleading downstream output."),
+            priority="high",
+        ))
+
+    # Needs-clarification dirs are the v0.8-deduped partition output.
+    signal_subs, data_only_subs = _partition_unclassified(stack)
+    if signal_subs or data_only_subs:
+        out.append(SuggestedAction(
+            title="Review unclassified directories",
+            reason=("These directories exist but adopt couldn't classify "
+                    "their role. Confirm what they are before making "
+                    "changes."),
+            priority="medium",
+        ))
+
+    if FAILURE_MONOREPO_DEPTH_LIMIT in failure_types:
+        out.append(SuggestedAction(
+            title="Inspect child workspaces",
+            reason=("Workspace containers hold child projects adopt's "
+                    "depth-2 walk surfaces but doesn't classify into "
+                    "the primary stack."),
+            priority="high",
+        ))
+
+    if FAILURE_IDEMPOTENCY_RISK in failure_types:
+        out.append(SuggestedAction(
+            title="Preserve existing context docs before writing",
+            reason=("One or more adopt-managed files already exist "
+                    "without our markers. Adopt will skip them to "
+                    "protect your hand-written content."),
+            priority="high",
+        ))
+
+    if project_type.label == "Full-stack web app":
+        out.append(SuggestedAction(
+            title="Confirm backend/frontend boundaries",
+            reason=("Backend and frontend live in different parts of "
+                    "the project; making the boundary explicit reduces "
+                    "mis-edits."),
+            priority="medium",
+        ))
+
+    # Catch-all clean-project action — only when no other rules fired.
+    if not out:
+        out.append(SuggestedAction(
+            title="Run adopt with --write when ready",
+            reason=("Detection looks clean and no clarification "
+                    "directories surfaced. Re-run with --write to "
+                    "apply the plan."),
+            priority="low",
+        ))
+
+    # Deduplicate by title, preserving first occurrence.
+    seen: set[str] = set()
+    deduped: list[SuggestedAction] = []
+    for a in out:
+        if a.title in seen:
+            continue
+        seen.add(a.title)
+        deduped.append(a)
+
+    # Stable sort by priority (high > medium > low); ties keep
+    # insertion order so the rule list above is the visual default.
+    priority_rank = {"high": 0, "medium": 1, "low": 2}
+    deduped.sort(key=lambda a: priority_rank.get(a.priority, 3))
+
+    return deduped[:_MAX_SUGGESTED_ACTIONS]
+
+
+def _suggested_actions_block_dryrun(
+    actions: list[SuggestedAction],
+) -> list[str]:
+    """The "Suggested next actions" block for the CLI dry-run."""
+    if not actions:
+        return []
+    out = ["", f"Suggested next actions ({len(actions)}):"]
+    for a in actions:
+        out.append(f"  - [{a.priority}] {a.title}")
+        out.append(f"      Reason: {a.reason}")
+    return out
+
+
+def _suggested_actions_markdown(
+    actions: list[SuggestedAction],
+) -> list[str]:
+    """The "Suggested next actions" section for Markdown docs."""
+    if not actions:
+        return []
+    out = ["", f"### Suggested next actions ({len(actions)})", ""]
+    for a in actions:
+        out.append(f"- **[{a.priority}] {a.title}** — {a.reason}")
+    return out
 
 
 def _stack_reality_block_dryrun(reality: StackReality) -> list[str]:
@@ -1560,7 +1705,8 @@ def _wrap_in_managed_block(content: str) -> str:
 
 def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
                         *, reality: Optional[StackReality] = None,
-                        project_type: Optional[ProjectType] = None) -> str:
+                        project_type: Optional[ProjectType] = None,
+                        actions: Optional[list[SuggestedAction]] = None) -> str:
     """The minimum BUILD_PLAN.md a freshly-adopted project needs.
 
     The strengthened first prompt (Step 8 of the wizard) tells agents
@@ -1606,6 +1752,11 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
     # are we?" together.
     if project_type is not None:
         body += _project_type_markdown(project_type)
+    # v0.8 Phase 4.3: prioritized suggested next actions. Below
+    # the type label so the reader sees "what is this" then "what
+    # to do".
+    if actions:
+        body += _suggested_actions_markdown(actions)
     # v0.2: visibility-first. Only added when there's something
     # unclassified to surface — clean classified projects still get
     # the same compact tech-stack section as v0.1.
@@ -1696,7 +1847,8 @@ def generate_start_here(inputs: AdoptionInputs, title: str) -> str:
 
 def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: str,
                           *, reality: Optional[StackReality] = None,
-                          project_type: Optional[ProjectType] = None) -> str:
+                          project_type: Optional[ProjectType] = None,
+                          actions: Optional[list[SuggestedAction]] = None) -> str:
     """The managed block we append (or insert) into CLAUDE.md.
 
     Wrapped in markers so re-running ``adopt`` updates these facts in
@@ -1741,6 +1893,10 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
     # v0.8 Phase 4.2: project type carries the same way.
     if project_type is not None:
         lines += _project_type_markdown(project_type)
+    # v0.8 Phase 4.3: suggested next actions in the managed block
+    # so the AI session reading CLAUDE.md sees them up front.
+    if actions:
+        lines += _suggested_actions_markdown(actions)
     if stack.unclassified_subdirs:
         lines += _unknown_present_markdown(stack)
     # v0.8: workspace children get a compact mention in the CLAUDE
@@ -1776,7 +1932,8 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
 
 def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title: str,
                              *, reality: Optional[StackReality] = None,
-                             project_type: Optional[ProjectType] = None) -> str:
+                             project_type: Optional[ProjectType] = None,
+                             actions: Optional[list[SuggestedAction]] = None) -> str:
     """Full CLAUDE.md when none exists yet.
 
     Mirrors the shape of cli/_starter/root/CLAUDE.md but tighter — we
@@ -1785,7 +1942,8 @@ def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title:
     later run ``context-kit init . --force``.
     """
     block = generate_claude_block(stack, inputs, title, reality=reality,
-                                  project_type=project_type)
+                                  project_type=project_type,
+                                  actions=actions)
     return "\n".join([
         f"# CLAUDE / AGENTS — {title}",
         "",
@@ -1844,7 +2002,8 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                       write_mode: bool,
                       failures: Optional[list] = None,
                       reality: Optional[StackReality] = None,
-                      project_type: Optional[ProjectType] = None) -> str:
+                      project_type: Optional[ProjectType] = None,
+                      actions: Optional[list[SuggestedAction]] = None) -> str:
     """Build the full self-contained HTML report.
 
     Six sections per §21:
@@ -1978,6 +2137,34 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             '  </ul>',
             '</section>',
         ]
+
+    # ---- Section 3.9: suggested next actions (v0.8 Phase 4.3) ----
+    # Prioritized checklist derived from the rest of the analysis.
+    # Sits right after Project type so the reader's natural flow
+    # is "what is this -> what should I do about it" before the
+    # report's detailed sections (clarification dirs, plan,
+    # detected issues).
+    actions_html: list[str] = []
+    if actions:
+        # Color the section by the highest priority present.
+        priorities = {a.priority for a in actions}
+        if "high" in priorities:
+            act_card = "card-warn"
+        elif "medium" in priorities:
+            act_card = "card-warn"
+        else:
+            act_card = "card-ok"
+        actions_html = [
+            f'<section class="card {act_card}">',
+            f'  <h2>Suggested next actions ({len(actions)})</h2>',
+            '  <ul class="parts">',
+        ]
+        for a in actions:
+            actions_html.append(
+                f'    <li><strong>[{_esc(a.priority)}] '
+                f'{_esc(a.title)}</strong> — {_esc(a.reason)}</li>'
+            )
+        actions_html += ['  </ul>', '</section>']
 
     # ---- Section 4: needs clarification (formerly Unknown but present) ----
     # v0.2.x: split into "signal" (manifests / extensions / hints / empty)
@@ -2464,6 +2651,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     out.extend(workspace_stack_html)
     out.extend(reality_html)
     out.extend(project_type_html)
+    out.extend(actions_html)
     out.extend(unknown_html)
     out.extend(workspace_html)
     out.extend(failures_html)
@@ -2521,6 +2709,7 @@ def plan_files(
     *,
     reality: Optional[StackReality] = None,
     project_type: Optional[ProjectType] = None,
+    actions: Optional[list[SuggestedAction]] = None,
 ) -> list[PlannedFile]:
     """Build the list of files we'd create / augment / skip, without writing.
 
@@ -2544,7 +2733,7 @@ def plan_files(
     plan.append(_plan_managed_doc(
         repo / "docs" / "BUILD_PLAN.md",
         generate_build_plan(stack, inputs, title, reality=reality,
-                            project_type=project_type),
+                            project_type=project_type, actions=actions),
     ))
     # v0 uses a fixed filename (``PROJECT_WHAT_IT_IS.md``) rather than
     # the slug-based ``<APP>_WHAT_IT_IS.md`` the rest of context-kit
@@ -2566,14 +2755,16 @@ def plan_files(
         plan.append(PlannedFile(
             path=claude_path,
             content=generate_claude_block(stack, inputs, title, reality=reality,
-                                          project_type=project_type),
+                                          project_type=project_type,
+                                          actions=actions),
             kind="augment",
         ))
     else:
         plan.append(PlannedFile(
             path=claude_path,
             content=generate_claude_md_fresh(stack, inputs, title, reality=reality,
-                                             project_type=project_type),
+                                             project_type=project_type,
+                                             actions=actions),
             kind="create",
         ))
     return plan
@@ -3130,12 +3321,22 @@ def run_adopt(args: argparse.Namespace) -> int:
     prelim_failures = analyze_failures(repo, stack, [])
     reality = derive_stack_reality(stack, prelim_failures)
     project_type = derive_project_type(stack, reality)
+    # v0.8 Phase 4.3 — IDEMPOTENCY_RISK is plan-dependent, so we
+    # need a prelim plan to know whether that rule should fire in
+    # suggested_actions. The prelim plan content gets thrown away;
+    # only its skip/create/augment kinds matter here.
+    prelim_plan = plan_files(repo, stack, inputs, reality=reality,
+                             project_type=project_type)
+    failures = analyze_failures(repo, stack, prelim_plan)
+    suggested = derive_suggested_actions(stack, reality, project_type, failures)
+    # Final plan with suggested actions threaded into the persisted
+    # docs (BUILD_PLAN.md / CLAUDE.md) so all four output paths
+    # carry the same prioritized checklist.
     plan = plan_files(repo, stack, inputs, reality=reality,
-                      project_type=project_type)
+                      project_type=project_type, actions=suggested)
 
     write = bool(getattr(args, "write", False))
     actions = apply_plan(plan, dry_run=not write)
-    failures = analyze_failures(repo, stack, plan)
 
     print(f"context-kit adopt — {'WRITE' if write else 'DRY RUN'}")
     print(f"target: {repo}")
@@ -3157,6 +3358,9 @@ def run_adopt(args: argparse.Namespace) -> int:
     # v0.8 Phase 4.2: derived project type, single human-readable
     # label answering "what kind of project is this?".
     for line in _project_type_block_dryrun(project_type):
+        print(line)
+    # v0.8 Phase 4.3: prioritized suggested next actions.
+    for line in _suggested_actions_block_dryrun(suggested):
         print(line)
     # v0.2: visibility-first. Surface unclassified subdirs between the
     # stack line and the plan so the user reads them before scanning
@@ -3208,7 +3412,8 @@ def run_adopt(args: argparse.Namespace) -> int:
                 render_adopt_html(repo, stack, inputs, plan,
                                   write_mode=write, failures=failures,
                                   reality=reality,
-                                  project_type=project_type),
+                                  project_type=project_type,
+                                  actions=suggested),
                 encoding="utf-8",
             )
         except OSError as exc:
