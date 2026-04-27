@@ -5975,5 +5975,215 @@ class TestDiscoveredNotes(unittest.TestCase):
         self.assertEqual(second.count("### Discovered notes"), 1)
 
 
+class TestAgentPromptBehaviorRules(unittest.TestCase):
+    """v0.11.x — Agent Launch Prompt behavior-shaping rules.
+
+    Locks two new sections meant to make agents behave more
+    consistently across repo types: a conditional inspection
+    rule (depth scales with confidence / clarity) and an
+    anti-doc-fallback priority rule (don't default to README
+    polish when there's real work to find).
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _build_prompt(self):
+        from cli.adopt import (
+            analyze_failures,
+            derive_adopt_summary,
+            derive_agent_launch_prompt,
+            derive_project_type,
+            derive_stack_reality,
+            derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        failures = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, failures)
+        pt = derive_project_type(stack, reality, failures)
+        actions = derive_suggested_actions(stack, reality, pt, failures)
+        summary = derive_adopt_summary(stack, reality, pt, actions)
+        inputs = AdoptionInputs(
+            project_description="Test project",
+            next_step="Inspect and propose",
+        )
+        prompt = derive_agent_launch_prompt(
+            stack, reality, pt, summary, inputs=inputs,
+        )
+        return prompt.prompt_text, pt, reality
+
+    def _make_full_stack_repo(self):
+        # Backend Python + frontend JS at depth 1 → split monorepo,
+        # classified as Full-stack web app (medium confidence).
+        (self.repo / "backend").mkdir()
+        (self.repo / "frontend").mkdir()
+        (self.repo / "backend" / "requirements.txt").write_text(
+            "flask\n", encoding="utf-8",
+        )
+        (self.repo / "frontend" / "package.json").write_text(
+            "{}", encoding="utf-8",
+        )
+
+    def _make_unclear_repo(self):
+        # Empty dir → unknown stack → Unclear project type
+        # (low confidence). Adopt's hardest case.
+        pass  # setUp already gave us an empty repo
+
+    def _make_single_stack_repo(self):
+        # Single root JS manifest → JavaScript app/tooling project
+        # (medium confidence).
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+
+    # ---- 1. New sections appear in the prompt ----
+
+    def test_conditional_rule_present_in_full_stack_prompt(self):
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        self.assertIn("HOW TO APPROACH THIS REPO", text)
+        # Three-tier behavior must be visible to the agent.
+        # --- Low / unclear branch: full structured read-through.
+        self.assertIn("structured read-through", text)
+        self.assertIn("entry points (README, main files, "
+                      "routing, configs)", text)
+        self.assertIn("map the system", text)
+        self.assertIn("inconsistencies", text)
+        # --- Medium branch: quick inspection then decide depth.
+        self.assertIn("If confidence is medium", text)
+        self.assertIn("quick inspection", text)
+        self.assertIn(
+            "decide whether the project needs deeper analysis "
+            "or whether you can move directly to a concrete "
+            "first task",
+            text,
+        )
+        # --- High branch: skip and go.
+        self.assertIn(
+            "skip the read-through and go directly to "
+            "identifying the highest-value next task",
+            text,
+        )
+
+    def test_conditional_rule_branches_appear_in_stable_order(self):
+        # The agent reads top-to-bottom; the three branches must
+        # appear in the expected order (low → medium → high) so
+        # the agent picks the right one without ambiguity.
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        idx_low = text.index("structured read-through")
+        idx_medium = text.index("If confidence is medium")
+        idx_high = text.index("If the structure IS clear and "
+                              "confidence is high")
+        self.assertLess(idx_low, idx_medium,
+                        "low branch must come before medium")
+        self.assertLess(idx_medium, idx_high,
+                        "medium branch must come before high")
+
+    def test_priority_rule_present_in_full_stack_prompt(self):
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        self.assertIn("WHAT TO PRIORITIZE", text)
+        self.assertIn("risks", text)
+        self.assertIn("inconsistencies", text)
+        self.assertIn("missing wiring", text)
+        self.assertIn("unused / incomplete features", text)
+        # Anti-doc-fallback language is the load-bearing piece.
+        self.assertIn(
+            "Do not default to documentation updates unless "
+            "the user explicitly asked for them",
+            text,
+        )
+
+    def test_new_sections_present_in_unclear_repo_prompt(self):
+        # Critical case: low/medium confidence is exactly when the
+        # conditional rule should fire. Must be present even when
+        # adopt has very little signal.
+        self._make_unclear_repo()
+        text, pt, _r = self._build_prompt()
+        # Sanity-check we're actually in the low/medium branch.
+        self.assertIn(pt.confidence.lower(), ("low", "medium"))
+        self.assertIn("HOW TO APPROACH THIS REPO", text)
+        self.assertIn("WHAT TO PRIORITIZE", text)
+
+    def test_new_sections_present_in_single_stack_prompt(self):
+        self._make_single_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        self.assertIn("HOW TO APPROACH THIS REPO", text)
+        self.assertIn("WHAT TO PRIORITIZE", text)
+
+    # ---- 2. Placement: between FIRST ACTION and SAFETY ----
+
+    def test_new_sections_sit_between_first_action_and_safety(self):
+        # The conditional + priority rules must appear AFTER the
+        # recommended first action (so the agent reads them as
+        # modulating that action) and BEFORE safety instructions
+        # (which are non-negotiable rails, not behavior shaping).
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        idx_first = text.index("RECOMMENDED FIRST ACTION")
+        idx_how = text.index("HOW TO APPROACH THIS REPO")
+        idx_priority = text.index("WHAT TO PRIORITIZE")
+        idx_safety = text.index("SAFETY INSTRUCTIONS")
+        self.assertLess(idx_first, idx_how,
+                        "HOW TO APPROACH must come after FIRST ACTION")
+        self.assertLess(idx_how, idx_priority,
+                        "WHAT TO PRIORITIZE must come after HOW TO APPROACH")
+        self.assertLess(idx_priority, idx_safety,
+                        "WHAT TO PRIORITIZE must come before SAFETY")
+
+    # ---- 3. Determinism: same inputs => byte-equal prompt ----
+
+    def test_prompt_is_deterministic(self):
+        self._make_full_stack_repo()
+        a, _, _ = self._build_prompt()
+        b, _, _ = self._build_prompt()
+        self.assertEqual(a, b,
+                         "same inputs must produce byte-equal prompt")
+
+    # ---- 4. No regression in pre-existing sections ----
+
+    def test_existing_sections_still_present(self):
+        # The new sections must be additive — every section that
+        # shipped in v0.10.x must still be in the prompt.
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        for required in [
+            "WHAT THIS PROJECT APPEARS TO BE",
+            "USER CONTEXT (provided during adopt)",
+            "PRIMARY DETECTION",
+            "WORKSPACE / PROJECT STRUCTURE",
+            "RECOMMENDED FIRST ACTION",
+            "SAFETY INSTRUCTIONS",
+            "When you're ready to begin work, summarize what "
+            "you read and propose a concrete first task.",
+        ]:
+            self.assertIn(required, text,
+                          f"v0.10.x section missing: {required}")
+
+    def test_new_rules_do_not_duplicate_safety_instructions(self):
+        # Avoid bloat: the new rules must NOT repeat safety
+        # language (no destructive commands, no stack swaps,
+        # etc.). Safety stays in its own section.
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        how_start = text.index("HOW TO APPROACH THIS REPO")
+        safety_start = text.index("SAFETY INSTRUCTIONS")
+        between = text[how_start:safety_start]
+        for safety_phrase in [
+            "destructive commands",
+            "swapping frameworks",
+            "broad refactors",
+            "force-push",
+        ]:
+            self.assertNotIn(
+                safety_phrase, between,
+                f"new rules must not duplicate safety language: "
+                f"{safety_phrase!r}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
