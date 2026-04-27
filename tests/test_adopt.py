@@ -2398,7 +2398,12 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
         records = analyze_failures(self.repo, stack, plan)
         depth = next(r for r in records
                      if r.failure_type == FAILURE_MONOREPO_DEPTH_LIMIT)
-        self.assertIn("surfaced but not yet classified", depth.description)
+        # Phase 3 wording: acknowledges children are surfaced AND
+        # labeled in the workspace stack summary, just not part of
+        # primary classification yet.
+        self.assertIn("surfaced", depth.description)
+        self.assertIn("not yet part of primary classification",
+                      depth.description)
         # Old wording about "invisible to classification" must be gone.
         self.assertNotIn("invisible to classification", depth.description)
         # Label, severity, surface_area unchanged (taxonomy intact).
@@ -2769,6 +2774,240 @@ class TestUnknownButPresentDirNameVisible(unittest.TestCase):
             '<span class="dir-name">apps/web</span>',
             html,
         )
+
+
+class TestWorkspaceStackSummary(unittest.TestCase):
+    """v0.8 Phase 3 — derived per-child stack labels.
+
+    Restricted to four obvious signals (Solidity / Next.js /
+    Flutter / Expo). The summary surfaces in CLI dry-run, HTML
+    report, BUILD_PLAN.md, and the CLAUDE managed block.
+
+    Primary classification (StackProfile.language / parts) is
+    unchanged. The Detection card / "Detected stack:" line stays
+    exactly as before.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run_cli(self):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        return buf.getvalue()
+
+    # ---- fns-monorepo: Solidity + Next.js ---------------------------
+
+    def test_fns_monorepo_workspace_stack_lists_solidity_and_nextjs(self):
+        # apps/forge has foundry.toml + .sol → Solidity.
+        # apps/next has next.config.js + package.json → Next.js.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        # Primary classification UNCHANGED — root package.json wins.
+        self.assertEqual(stack.language, "javascript",
+                         "Phase 3 must not change primary classification")
+        # Derived workspace stack pairs.
+        from cli.adopt import _workspace_stack_pairs
+        pairs = dict(_workspace_stack_pairs(stack))
+        self.assertEqual(pairs.get("apps/forge"),
+                         "Solidity / EVM smart contracts")
+        self.assertEqual(pairs.get("apps/next"),
+                         "Next.js / React web app")
+
+        # CLI surfaces the section.
+        out = self._run_cli()
+        self.assertIn("Workspace stack:", out)
+        self.assertIn("apps/forge", out)
+        self.assertIn("Solidity / EVM smart contracts", out)
+        self.assertIn("apps/next", out)
+        self.assertIn("Next.js / React web app", out)
+        # Original "Detected stack:" line unchanged.
+        self.assertIn("Detected stack: JavaScript / Node.js", out)
+
+        # HTML report.
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        self.assertIn("<h2>Workspace stack</h2>", html)
+        self.assertIn("apps/forge", html)
+        self.assertIn("Solidity / EVM smart contracts", html)
+        self.assertIn("Next.js / React web app", html)
+
+        # BUILD_PLAN.
+        md = generate_build_plan(stack, self.inputs, "Test")
+        self.assertIn("### Workspace stack", md)
+        self.assertIn("**apps/forge** → Solidity / EVM smart contracts", md)
+        self.assertIn("**apps/next** → Next.js / React web app", md)
+
+        # CLAUDE managed block.
+        block = generate_claude_block(stack, self.inputs, "Test")
+        self.assertIn("### Workspace stack", block)
+        self.assertIn("**apps/forge** → Solidity / EVM smart contracts", block)
+        self.assertIn("**apps/next** → Next.js / React web app", block)
+        # Stays inside the managed markers.
+        self.assertIn(START_MARKER, block)
+        self.assertIn(END_MARKER, block)
+
+    # ---- flutter monorepo: Dart ------------------------------------
+
+    def test_flutter_monorepo_workspace_stack_lists_flutter(self):
+        # apps/buyer_app + apps/seller_app each have pubspec.yaml +
+        # .dart files → Flutter / Dart app for each.
+        (self.repo / "melos.yaml").write_text("name: x\n", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app in ("buyer_app", "seller_app"):
+            d = self.repo / "apps" / app
+            d.mkdir()
+            (d / "pubspec.yaml").write_text(
+                f"name: {app}\n", encoding="utf-8")
+            (d / "lib").mkdir()
+            (d / "lib" / "main.dart").write_text("// dart\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        from cli.adopt import _workspace_stack_pairs
+        pairs = dict(_workspace_stack_pairs(stack))
+        self.assertEqual(pairs.get("apps/buyer_app"), "Flutter / Dart app")
+        self.assertEqual(pairs.get("apps/seller_app"), "Flutter / Dart app")
+
+        out = self._run_cli()
+        self.assertIn("Workspace stack:", out)
+        self.assertIn("Flutter / Dart app", out)
+
+        # HTML
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        self.assertIn("<h2>Workspace stack</h2>", html)
+        self.assertIn("Flutter / Dart app", html)
+
+        # BUILD_PLAN + CLAUDE
+        md = generate_build_plan(stack, self.inputs, "Test")
+        block = generate_claude_block(stack, self.inputs, "Test")
+        for doc, label in [(md, "BUILD_PLAN"), (block, "CLAUDE")]:
+            self.assertIn("### Workspace stack", doc,
+                          f"{label} missing workspace stack section")
+            self.assertIn(
+                "**apps/buyer_app** → Flutter / Dart app", doc,
+                f"{label} missing buyer_app row")
+            self.assertIn(
+                "**apps/seller_app** → Flutter / Dart app", doc,
+                f"{label} missing seller_app row")
+
+    # ---- turborepo: Next.js / React for both children ---------------
+
+    def test_turborepo_workspace_stack_lists_nextjs_for_apps(self):
+        # apps/web + apps/docs each have next.config.js + package.json
+        # → Next.js / React web app. The packages/* trivial children
+        # don't match any Phase 3 signal, so they're omitted from
+        # the summary (correct behavior — better than guessing).
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app in ("docs", "web"):
+            d = self.repo / "apps" / app
+            d.mkdir()
+            (d / "package.json").write_text("{}", encoding="utf-8")
+            (d / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (self.repo / "packages").mkdir()
+        for pkg in ("ui", "tsconfig"):
+            d = self.repo / "packages" / pkg
+            d.mkdir()
+            (d / "package.json").write_text("{}", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        from cli.adopt import _workspace_stack_pairs
+        pairs = dict(_workspace_stack_pairs(stack))
+        self.assertEqual(pairs.get("apps/docs"), "Next.js / React web app")
+        self.assertEqual(pairs.get("apps/web"), "Next.js / React web app")
+        # Trivial packages/* children must NOT appear in the summary
+        # (their package.json alone doesn't match a Phase 3 signal).
+        self.assertNotIn("packages/ui", pairs)
+        self.assertNotIn("packages/tsconfig", pairs)
+
+        out = self._run_cli()
+        self.assertIn("Workspace stack:", out)
+        # Two lines, both Next.js. Count occurrences in the
+        # workspace-stack-only slice of the CLI output.
+        ws_start = out.index("Workspace stack:")
+        ws_end = out.find("\n\n", ws_start)
+        ws_section = out[ws_start:ws_end]
+        self.assertEqual(ws_section.count("Next.js / React web app"), 2)
+        self.assertNotIn("packages/", ws_section,
+                         "trivial packages/* children must not appear "
+                         "in the workspace stack summary")
+
+    # ---- plain JS repo: no workspace stack section ------------------
+
+    def test_plain_repo_has_no_workspace_stack_section(self):
+        # Single-stack repo with no apps/ or packages/ — workspace
+        # stack section must be silent across all four output paths
+        # so the v0.7 shape is preserved on simple projects.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "main.js").write_text("// js\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        from cli.adopt import _workspace_stack_pairs
+        self.assertEqual(_workspace_stack_pairs(stack), [])
+
+        out = self._run_cli()
+        self.assertNotIn("Workspace stack:", out)
+
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        self.assertNotIn("<h2>Workspace stack</h2>", html)
+
+        md = generate_build_plan(stack, self.inputs, "Test")
+        self.assertNotIn("Workspace stack", md)
+
+        block = generate_claude_block(stack, self.inputs, "Test")
+        self.assertNotIn("Workspace stack", block)
+
+    # ---- Phase 3 must not change primary classification -------------
+
+    def test_phase3_does_not_change_primary_classification(self):
+        # Same fns-monorepo shape; primary remains "javascript", parts
+        # remain empty (no v0.7 split-monorepo classification fired).
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "javascript")
+        self.assertEqual(stack.parts, {})
+        # Detection HTML card label is unchanged from v0.7.
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        self.assertIn('<p class="lede">JavaScript / Node.js</p>', html)
 
 
 if __name__ == "__main__":

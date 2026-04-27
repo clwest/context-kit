@@ -817,6 +817,56 @@ def scan_workspace_children(repo: Path) -> list[WorkspaceChild]:
 # ---------------------------------------------------------------------------
 
 
+def _classify_workspace_child(c: WorkspaceChild) -> Optional[str]:
+    """Derive a short stack label for a single workspace child.
+
+    v0.8 Phase 3 — *not* a full classifier. Only fires for the four
+    obvious cases the user signed off on, in priority order:
+
+    1. **Expo / React Native** — ``app.config.{js,ts,mjs,cjs}`` is
+       uniquely Expo. Highest priority because it implies React
+       Native rather than browser-Next.js.
+    2. **Solidity / EVM** — ``foundry.toml`` or any ``.sol`` file.
+    3. **Flutter / Dart** — ``pubspec.yaml`` or any ``.dart`` file.
+    4. **Next.js / React** — ``next.config.*`` or ``package.json``
+       with ``.tsx`` / ``.jsx`` source.
+
+    Returns ``None`` for children that don't match any rule. The
+    summary section is silent on those — better than guessing.
+
+    Pure function over the workspace child; no I/O.
+    """
+    mset = set(c.manifest_files)
+    exts = c.notable_extensions
+    if any(m.startswith("app.config.") for m in mset):
+        return "Expo / React Native app"
+    if "foundry.toml" in mset or ".sol" in exts:
+        return "Solidity / EVM smart contracts"
+    if "pubspec.yaml" in mset or ".dart" in exts:
+        return "Flutter / Dart app"
+    if any(m.startswith("next.config.") for m in mset):
+        return "Next.js / React web app"
+    if "package.json" in mset and (".tsx" in exts or ".jsx" in exts):
+        return "Next.js / React web app"
+    return None
+
+
+def _workspace_stack_pairs(stack: StackProfile) -> list[tuple[str, str]]:
+    """Return ``(child_name, stack_label)`` pairs for children with a label.
+
+    Children that ``_classify_workspace_child`` returns ``None`` for
+    are dropped — the workspace-stack summary stays trustworthy by
+    only listing children whose stack is unambiguous from the
+    Phase 3 signal set.
+    """
+    out: list[tuple[str, str]] = []
+    for c in stack.workspace_children:
+        label = _classify_workspace_child(c)
+        if label is not None:
+            out.append((c.name, label))
+    return out
+
+
 def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -989,6 +1039,49 @@ def _unknown_present_block_dryrun(stack: StackProfile) -> list[str]:
         out.append(
             f"  Data / content / non-code dirs ({len(data_only)}): {names}"
         )
+    return out
+
+
+def _workspace_stack_block_dryrun(stack: StackProfile) -> list[str]:
+    """The "Workspace stack" derived-summary block for the CLI dry-run.
+
+    v0.8 Phase 3 — surfaces ``_workspace_stack_pairs`` as a compact
+    aligned list right after the "Detected stack:" line so the AI
+    session sees per-child stack labels at the top, before scanning
+    the full Workspace children section. Silent when no labelled
+    children exist.
+    """
+    pairs = _workspace_stack_pairs(stack)
+    if not pairs:
+        return []
+    out = ["", "Workspace stack:"]
+    name_width = max(len(n) for n, _ in pairs)
+    for name, label in pairs:
+        out.append(f"  {name.ljust(name_width)}  -> {label}")
+    return out
+
+
+def _workspace_stack_markdown(stack: StackProfile) -> list[str]:
+    """The "Workspace stack" derived-summary section for Markdown docs.
+
+    Used by both BUILD_PLAN.md and the CLAUDE managed block. Short,
+    bullet-per-child format. Silent when no labelled children exist.
+    """
+    pairs = _workspace_stack_pairs(stack)
+    if not pairs:
+        return []
+    out = [
+        "",
+        "### Workspace stack",
+        "",
+        "Derived stack labels for the depth-2 child projects. The",
+        "primary classification line above is unchanged — this is a",
+        "read-only summary based on each child's manifest / extension",
+        "signals.",
+        "",
+    ]
+    for name, label in pairs:
+        out.append(f"- **{name}** → {label}")
     return out
 
 
@@ -1199,6 +1292,9 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str)
         body.append("")
         for note in stack.notes:
             body.append(f"> Note: {note}")
+    # v0.8 Phase 3: derived workspace stack summary. Read-only —
+    # primary classification (Tech stack above) is unchanged.
+    body += _workspace_stack_markdown(stack)
     # v0.2: visibility-first. Only added when there's something
     # unclassified to surface — clean classified projects still get
     # the same compact tech-stack section as v0.1.
@@ -1316,6 +1412,10 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
     # too, so an AI session reading the entry-point doc can't miss
     # them. Same content as BUILD_PLAN's "Unknown but present" but
     # rendered as bullets under a new H3 inside the managed block.
+    # v0.8 Phase 3: derived workspace stack labels surface inside
+    # the managed block too so the AI session sees per-child stack
+    # info in CLAUDE.md without cross-reading BUILD_PLAN.md.
+    lines += _workspace_stack_markdown(stack)
     if stack.unclassified_subdirs:
         lines += _unknown_present_markdown(stack)
     # v0.8: workspace children get a compact mention in the CLAUDE
@@ -1470,6 +1570,29 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                 f'{_esc(_lang_label(lang))}{from_clause}</li>'
             )
         parts_html += ['  </ul>', '</section>']
+
+    # ---- Section 3.5: workspace stack (v0.8 Phase 3) ----
+    # Derived per-child stack labels. The primary "Detection" card
+    # above is unchanged — this section sits right after it so the
+    # eye reads "primary stack, then per-child stacks" in one
+    # glance. Silent when no labelled workspace children.
+    workspace_stack_html: list[str] = []
+    ws_stack_pairs = _workspace_stack_pairs(stack)
+    if ws_stack_pairs:
+        workspace_stack_html = [
+            '<section class="card card-ok">',
+            '  <h2>Workspace stack</h2>',
+            '  <p class="meta">Derived stack labels for depth-2 child '
+            'projects. Primary classification above is unchanged — '
+            'this is a read-only summary based on each child\'s '
+            'manifest / extension signals.</p>',
+            '  <ul class="parts">',
+        ]
+        for name, label in ws_stack_pairs:
+            workspace_stack_html.append(
+                f'    <li><strong>{_esc(name)}</strong> → {_esc(label)}</li>'
+            )
+        workspace_stack_html += ['  </ul>', '</section>']
 
     # ---- Section 4: unknown but present (THE main focus) ----
     # v0.2.x: split into "signal" (manifests / extensions / hints / empty)
@@ -1953,6 +2076,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     out.extend(header_html)
     out.extend(detection_html)
     out.extend(parts_html)
+    out.extend(workspace_stack_html)
     out.extend(unknown_html)
     out.extend(workspace_html)
     out.extend(failures_html)
@@ -2571,9 +2695,9 @@ def analyze_failures(repo: Path, stack: StackProfile,
             severity="high",
             surface_area="visibility",
             description=(
-                f"{u.name}/ is a workspace container. Child projects "
-                f"are surfaced but not yet classified into the "
-                f"primary stack."
+                f"{u.name}/ is a workspace container. Child workspaces "
+                f"are surfaced (and labeled in the workspace stack "
+                f"summary) but not yet part of primary classification."
             ),
             detected_in=u.name,
             example=deepest,
@@ -2611,6 +2735,11 @@ def run_adopt(args: argparse.Namespace) -> int:
     if stack.notes:
         for note in stack.notes:
             print(f"  note: {note}")
+    # v0.8 Phase 3: derived workspace stack labels — sit right
+    # under the primary detection line so the AI session sees them
+    # together. Silent when no labelled children.
+    for line in _workspace_stack_block_dryrun(stack):
+        print(line)
     # v0.2: visibility-first. Surface unclassified subdirs between the
     # stack line and the plan so the user reads them before scanning
     # the file list. Silent when there's nothing to surface.
