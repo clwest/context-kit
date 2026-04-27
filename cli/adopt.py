@@ -1383,6 +1383,25 @@ def derive_project_type(stack: StackProfile,
                for u in stack.unclassified_subdirs)
     )
 
+    # v0.10.x — v0.1 split-monorepo Full-stack signal. The
+    # workspace-based has_nextjs check above only fires when a
+    # Phase 3 workspace child carries the Next.js label; it
+    # misses the classic backend/ + frontend/ split monorepo
+    # (contract-concierge, focus-flow, etc.). Recognize that
+    # shape via the stack.parts table directly: a Python
+    # backend role AND a JavaScript frontend role.
+    _BACKEND_ROLES = ("backend", "server", "api")
+    _FRONTEND_ROLES = ("frontend", "web", "client")
+    py_backend_part = next(
+        (r for r in _BACKEND_ROLES if stack.parts.get(r) == "python"),
+        None,
+    )
+    js_frontend_part = next(
+        (r for r in _FRONTEND_ROLES if stack.parts.get(r) == "javascript"),
+        None,
+    )
+    has_full_stack_via_parts = bool(py_backend_part and js_frontend_part)
+
     # Phase 5.4 — smart-contract evidence collection. Three sources:
     # workspace Solidity child, depth-1 dir with many .sol files, or
     # a root smart-contract framework config (visible via failure
@@ -1442,13 +1461,30 @@ def derive_project_type(stack: StackProfile,
             ),
         )
 
-    # ---- Rule 3: Full-stack web app (Python + Next.js) ----
-    if python_anywhere and has_nextjs:
+    # ---- Rule 3: Full-stack web app ----
+    # Two paths:
+    #   (a) workspace contains a Next.js child AND there's a
+    #       Python signal anywhere (turborepo + Django shape).
+    #   (b) v0.1 split-monorepo with a Python backend role
+    #       (backend/server/api) AND a JavaScript frontend role
+    #       (frontend/web/client). Catches contract-concierge /
+    #       focus-flow / dealflowtracker / sellerpilot etc.
+    if (python_anywhere and has_nextjs) or has_full_stack_via_parts:
+        if has_full_stack_via_parts:
+            reason = (
+                f"Recognized split monorepo with a Python backend "
+                f"({py_backend_part}/) and a JavaScript frontend "
+                f"({js_frontend_part}/)."
+            )
+        else:
+            reason = (
+                "Python (likely Django) backend plus a Next.js / "
+                "React frontend in the workspace."
+            )
         return ProjectType(
             label="Full-stack web app",
             confidence="medium",
-            reason=("Python (likely Django) backend plus a Next.js / "
-                    "React frontend in the workspace."),
+            reason=reason,
         )
 
     # ---- Rule 4: Mobile app suite (Flutter or React Native, no web/contract) ----

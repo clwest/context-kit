@@ -5044,5 +5044,175 @@ class TestAgentLaunchPrompt(unittest.TestCase):
         self.assertIn("SAFETY INSTRUCTIONS", out)
 
 
+class TestSplitMonorepoFullStackProjectType(unittest.TestCase):
+    """v0.10.x — close the v0.1 split-monorepo gap in
+    ``derive_project_type``. Before this fix, contract-concierge
+    (backend/ Python + frontend/ Vite) classified as "Unclear
+    project type" because the Full-stack web app rule only
+    handled the workspace-children case (Phase 4.2 Rule 3 a).
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _derive(self):
+        from cli.adopt import (
+            derive_adopt_summary, derive_agent_launch_prompt,
+            derive_project_type, derive_stack_reality,
+            derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality, prelim)
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+        prompt = derive_agent_launch_prompt(stack, reality, ptype, summary)
+        return stack, reality, ptype, summary, prompt
+
+    def _build_cc_fixture(self):
+        # contract-concierge shape: backend/ Python + frontend/
+        # Vite + .tsx. No root manifest of its own.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "requirements.txt").write_text(
+            "flask\n", encoding="utf-8")
+        (self.repo / "backend" / "app").mkdir()
+        for n in range(5):
+            (self.repo / "backend" / "app" / f"v{n}.py").write_text(
+                "# py\n", encoding="utf-8")
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        (self.repo / "frontend" / "vite.config.ts").write_text(
+            "// vite\n", encoding="utf-8")
+        (self.repo / "frontend" / "src").mkdir()
+        for n in range(3):
+            (self.repo / "frontend" / "src" / f"App{n}.tsx").write_text(
+                "// tsx\n", encoding="utf-8")
+
+    def test_contract_concierge_shape_is_full_stack_web_app(self):
+        self._build_cc_fixture()
+        stack, _, ptype, _, _ = self._derive()
+        # Detection unchanged — v0.1 split-monorepo path produces
+        # parts={backend: python, frontend: javascript}.
+        self.assertEqual(stack.parts.get("backend"), "python")
+        self.assertEqual(stack.parts.get("frontend"), "javascript")
+        # Project type is now Full-stack web app, not Unclear.
+        self.assertEqual(ptype.label, "Full-stack web app")
+        self.assertEqual(ptype.confidence, "medium")
+        # Reason names the backend + frontend parts concretely.
+        self.assertIn("backend/", ptype.reason)
+        self.assertIn("frontend/", ptype.reason)
+        self.assertIn("Python backend", ptype.reason)
+        self.assertIn("JavaScript frontend", ptype.reason)
+
+    def test_full_stack_via_parts_drives_agent_prompt_branch(self):
+        # Once Project Type promotes to Full-stack web app, the
+        # agent launch prompt's recommended-first-action branch
+        # should mention the backend/frontend boundary.
+        self._build_cc_fixture()
+        _, _, _, _, prompt = self._derive()
+        self.assertIn("backend/frontend boundary", prompt.prompt_text)
+
+    def test_stack_reality_stays_mixed_workspace_project_medium(self):
+        # The Stack reality categorization for a v0.1 split monorepo
+        # remains "Mixed workspace project / Medium" — Phase 5.1's
+        # mixed-root rule doesn't fire (no JS+Python at root) and
+        # the parts-based Mixed-workspace rule already handled
+        # this case correctly. Phase 5.x must not regress that.
+        self._build_cc_fixture()
+        _, reality, _, _, _ = self._derive()
+        self.assertEqual(reality.assessment, "Mixed workspace project")
+        self.assertEqual(reality.confidence, "Medium")
+
+    # ---- Regression: server/api/client variants also work ---------
+
+    def test_server_plus_client_split_promotes_to_full_stack(self):
+        # The fix accepts any (backend|server|api) Python + any
+        # (frontend|web|client) JavaScript pair.
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "manage.py").write_text(
+            "# d\n", encoding="utf-8")
+        (self.repo / "client").mkdir()
+        (self.repo / "client" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        _, _, ptype, _, _ = self._derive()
+        self.assertEqual(ptype.label, "Full-stack web app")
+        self.assertIn("server/", ptype.reason)
+        self.assertIn("client/", ptype.reason)
+
+    # ---- Negative regression: backend-only doesn't trigger --------
+
+    def test_backend_only_python_split_stays_unclear(self):
+        # Only backend/ has a Python manifest — no JavaScript
+        # frontend role. Must NOT promote to Full-stack web app.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "requirements.txt").write_text(
+            "flask\n", encoding="utf-8")
+        for n in range(3):
+            (self.repo / "backend" / f"v{n}.py").write_text(
+                "# py\n", encoding="utf-8")
+        _, _, ptype, _, _ = self._derive()
+        self.assertNotEqual(ptype.label, "Full-stack web app")
+
+    def test_frontend_only_js_split_stays_unclear(self):
+        # Symmetric: only frontend/ — no backend. Must NOT promote.
+        (self.repo / "frontend").mkdir()
+        (self.repo / "frontend" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        _, _, ptype, _, _ = self._derive()
+        self.assertNotEqual(ptype.label, "Full-stack web app")
+
+    def test_mobile_role_does_not_count_as_frontend(self):
+        # Mobile is a distinct role, not generic frontend. A
+        # backend/ Python + mobile/ JS pair must NOT silently
+        # promote to Full-stack web app — that would mislabel a
+        # mobile-app-with-server project.
+        (self.repo / "backend").mkdir()
+        (self.repo / "backend" / "requirements.txt").write_text(
+            "flask\n", encoding="utf-8")
+        (self.repo / "mobile").mkdir()
+        (self.repo / "mobile" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        _, _, ptype, _, _ = self._derive()
+        self.assertNotEqual(ptype.label, "Full-stack web app")
+
+    # ---- Regression: workspace path Full-stack still works --------
+
+    def test_workspace_path_full_stack_still_fires(self):
+        # turborepo-django shape: root package.json + apps/web
+        # (Next.js) + server/backend/manage.py. The workspace
+        # path was the only Full-stack route before this fix and
+        # must still fire.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        web = self.repo / "apps" / "web"
+        web.mkdir()
+        (web / "package.json").write_text("{}", encoding="utf-8")
+        (web / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (web / "app").mkdir()
+        for n in range(3):
+            (web / "app" / f"p{n}.tsx").write_text(
+                "// tsx\n", encoding="utf-8")
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "backend").mkdir()
+        (self.repo / "server" / "backend" / "manage.py").write_text(
+            "# d\n", encoding="utf-8")
+        for n in range(5):
+            (self.repo / "server" / "backend" / f"v{n}.py").write_text(
+                "# x\n", encoding="utf-8")
+        _, _, ptype, _, _ = self._derive()
+        self.assertEqual(ptype.label, "Full-stack web app")
+        # Reason should still call out Python + Next.js (workspace
+        # path), not the parts path — workspace evidence wins
+        # because it sets has_nextjs True before parts are checked.
+        self.assertIn("Next.js", ptype.reason)
+
+
 if __name__ == "__main__":
     unittest.main()
