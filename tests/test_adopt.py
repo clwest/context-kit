@@ -4653,8 +4653,16 @@ class TestEcosystemCoverage(unittest.TestCase):
         # But project type is now Smart contract project.
         self.assertEqual(ptype.label, "Smart contract project")
         self.assertEqual(ptype.confidence, "medium")
-        # Reason names concrete evidence.
-        self.assertIn("hardhat.config.js", ptype.reason)
+        # Reason names concrete evidence. The root-config example
+        # is sorted alphabetically for determinism — "foundry.toml"
+        # < "hardhat.config.js" so foundry wins when both are at
+        # root. Either is correct evidence.
+        self.assertTrue(
+            "foundry.toml" in ptype.reason
+            or "hardhat.config.js" in ptype.reason,
+            f"reason should name a root smart-contract config; "
+            f"got: {ptype.reason!r}",
+        )
         self.assertIn(".sol files", ptype.reason)
 
     def test_smart_contract_workspace_only_via_solidity_child(self):

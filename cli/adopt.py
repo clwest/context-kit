@@ -1370,10 +1370,13 @@ def derive_project_type(stack: StackProfile,
     # a root smart-contract framework config (visible via failure
     # examples since stack.signals only carries the four classifier-
     # tracked manifests).
-    sc_root_config = next(
-        iter(failure_examples & _SMART_CONTRACT_ROOT_CONFIGS),
-        None,
-    )
+    # Sort so the picked config is deterministic when more than
+    # one smart-contract framework lives at root (e.g. openzeppelin
+    # has both hardhat.config.js AND foundry.toml). Without this,
+    # set iteration order leaks into the reason text and the same
+    # project would render different copy across runs.
+    sc_root_configs = sorted(failure_examples & _SMART_CONTRACT_ROOT_CONFIGS)
+    sc_root_config = sc_root_configs[0] if sc_root_configs else None
     heavy_sol_dir = next(
         (u for u in stack.unclassified_subdirs
          if u.notable_extensions.get(".sol", 0)
