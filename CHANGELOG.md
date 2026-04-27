@@ -9,6 +9,73 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-04-27
+
+**Preserve-context loop closed.** The Agent Launch Prompt now
+asks the agent to end its initial inspection response with a
+copy-paste command that captures findings via `--notes`. One
+copy → one paste → findings persist into BUILD_PLAN.md,
+00-START-NEXT-SESSION.md, and the CLAUDE.md managed block
+automatically. No more hand-copying inspection output into a
+follow-up `--write` run.
+
+### Added — `TO PRESERVE THIS CONTEXT` section
+
+- **New section** sits between SAFETY INSTRUCTIONS and the
+  closing wrap-up line of the Agent Launch Prompt. Embeds the
+  exact `context-kit adopt . --write` command pre-wired with
+  three placeholders the agent fills in:
+  - `<refined one-sentence project summary>` → `--project-summary`
+  - `<recommended next task>` → `--next-task`
+  - `<key findings from this inspection>` → `--notes`
+- **Five guardrails** for what the agent emits:
+  1. Notes must be concise but specific (real risks, missing
+     wiring, stale docs, dirty git state, incomplete features)
+  2. Do not include secrets, tokens, or credentials in any value
+  3. Escape quotes (`\"`) inside values, or rephrase to avoid
+     quotes
+  4. If no meaningful findings exist, omit `--notes`
+  5. Do not run the command yourself — emit it for the user to
+     copy
+
+### Why this exists
+
+The v0.11.0 / v0.11.1 work made agents do good initial
+inspection (deep findings instead of "let me update the
+README"). But the user then had to hand-summarize those
+findings into a `--notes` flag manually for the follow-up
+`--write` run — a clunky context-loss step. This release
+makes the agent emit the whole `--write` line itself, so the
+preservation loop closes in one paste.
+
+### Validated against
+
+Local testing on mentorforge (FastAPI + React/Vite split with
+real production findings: Stripe/CORS/auth issues). The agent
+correctly:
+- Performed the same depth of inspection as prior tests
+- Ended its response with a complete `context-kit adopt . --write`
+  command
+- Filled `--notes` with real findings (no placeholders, no
+  secrets)
+- Did not execute the command — emitted it for the user
+
+### Tests
+
+8 new tests in `TestAgentPromptBehaviorRules` lock the section
+header, the embedded command + all three flags + all three
+placeholders, the anti-secrets warning, the emit-don't-run
+guard, the omit-notes-when-empty guidance, the placement
+contract (SAFETY → PRESERVATION → WRAP-UP), and rendering
+across unclear / single-stack / full-stack repos. 489/489
+tests green.
+
+### Scope
+
+Patch level (not minor). No new flags, no new dataclasses,
+no detection logic changes — only additive text in the
+Agent Launch Prompt body.
+
 ## [0.11.1] — 2026-04-27
 
 **Agent-behavior shaping in the launch prompt.** Two scoped
