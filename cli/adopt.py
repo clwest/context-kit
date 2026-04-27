@@ -2057,6 +2057,7 @@ def derive_agent_launch_prompt(
     reality: StackReality,
     project_type: ProjectType,
     summary: AdoptSummary,
+    inputs: Optional[AdoptionInputs] = None,
 ) -> AgentLaunchPrompt:
     """Build a copy-paste prompt for an AI coding agent.
 
@@ -2064,6 +2065,13 @@ def derive_agent_launch_prompt(
     self-contained text block the user can paste as the first
     message to their AI agent (Claude Code, Cursor, Aider, etc.)
     after running ``context-kit adopt``.
+
+    ``inputs`` (optional) carries the two answers the user gave
+    to the adopt prompts. When provided, a USER CONTEXT block
+    surfaces them verbatim so the agent sees both adopt's
+    derived view and the human's framing in one place. Defaults
+    to a placeholder so existing test callers that don't thread
+    inputs still work.
 
     Confidence mirrors ``reality.confidence`` (lowercased) — if
     adopt isn't sure about the project shape, the prompt isn't
@@ -2079,6 +2087,17 @@ def derive_agent_launch_prompt(
 
     first_action = _agent_first_action_for(project_type, summary)
 
+    # USER CONTEXT — the human's two answers verbatim. Empty
+    # answers fall back to the canonical placeholder so the
+    # agent sees the marker (and the soft framing applies).
+    placeholder = "[adopt: please describe]"
+    user_desc_for_prompt = (
+        inputs.project_description.strip() if inputs else ""
+    ) or placeholder
+    user_next_for_prompt = (
+        inputs.next_step.strip() if inputs else ""
+    ) or placeholder
+
     prompt_text = (
         "You are working in a project that context-kit just "
         "adopted. Before writing any code, do the following.\n"
@@ -2087,6 +2106,10 @@ def derive_agent_launch_prompt(
         f"{project_type.label} ({project_type.confidence} "
         f"confidence)\n"
         f"Reasoning: {project_type.reason}\n"
+        "\n"
+        "USER CONTEXT (from the two adopt prompts)\n"
+        f"- Project (per the user): {user_desc_for_prompt}\n"
+        f"- Next task (per the user): {user_next_for_prompt}\n"
         "\n"
         "PRIMARY DETECTION\n"
         f"{reality.primary}\n"
@@ -3967,15 +3990,35 @@ def apply_plan(plan: list[PlannedFile], dry_run: bool) -> list[str]:
 
 
 def collect_inputs(
-    prompt_fn: Callable[[str], str] = input,
+    prompt_fn: Optional[Callable[[str], str]] = None,
     description: Optional[str] = None,
     next_step: Optional[str] = None,
 ) -> AdoptionInputs:
-    """Ask the two questions. Tests inject ``prompt_fn`` and overrides."""
+    """Ask the two questions exactly once each.
+
+    v0.10.x — wording sharpened so the user understands what the
+    answer is for. Each question is asked at most once per adopt
+    run; the resulting answers are reused by every downstream
+    renderer (BUILD_PLAN, PROJECT_WHAT_IT_IS, CLAUDE.md,
+    00-START-NEXT-SESSION.md, Agent Launch Prompt, CLI / HTML
+    previews). Callers that already have the answers (CLI flags
+    ``--project-summary`` / ``--next-task``, tests, the wizard)
+    pass them as overrides and no prompt fires.
+
+    ``prompt_fn`` defaults to ``builtins.input`` resolved at call
+    time (NOT capture-at-import) so tests can monkey-patch
+    ``builtins.input`` without re-binding this default.
+    """
+    if prompt_fn is None:
+        prompt_fn = input
     if description is None:
-        description = prompt_fn("What is this project? ").strip()
+        description = prompt_fn(
+            "In one sentence, what is this project? "
+        ).strip()
     if next_step is None:
-        next_step = prompt_fn("What are you trying to do next? ").strip()
+        next_step = prompt_fn(
+            "What should the next AI session help with? "
+        ).strip()
     return AdoptionInputs(
         project_description=description,
         next_step=next_step,
@@ -4399,9 +4442,21 @@ def run_adopt(args: argparse.Namespace) -> int:
         return 1
 
     stack = detect_stack(repo)
+    # v0.10.x — accept the new CLI flag names (--project-summary
+    # / --next-task) AND the legacy attribute names that test
+    # namespaces still set (description / next_step). New flags
+    # take precedence when both are present.
+    desc_override = (
+        getattr(args, "project_summary", None)
+        or getattr(args, "description", None)
+    )
+    next_override = (
+        getattr(args, "next_task", None)
+        or getattr(args, "next_step", None)
+    )
     inputs = collect_inputs(
-        description=getattr(args, "description", None),
-        next_step=getattr(args, "next_step", None),
+        description=desc_override,
+        next_step=next_override,
     )
 
     # v0.8 Phase 4.1 — two-pass failure analysis. Pass 1 derives
@@ -4432,7 +4487,8 @@ def run_adopt(args: argparse.Namespace) -> int:
     # other derive_*() calls so it ships with the rest of the
     # decision layer.
     agent_prompt = derive_agent_launch_prompt(stack, reality,
-                                              project_type, summary)
+                                              project_type, summary,
+                                              inputs=inputs)
     # Final plan with summary + agent prompt threaded into the
     # persisted docs.
     plan = plan_files(repo, stack, inputs, reality=reality,

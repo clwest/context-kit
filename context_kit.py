@@ -306,6 +306,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Don't auto-open the HTML report in the browser (tests / headless / CI).",
     )
+    adopt.add_argument(
+        "--project-summary",
+        dest="project_summary",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "One-sentence project summary. If passed, adopt does not "
+            "prompt for 'In one sentence, what is this project?'. The "
+            "value is reused everywhere the project description is "
+            "needed (BUILD_PLAN, PROJECT_WHAT_IT_IS, CLAUDE.md, "
+            "Agent Launch Prompt)."
+        ),
+    )
+    adopt.add_argument(
+        "--next-task",
+        dest="next_task",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "What the next AI session should help with. If passed, "
+            "adopt does not prompt for 'What should the next AI "
+            "session help with?'. Reused in BUILD_PLAN, "
+            "00-START-NEXT-SESSION.md, the Agent Launch Prompt, and "
+            "the CLI / HTML preview."
+        ),
+    )
 
     return parser
 

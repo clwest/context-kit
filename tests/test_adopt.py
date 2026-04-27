@@ -5438,5 +5438,279 @@ class TestPostWriteAgentLaunchFlow(unittest.TestCase):
                       body)
 
 
+class TestStreamlinedPromptFlow(unittest.TestCase):
+    """v0.10.x — minimum-questions-once prompt flow.
+
+    Locks the new wording, the ask-each-question-exactly-once
+    invariant, the answer-reuse contract across all generated
+    docs / prompts, and the new --project-summary / --next-task
+    CLI flags that skip the interactive prompts.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # ---- 1. Each question asked exactly once with new wording ----
+
+    def test_collect_inputs_asks_each_question_once_with_new_wording(self):
+        from cli.adopt import collect_inputs
+        prompts: list[str] = []
+
+        def fake_input(prompt: str) -> str:
+            prompts.append(prompt)
+            if "what is this project" in prompt.lower():
+                return "Demo project"
+            return "Wire up the agent"
+
+        result = collect_inputs(prompt_fn=fake_input)
+        # Exactly two prompts.
+        self.assertEqual(len(prompts), 2,
+                         f"each question must fire once, got: "
+                         f"{prompts!r}")
+        # New wording.
+        self.assertEqual(prompts[0],
+                         "In one sentence, what is this project? ")
+        self.assertEqual(prompts[1],
+                         "What should the next AI session help with? ")
+        # Answers carried into the dataclass.
+        self.assertEqual(result.project_description, "Demo project")
+        self.assertEqual(result.next_step, "Wire up the agent")
+
+    def test_collect_inputs_with_overrides_does_not_prompt(self):
+        # When both answers are passed in, prompt_fn must not fire
+        # at all — the --project-summary / --next-task path.
+        from cli.adopt import collect_inputs
+        prompts: list[str] = []
+
+        def fake_input(prompt: str) -> str:
+            prompts.append(prompt)
+            return "should not be called"
+
+        result = collect_inputs(
+            prompt_fn=fake_input,
+            description="Pre-supplied summary",
+            next_step="Pre-supplied next task",
+        )
+        self.assertEqual(prompts, [],
+                         f"no prompts should fire when both "
+                         f"overrides are provided; got {prompts!r}")
+        self.assertEqual(result.project_description,
+                         "Pre-supplied summary")
+        self.assertEqual(result.next_step, "Pre-supplied next task")
+
+    def test_collect_inputs_partial_override_only_prompts_remaining(self):
+        # Only project description provided -> only the next-task
+        # prompt fires.
+        from cli.adopt import collect_inputs
+        prompts: list[str] = []
+
+        def fake_input(prompt: str) -> str:
+            prompts.append(prompt)
+            return "Just the next task"
+
+        result = collect_inputs(
+            prompt_fn=fake_input,
+            description="Skip the first prompt",
+        )
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("next AI session", prompts[0])
+        self.assertEqual(result.project_description,
+                         "Skip the first prompt")
+        self.assertEqual(result.next_step, "Just the next task")
+
+    # ---- 2. Answers reused across all generated docs / prompts ----
+
+    def test_user_answers_reused_in_all_generated_outputs(self):
+        # Run adopt --write with a known description + next-task,
+        # then verify the verbatim strings appear in BUILD_PLAN.md,
+        # PROJECT_WHAT_IT_IS.md, 00-START-NEXT-SESSION.md,
+        # CLAUDE.md, and the Agent Launch Prompt body.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        DESC = "demo project for prompt-flow regression"
+        NXT = "verify reuse across every generated doc"
+        run_adopt(_ns(self.repo, write=True,
+                      description=DESC, next_step=NXT))
+        for fname in ("docs/BUILD_PLAN.md",
+                      "docs/PROJECT_WHAT_IT_IS.md",
+                      "00-START-NEXT-SESSION.md",
+                      "CLAUDE.md"):
+            body = (self.repo / fname).read_text(encoding="utf-8")
+            self.assertIn(DESC, body,
+                          f"project description must appear in "
+                          f"{fname}; got:\n{body[:600]}")
+        # Next-task is in BUILD_PLAN, START, and CLAUDE managed
+        # block (PROJECT_WHAT_IT_IS doesn't show next steps).
+        for fname in ("docs/BUILD_PLAN.md",
+                      "00-START-NEXT-SESSION.md",
+                      "CLAUDE.md"):
+            body = (self.repo / fname).read_text(encoding="utf-8")
+            self.assertIn(NXT, body,
+                          f"next-task must appear in {fname}; "
+                          f"got:\n{body[:600]}")
+
+    def test_user_answers_appear_verbatim_in_agent_launch_prompt(self):
+        # The Agent Launch Prompt body must surface both answers
+        # verbatim under a USER CONTEXT section so the agent sees
+        # the human's framing alongside adopt's derived view.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        DESC = "user context project description"
+        NXT = "user context next task"
+        from cli.adopt import (
+            derive_adopt_summary, derive_agent_launch_prompt,
+            derive_project_type, derive_stack_reality,
+            derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality, prelim)
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+        inputs = AdoptionInputs(project_description=DESC, next_step=NXT)
+        prompt = derive_agent_launch_prompt(
+            stack, reality, ptype, summary, inputs=inputs,
+        )
+        text = prompt.prompt_text
+        self.assertIn("USER CONTEXT", text)
+        self.assertIn(DESC, text)
+        self.assertIn(NXT, text)
+
+    def test_agent_prompt_falls_back_to_placeholder_without_inputs(self):
+        # When inputs is None (legacy callers / tests not
+        # threading inputs), USER CONTEXT still renders but the
+        # values fall back to the canonical placeholder.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        from cli.adopt import (
+            derive_adopt_summary, derive_agent_launch_prompt,
+            derive_project_type, derive_stack_reality,
+            derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality, prelim)
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+        prompt = derive_agent_launch_prompt(
+            stack, reality, ptype, summary,
+        )
+        text = prompt.prompt_text
+        self.assertIn("USER CONTEXT", text)
+        # Both values fall back to the placeholder.
+        self.assertEqual(text.count("[adopt: please describe]"), 2)
+
+    # ---- 3. CLI flag plumbing: project_summary / next_task ----
+
+    def test_cli_flag_project_summary_skips_first_prompt(self):
+        # Build an args namespace that mimics what argparse would
+        # produce when the user passes --project-summary "..."
+        # but no --next-task. Patch builtins.input so the only
+        # remaining prompt (next-task) returns deterministically.
+        import builtins
+        import io
+        from contextlib import redirect_stdout
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        ns = argparse.Namespace(
+            command="adopt", path=str(self.repo),
+            write=False, html=False, html_out=None, no_browser=True,
+            project_summary="From the CLI flag",
+            next_task=None,
+        )
+        prompts: list[str] = []
+
+        def fake_input(prompt: str) -> str:
+            prompts.append(prompt)
+            return "next task from prompt"
+
+        original = builtins.input
+        builtins.input = fake_input  # type: ignore
+        try:
+            with redirect_stdout(io.StringIO()):
+                from cli.adopt import run_adopt as run
+                run(ns)
+        finally:
+            builtins.input = original  # type: ignore
+        # Only one prompt fired (the next-task one).
+        self.assertEqual(len(prompts), 1,
+                         f"--project-summary must skip its prompt; "
+                         f"got prompts: {prompts!r}")
+        self.assertIn("next AI session", prompts[0])
+
+    def test_cli_flag_next_task_skips_second_prompt(self):
+        import builtins
+        import io
+        from contextlib import redirect_stdout
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        ns = argparse.Namespace(
+            command="adopt", path=str(self.repo),
+            write=False, html=False, html_out=None, no_browser=True,
+            project_summary=None,
+            next_task="From the CLI flag",
+        )
+        prompts: list[str] = []
+
+        def fake_input(prompt: str) -> str:
+            prompts.append(prompt)
+            return "summary from prompt"
+
+        original = builtins.input
+        builtins.input = fake_input  # type: ignore
+        try:
+            with redirect_stdout(io.StringIO()):
+                from cli.adopt import run_adopt as run
+                run(ns)
+        finally:
+            builtins.input = original  # type: ignore
+        self.assertEqual(len(prompts), 1,
+                         f"--next-task must skip its prompt; "
+                         f"got prompts: {prompts!r}")
+        self.assertIn("what is this project", prompts[0].lower())
+
+    def test_cli_flags_both_provided_runs_non_interactive(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        ns = argparse.Namespace(
+            command="adopt", path=str(self.repo),
+            write=False, html=False, html_out=None, no_browser=True,
+            project_summary="non-interactive summary",
+            next_task="non-interactive next task",
+        )
+        prompts: list[str] = []
+
+        def fake_input(prompt: str) -> str:
+            prompts.append(prompt)
+            return "should never be called"
+
+        import builtins
+        original = builtins.input
+        builtins.input = fake_input  # type: ignore
+        try:
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                from cli.adopt import run_adopt as run
+                run(ns)
+            out = buf.getvalue()
+        finally:
+            builtins.input = original  # type: ignore
+        self.assertEqual(prompts, [],
+                         f"both --project-summary and --next-task "
+                         f"must skip all prompts; got: {prompts!r}")
+        # The non-interactive answers surface in the dry-run output
+        # (via the agent launch prompt's USER CONTEXT block).
+        self.assertIn("non-interactive summary", out)
+        self.assertIn("non-interactive next task", out)
+
+
 if __name__ == "__main__":
     unittest.main()
