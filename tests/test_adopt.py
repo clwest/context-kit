@@ -2839,9 +2839,11 @@ class TestWorkspaceStackSummary(unittest.TestCase):
         self.assertEqual(pairs.get("apps/next"),
                          "Next.js / React web app")
 
-        # CLI surfaces the section.
+        # v0.8 Phase 4.4: workspace stack content now lives inside
+        # the consolidated "Adopt Summary" Structure section.
         out = self._run_cli()
-        self.assertIn("Workspace stack:", out)
+        self.assertIn("Adopt Summary", out)
+        self.assertIn("Structure:", out)
         self.assertIn("apps/forge", out)
         self.assertIn("Solidity / EVM smart contracts", out)
         self.assertIn("apps/next", out)
@@ -2849,26 +2851,38 @@ class TestWorkspaceStackSummary(unittest.TestCase):
         # Original "Detected stack:" line unchanged.
         self.assertIn("Detected stack: JavaScript / Node.js", out)
 
+        from cli.adopt import (
+            derive_adopt_summary, derive_project_type,
+            derive_stack_reality, derive_suggested_actions,
+        )
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality)
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+
         # HTML report.
-        plan = plan_files(self.repo, stack, self.inputs)
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
-                                 write_mode=False, failures=[])
-        self.assertIn("<h2>Workspace stack</h2>", html)
+                                 write_mode=False, failures=[],
+                                 summary=summary)
+        self.assertIn("<h2>Adopt Summary</h2>", html)
         self.assertIn("apps/forge", html)
         self.assertIn("Solidity / EVM smart contracts", html)
         self.assertIn("Next.js / React web app", html)
 
         # BUILD_PLAN.
-        md = generate_build_plan(stack, self.inputs, "Test")
-        self.assertIn("### Workspace stack", md)
-        self.assertIn("**apps/forge** → Solidity / EVM smart contracts", md)
-        self.assertIn("**apps/next** → Next.js / React web app", md)
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        self.assertIn("## Adopt Summary", md)
+        self.assertIn("`apps/forge` → Solidity / EVM smart contracts", md)
+        self.assertIn("`apps/next` → Next.js / React web app", md)
 
         # CLAUDE managed block.
-        block = generate_claude_block(stack, self.inputs, "Test")
-        self.assertIn("### Workspace stack", block)
-        self.assertIn("**apps/forge** → Solidity / EVM smart contracts", block)
-        self.assertIn("**apps/next** → Next.js / React web app", block)
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      summary=summary)
+        self.assertIn("## Adopt Summary", block)
+        self.assertIn("`apps/forge` → Solidity / EVM smart contracts", block)
+        self.assertIn("`apps/next` → Next.js / React web app", block)
         # Stays inside the managed markers.
         self.assertIn(START_MARKER, block)
         self.assertIn(END_MARKER, block)
@@ -2895,28 +2909,40 @@ class TestWorkspaceStackSummary(unittest.TestCase):
         self.assertEqual(pairs.get("apps/seller_app"), "Flutter / Dart app")
 
         out = self._run_cli()
-        self.assertIn("Workspace stack:", out)
+        # v0.8 Phase 4.4: Adopt Summary's Structure section lists
+        # the per-child labels.
+        self.assertIn("Adopt Summary", out)
         self.assertIn("Flutter / Dart app", out)
 
+        from cli.adopt import (
+            derive_adopt_summary, derive_project_type,
+            derive_stack_reality, derive_suggested_actions,
+        )
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality)
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+
         # HTML
-        plan = plan_files(self.repo, stack, self.inputs)
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
-                                 write_mode=False, failures=[])
-        self.assertIn("<h2>Workspace stack</h2>", html)
+                                 write_mode=False, failures=[],
+                                 summary=summary)
+        self.assertIn("<h2>Adopt Summary</h2>", html)
         self.assertIn("Flutter / Dart app", html)
 
         # BUILD_PLAN + CLAUDE
-        md = generate_build_plan(stack, self.inputs, "Test")
-        block = generate_claude_block(stack, self.inputs, "Test")
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      summary=summary)
         for doc, label in [(md, "BUILD_PLAN"), (block, "CLAUDE")]:
-            self.assertIn("### Workspace stack", doc,
-                          f"{label} missing workspace stack section")
-            self.assertIn(
-                "**apps/buyer_app** → Flutter / Dart app", doc,
-                f"{label} missing buyer_app row")
-            self.assertIn(
-                "**apps/seller_app** → Flutter / Dart app", doc,
-                f"{label} missing seller_app row")
+            self.assertIn("## Adopt Summary", doc,
+                          f"{label} missing Adopt Summary")
+            self.assertIn("`apps/buyer_app` → Flutter / Dart app", doc,
+                          f"{label} missing buyer_app row")
+            self.assertIn("`apps/seller_app` → Flutter / Dart app", doc,
+                          f"{label} missing seller_app row")
 
     # ---- turborepo: Next.js / React for both children ---------------
 
@@ -2949,16 +2975,19 @@ class TestWorkspaceStackSummary(unittest.TestCase):
         self.assertNotIn("packages/tsconfig", pairs)
 
         out = self._run_cli()
-        self.assertIn("Workspace stack:", out)
-        # Two lines, both Next.js. Count occurrences in the
-        # workspace-stack-only slice of the CLI output.
-        ws_start = out.index("Workspace stack:")
-        ws_end = out.find("\n\n", ws_start)
-        ws_section = out[ws_start:ws_end]
-        self.assertEqual(ws_section.count("Next.js / React web app"), 2)
-        self.assertNotIn("packages/", ws_section,
+        # v0.8 Phase 4.4: Structure block inside Adopt Summary.
+        self.assertIn("Adopt Summary", out)
+        # Slice the Structure block: from "Structure:" to "Reality:".
+        struct_start = out.index("Structure:")
+        struct_end = out.index("Reality:", struct_start)
+        struct_section = out[struct_start:struct_end]
+        self.assertEqual(
+            struct_section.count("Next.js / React web app"), 2,
+            f"both apps/* should appear in Structure: {struct_section!r}"
+        )
+        self.assertNotIn("packages/", struct_section,
                          "trivial packages/* children must not appear "
-                         "in the workspace stack summary")
+                         "in the Structure section")
 
     # ---- plain JS repo: no workspace stack section ------------------
 
@@ -3127,41 +3156,47 @@ class TestStackRealityCheck(unittest.TestCase):
     # ---- surface in all four output paths ---------------------------
 
     def test_stack_reality_surfaces_in_all_outputs(self):
+        # v0.8 Phase 4.4: stack reality content is folded into the
+        # consolidated Adopt Summary card. Same data, single
+        # section per output path.
         self._build_fns_fixture()
-        from cli.adopt import derive_stack_reality
+        from cli.adopt import (
+            derive_adopt_summary, derive_project_type,
+            derive_stack_reality, derive_suggested_actions,
+        )
         stack = detect_stack(self.repo)
         prelim = analyze_failures(self.repo, stack, [])
         reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality)
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
 
         out = self._run_cli()
-        self.assertIn("Stack reality:", out)
-        self.assertIn("- Primary detection:", out)
-        self.assertIn("- Workspace signals:", out)
-        self.assertIn("- Assessment: Mixed workspace project", out)
-        self.assertIn("- Confidence: Medium", out)
-        self.assertIn("- Why:", out)
+        self.assertIn("Adopt Summary", out)
+        self.assertIn("Reality:", out)
+        self.assertIn("Mixed workspace project", out)
+        self.assertIn("Medium", out)
+        self.assertIn("Why:", out)
 
-        plan = plan_files(self.repo, stack, self.inputs, reality=reality)
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[],
-                                 reality=reality)
-        self.assertIn("<h2>Stack reality</h2>", html)
-        self.assertIn("<strong>Primary detection:</strong>", html)
-        self.assertIn("<strong>Workspace signals:</strong>", html)
-        self.assertIn("<strong>Assessment:</strong> Mixed workspace project", html)
-        self.assertIn("<strong>Confidence:</strong> Medium", html)
-        self.assertIn("<strong>Why:</strong>", html)
+                                 summary=summary)
+        self.assertIn("<h2>Adopt Summary</h2>", html)
+        self.assertIn("<h3>Reality</h3>", html)
+        self.assertIn("Mixed workspace project", html)
+        self.assertIn("Medium", html)
 
-        md = generate_build_plan(stack, self.inputs, "Test", reality=reality)
-        self.assertIn("### Stack reality", md)
-        self.assertIn("**Primary detection:**", md)
-        self.assertIn("**Assessment:** Mixed workspace project", md)
-        self.assertIn("**Confidence:** Medium", md)
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        self.assertIn("## Adopt Summary", md)
+        self.assertIn("**Reality:**", md)
+        self.assertIn("Mixed workspace project", md)
 
         block = generate_claude_block(stack, self.inputs, "Test",
-                                      reality=reality)
-        self.assertIn("### Stack reality", block)
-        self.assertIn("**Assessment:** Mixed workspace project", block)
+                                      summary=summary)
+        self.assertIn("## Adopt Summary", block)
+        self.assertIn("**Reality:**", block)
+        self.assertIn("Mixed workspace project", block)
         self.assertIn(START_MARKER, block)
         self.assertIn(END_MARKER, block)
 
@@ -3352,38 +3387,42 @@ class TestProjectTypeInference(unittest.TestCase):
         for n in range(3):
             (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
 
+        # v0.8 Phase 4.4: project type folded into Adopt Summary.
         stack, reality, ptype = self._derive()
+        from cli.adopt import (
+            derive_adopt_summary, derive_suggested_actions,
+        )
+        prelim = analyze_failures(self.repo, stack, [])
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
 
         # CLI dry-run.
         out = self._run_cli()
-        self.assertIn("Project type:", out)
-        self.assertIn("- Label: Web3 dApp", out)
-        self.assertIn("- Confidence: medium", out)
-        self.assertIn("- Reason:", out)
+        self.assertIn("Adopt Summary", out)
+        self.assertIn("Type:", out)
+        self.assertIn("Web3 dApp", out)
+        self.assertIn("(medium)", out)
 
         # HTML report.
-        plan = plan_files(self.repo, stack, self.inputs,
-                          reality=reality, project_type=ptype)
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[],
-                                 reality=reality, project_type=ptype)
-        self.assertIn("<h2>Project type</h2>", html)
-        self.assertIn("<strong>Label:</strong> Web3 dApp", html)
-        self.assertIn("<strong>Confidence:</strong> medium", html)
-        self.assertIn("<strong>Reason:</strong>", html)
+                                 summary=summary)
+        self.assertIn("<h2>Adopt Summary</h2>", html)
+        self.assertIn("<h3>Type</h3>", html)
+        self.assertIn("Web3 dApp", html)
+        self.assertIn("medium", html)
 
         # BUILD_PLAN.md.
-        md = generate_build_plan(stack, self.inputs, "Test",
-                                 reality=reality, project_type=ptype)
-        self.assertIn("### Project type", md)
-        self.assertIn("**Label:** Web3 dApp", md)
-        self.assertIn("**Confidence:** medium", md)
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        self.assertIn("## Adopt Summary", md)
+        self.assertIn("**Type:** Web3 dApp (medium)", md)
 
         # CLAUDE managed block.
         block = generate_claude_block(stack, self.inputs, "Test",
-                                      reality=reality, project_type=ptype)
-        self.assertIn("### Project type", block)
-        self.assertIn("**Label:** Web3 dApp", block)
+                                      summary=summary)
+        self.assertIn("## Adopt Summary", block)
+        self.assertIn("**Type:** Web3 dApp (medium)", block)
         self.assertIn(START_MARKER, block)
         self.assertIn(END_MARKER, block)
 
@@ -3621,37 +3660,261 @@ class TestSuggestedActions(unittest.TestCase):
         for n in range(3):
             (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
 
+        # v0.8 Phase 4.4: actions live inside Adopt Summary's
+        # "Next actions" sub-section. Same content, single section.
         stack, reality, ptype, _, actions = self._derive_actions()
+        from cli.adopt import derive_adopt_summary
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
 
         out = self._run_cli()
-        self.assertIn("Suggested next actions (", out)
+        self.assertIn("Adopt Summary", out)
+        self.assertIn("Next actions", out)
         self.assertIn("Confirm contract workspace", out)
         self.assertIn("[high]", out)
-        self.assertIn("Reason:", out)
 
-        plan = plan_files(self.repo, stack, self.inputs,
-                          reality=reality, project_type=ptype,
-                          actions=actions)
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[],
-                                 reality=reality, project_type=ptype,
-                                 actions=actions)
-        self.assertIn("<h2>Suggested next actions (", html)
+                                 summary=summary)
+        self.assertIn("<h2>Adopt Summary</h2>", html)
+        self.assertIn("Next actions (", html)
         self.assertIn("[high] Confirm contract workspace", html)
 
-        md = generate_build_plan(stack, self.inputs, "Test",
-                                 reality=reality, project_type=ptype,
-                                 actions=actions)
-        self.assertIn("### Suggested next actions (", md)
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        self.assertIn("## Adopt Summary", md)
+        self.assertIn("Next actions (", md)
         self.assertIn("**[high] Confirm contract workspace**", md)
 
         block = generate_claude_block(stack, self.inputs, "Test",
-                                      reality=reality, project_type=ptype,
-                                      actions=actions)
-        self.assertIn("### Suggested next actions (", block)
+                                      summary=summary)
+        self.assertIn("## Adopt Summary", block)
+        self.assertIn("Next actions (", block)
         self.assertIn("**[high] Confirm contract workspace**", block)
         self.assertIn(START_MARKER, block)
         self.assertIn(END_MARKER, block)
+
+
+class TestAdoptSummary(unittest.TestCase):
+    """v0.8 Phase 4.4 — single consolidated Adopt Summary card.
+
+    The four standalone Phase 3 / 4.x sections (Workspace stack,
+    Stack reality, Project type, Suggested next actions) are
+    folded into one read-once block. Tests here cover:
+      - Summary renders in CLI, HTML, BUILD_PLAN, CLAUDE.md
+      - Actions inside the summary match what
+        ``derive_suggested_actions`` returns directly
+      - The four standalone section headers are NOT duplicated
+        below the summary
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _build_fns_fixture(self):
+        # Web3 dApp — fires multiple rules (Web3, MONOREPO_DEPTH,
+        # needs-clarification empty ens-contracts), useful for
+        # exercising every sub-section of the summary.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+    def _derive_summary(self):
+        from cli.adopt import (
+            derive_adopt_summary, derive_project_type,
+            derive_stack_reality, derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality)
+        prelim_plan = plan_files(self.repo, stack, self.inputs,
+                                 reality=reality, project_type=ptype)
+        failures = analyze_failures(self.repo, stack, prelim_plan)
+        actions = derive_suggested_actions(stack, reality, ptype, failures)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+        return stack, reality, ptype, actions, summary
+
+    def _run_cli(self):
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="demo", next_step="ship v1"))
+        return buf.getvalue()
+
+    # ---- summary renders in all four output paths ----------------
+
+    def test_summary_renders_in_cli(self):
+        self._build_fns_fixture()
+        out = self._run_cli()
+        self.assertIn("Adopt Summary", out)
+        # Four sub-sections are visible in the CLI block.
+        self.assertIn("Type:", out)
+        self.assertIn("Structure:", out)
+        self.assertIn("Reality:", out)
+        self.assertIn("Next actions", out)
+
+    def test_summary_renders_in_html(self):
+        self._build_fns_fixture()
+        _, _, _, _, summary = self._derive_summary()
+        plan = plan_files(self.repo, self._derive_summary()[0],
+                          self.inputs, summary=summary)
+        html = render_adopt_html(self.repo, self._derive_summary()[0],
+                                 self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 summary=summary)
+        self.assertIn("<h2>Adopt Summary</h2>", html)
+        # Each sub-section uses an <h3>.
+        self.assertIn("<h3>Type</h3>", html)
+        self.assertIn("<h3>Structure</h3>", html)
+        self.assertIn("<h3>Reality</h3>", html)
+        self.assertIn("<h3>Next actions (", html)
+
+    def test_summary_renders_in_build_plan(self):
+        self._build_fns_fixture()
+        stack, _, _, _, summary = self._derive_summary()
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        self.assertIn("## Adopt Summary", md)
+        self.assertIn("**Type:**", md)
+        self.assertIn("**Structure:**", md)
+        self.assertIn("**Reality:**", md)
+        self.assertIn("**Next actions", md)
+
+    def test_summary_renders_in_claude_block(self):
+        self._build_fns_fixture()
+        stack, _, _, _, summary = self._derive_summary()
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      summary=summary)
+        self.assertIn("## Adopt Summary", block)
+        self.assertIn("**Type:**", block)
+        self.assertIn("**Structure:**", block)
+        self.assertIn("**Reality:**", block)
+        self.assertIn("**Next actions", block)
+        # Stays inside adopt's managed markers.
+        self.assertIn(START_MARKER, block)
+        self.assertIn(END_MARKER, block)
+
+    # ---- actions consistent with derive_suggested_actions --------
+
+    def test_summary_actions_match_derived_actions(self):
+        # The actions inside the summary must be byte-equal to
+        # what ``derive_suggested_actions`` returns directly —
+        # the consolidation must not change Phase 4.3 logic.
+        self._build_fns_fixture()
+        _, _, _, actions, summary = self._derive_summary()
+        self.assertEqual(
+            [(a.title, a.priority, a.reason) for a in summary.actions],
+            [(a.title, a.priority, a.reason) for a in actions],
+            "summary.actions must match derive_suggested_actions output",
+        )
+
+    # ---- no duplication of content below summary ----------------
+
+    def test_no_standalone_workspace_stack_section_in_outputs(self):
+        # The standalone "Workspace stack:" / "<h2>Workspace stack</h2>" /
+        # "### Workspace stack" headers must NOT appear anywhere in the
+        # rendered output — content lives only inside Adopt Summary.
+        self._build_fns_fixture()
+        stack, _, _, _, summary = self._derive_summary()
+
+        out = self._run_cli()
+        self.assertNotIn("Workspace stack:", out,
+                         "standalone 'Workspace stack:' CLI header "
+                         "must be removed in Phase 4.4")
+
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 summary=summary)
+        self.assertNotIn("<h2>Workspace stack</h2>", html)
+
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        self.assertNotIn("### Workspace stack", md)
+
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      summary=summary)
+        self.assertNotIn("### Workspace stack", block)
+
+    def test_no_standalone_stack_reality_section_in_outputs(self):
+        self._build_fns_fixture()
+        stack, _, _, _, summary = self._derive_summary()
+
+        out = self._run_cli()
+        self.assertNotIn("Stack reality:", out)
+
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 summary=summary)
+        self.assertNotIn("<h2>Stack reality</h2>", html)
+
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        self.assertNotIn("### Stack reality", md)
+
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      summary=summary)
+        self.assertNotIn("### Stack reality", block)
+
+    def test_no_standalone_project_type_section_in_outputs(self):
+        self._build_fns_fixture()
+        stack, _, _, _, summary = self._derive_summary()
+
+        out = self._run_cli()
+        self.assertNotIn("Project type:", out)
+
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 summary=summary)
+        self.assertNotIn("<h2>Project type</h2>", html)
+
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        self.assertNotIn("### Project type", md)
+
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      summary=summary)
+        self.assertNotIn("### Project type", block)
+
+    def test_no_standalone_suggested_actions_section_in_outputs(self):
+        self._build_fns_fixture()
+        stack, _, _, _, summary = self._derive_summary()
+
+        out = self._run_cli()
+        # The standalone "Suggested next actions (N):" header (with
+        # the trailing colon) must be gone. The Adopt Summary block
+        # uses "Next actions (N)" without a trailing colon.
+        self.assertNotIn("Suggested next actions (", out)
+
+        plan = plan_files(self.repo, stack, self.inputs, summary=summary)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 summary=summary)
+        self.assertNotIn("<h2>Suggested next actions (", html)
+
+        md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
+        self.assertNotIn("### Suggested next actions (", md)
+
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      summary=summary)
+        self.assertNotIn("### Suggested next actions (", block)
 
 
 if __name__ == "__main__":

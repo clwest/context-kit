@@ -868,6 +868,27 @@ def _workspace_stack_pairs(stack: StackProfile) -> list[tuple[str, str]]:
 
 
 @dataclass
+class AdoptSummary:
+    """Phase 4.4 — single consolidated summary card.
+
+    Bundles the four Phase 3 + 4.x derivations (workspace stack
+    pairs, stack reality, project type, suggested actions) into
+    one read-once block. The four standalone sections that fed
+    each input are removed from the rendered outputs to eliminate
+    the visual fragmentation the dogfood revealed.
+
+    Pure data — no I/O, no detection, no failure-taxonomy
+    changes. Bundles existing objects rather than recomputing,
+    so consistency with the standalone derivations is automatic.
+    """
+
+    project_type: "ProjectType"
+    reality: "StackReality"
+    workspace_pairs: list[tuple[str, str]] = field(default_factory=list)
+    actions: list["SuggestedAction"] = field(default_factory=list)
+
+
+@dataclass
 class SuggestedAction:
     """Phase 4.3 suggested next action.
 
@@ -1265,6 +1286,90 @@ def _suggested_actions_markdown(
         return []
     out = ["", f"### Suggested next actions ({len(actions)})", ""]
     for a in actions:
+        out.append(f"- **[{a.priority}] {a.title}** — {a.reason}")
+    return out
+
+
+def derive_adopt_summary(
+    stack: StackProfile,
+    reality: StackReality,
+    project_type: ProjectType,
+    actions: list[SuggestedAction],
+) -> AdoptSummary:
+    """Bundle Phase 3 + 4.x derivations into a single ``AdoptSummary``.
+
+    Pure aggregation — re-uses the upstream derivations rather
+    than recomputing. Workspace pairs come from the same Phase 3
+    helper the standalone Workspace stack section used; actions
+    are taken as-is (already deduped + sorted + capped at 5 by
+    ``derive_suggested_actions``).
+    """
+    return AdoptSummary(
+        project_type=project_type,
+        reality=reality,
+        workspace_pairs=_workspace_stack_pairs(stack),
+        actions=list(actions),
+    )
+
+
+def _adopt_summary_block_dryrun(summary: AdoptSummary) -> list[str]:
+    """The "Adopt Summary" block for the CLI dry-run.
+
+    Single section with four sub-blocks (Type / Structure /
+    Reality / Next actions). Compact layout — meant to be the
+    one piece of summary text the reader scans before diving
+    into details.
+    """
+    pt = summary.project_type
+    r = summary.reality
+    out = ["", "Adopt Summary"]
+    # Type
+    out.append(f"  Type:        {pt.label} ({pt.confidence})")
+    # Structure
+    if summary.workspace_pairs:
+        out.append("  Structure:")
+        name_w = max(len(n) for n, _ in summary.workspace_pairs)
+        for name, label in summary.workspace_pairs:
+            out.append(f"    - {name.ljust(name_w)}  -> {label}")
+    else:
+        out.append("  Structure:  no workspace child projects detected")
+    # Reality
+    out.append(
+        f"  Reality:     {r.assessment} (confidence: {r.confidence})"
+    )
+    out.append(f"               Why: {r.why}")
+    # Next actions
+    if summary.actions:
+        out.append(f"  Next actions ({len(summary.actions)}):")
+        for a in summary.actions:
+            out.append(f"    - [{a.priority}] {a.title}")
+    return out
+
+
+def _adopt_summary_markdown(summary: AdoptSummary) -> list[str]:
+    """The "Adopt Summary" section for Markdown docs."""
+    pt = summary.project_type
+    r = summary.reality
+    out = ["", "## Adopt Summary", ""]
+    out.append(f"**Type:** {pt.label} ({pt.confidence})")
+    out.append("")
+    out.append("**Structure:**")
+    if summary.workspace_pairs:
+        out.append("")
+        for name, label in summary.workspace_pairs:
+            out.append(f"- `{name}` → {label}")
+    else:
+        out.append("")
+        out.append("- No workspace child projects detected.")
+    out.append("")
+    out.append(
+        f"**Reality:** {r.assessment} (confidence: {r.confidence}). "
+        f"_{r.why}_"
+    )
+    out.append("")
+    out.append(f"**Next actions ({len(summary.actions)}):**")
+    out.append("")
+    for a in summary.actions:
         out.append(f"- **[{a.priority}] {a.title}** — {a.reason}")
     return out
 
@@ -1706,7 +1811,8 @@ def _wrap_in_managed_block(content: str) -> str:
 def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
                         *, reality: Optional[StackReality] = None,
                         project_type: Optional[ProjectType] = None,
-                        actions: Optional[list[SuggestedAction]] = None) -> str:
+                        actions: Optional[list[SuggestedAction]] = None,
+                        summary: Optional[AdoptSummary] = None) -> str:
     """The minimum BUILD_PLAN.md a freshly-adopted project needs.
 
     The strengthened first prompt (Step 8 of the wizard) tells agents
@@ -1740,23 +1846,17 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
         body.append("")
         for note in stack.notes:
             body.append(f"> Note: {note}")
-    # v0.8 Phase 3: derived workspace stack summary. Read-only —
-    # primary classification (Tech stack above) is unchanged.
-    body += _workspace_stack_markdown(stack)
-    # v0.8 Phase 4.1: stack reality assessment. Always emitted when
-    # reality is provided (run_adopt always supplies one).
-    if reality is not None:
-        body += _stack_reality_markdown(reality)
-    # v0.8 Phase 4.2: derived project type. Sits next to Stack
-    # reality so the reader gets "what is this?" + "how confident
-    # are we?" together.
-    if project_type is not None:
-        body += _project_type_markdown(project_type)
-    # v0.8 Phase 4.3: prioritized suggested next actions. Below
-    # the type label so the reader sees "what is this" then "what
-    # to do".
-    if actions:
-        body += _suggested_actions_markdown(actions)
+    # v0.8 Phase 4.4: single consolidated Adopt Summary card sits
+    # above everything except the primary "Tech stack" line. The
+    # standalone Phase 3 / 4.1 / 4.2 / 4.3 sections (Workspace
+    # stack, Stack reality, Project type, Suggested next actions)
+    # are NOT rendered separately anymore — the summary carries
+    # all four in one read-once block. Phase 4.4 helper functions
+    # remain in the module so direct callers (and a future debug
+    # mode) can still build them, but the persisted-doc renderer
+    # only emits the summary.
+    if summary is not None:
+        body += _adopt_summary_markdown(summary)
     # v0.2: visibility-first. Only added when there's something
     # unclassified to surface — clean classified projects still get
     # the same compact tech-stack section as v0.1.
@@ -1848,7 +1948,8 @@ def generate_start_here(inputs: AdoptionInputs, title: str) -> str:
 def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: str,
                           *, reality: Optional[StackReality] = None,
                           project_type: Optional[ProjectType] = None,
-                          actions: Optional[list[SuggestedAction]] = None) -> str:
+                          actions: Optional[list[SuggestedAction]] = None,
+                          summary: Optional[AdoptSummary] = None) -> str:
     """The managed block we append (or insert) into CLAUDE.md.
 
     Wrapped in markers so re-running ``adopt`` updates these facts in
@@ -1882,21 +1983,12 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
     # too, so an AI session reading the entry-point doc can't miss
     # them. Same content as BUILD_PLAN's "Unknown but present" but
     # rendered as bullets under a new H3 inside the managed block.
-    # v0.8 Phase 3: derived workspace stack labels surface inside
-    # the managed block too so the AI session sees per-child stack
-    # info in CLAUDE.md without cross-reading BUILD_PLAN.md.
-    lines += _workspace_stack_markdown(stack)
-    # v0.8 Phase 4.1: stack reality assessment travels with the
-    # managed block so re-runs refresh it in place.
-    if reality is not None:
-        lines += _stack_reality_markdown(reality)
-    # v0.8 Phase 4.2: project type carries the same way.
-    if project_type is not None:
-        lines += _project_type_markdown(project_type)
-    # v0.8 Phase 4.3: suggested next actions in the managed block
-    # so the AI session reading CLAUDE.md sees them up front.
-    if actions:
-        lines += _suggested_actions_markdown(actions)
+    # v0.8 Phase 4.4: single Adopt Summary section replaces the
+    # standalone Phase 3 / 4.1 / 4.2 / 4.3 sections (Workspace
+    # stack, Stack reality, Project type, Suggested next actions)
+    # inside the managed block. Same content, one card.
+    if summary is not None:
+        lines += _adopt_summary_markdown(summary)
     if stack.unclassified_subdirs:
         lines += _unknown_present_markdown(stack)
     # v0.8: workspace children get a compact mention in the CLAUDE
@@ -1933,7 +2025,8 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
 def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title: str,
                              *, reality: Optional[StackReality] = None,
                              project_type: Optional[ProjectType] = None,
-                             actions: Optional[list[SuggestedAction]] = None) -> str:
+                             actions: Optional[list[SuggestedAction]] = None,
+                             summary: Optional[AdoptSummary] = None) -> str:
     """Full CLAUDE.md when none exists yet.
 
     Mirrors the shape of cli/_starter/root/CLAUDE.md but tighter — we
@@ -1943,7 +2036,7 @@ def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title:
     """
     block = generate_claude_block(stack, inputs, title, reality=reality,
                                   project_type=project_type,
-                                  actions=actions)
+                                  actions=actions, summary=summary)
     return "\n".join([
         f"# CLAUDE / AGENTS — {title}",
         "",
@@ -2003,7 +2096,8 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                       failures: Optional[list] = None,
                       reality: Optional[StackReality] = None,
                       project_type: Optional[ProjectType] = None,
-                      actions: Optional[list[SuggestedAction]] = None) -> str:
+                      actions: Optional[list[SuggestedAction]] = None,
+                      summary: Optional[AdoptSummary] = None) -> str:
     """Build the full self-contained HTML report.
 
     Six sections per §21:
@@ -2060,11 +2154,85 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             )
         parts_html += ['  </ul>', '</section>']
 
-    # ---- Section 3.5: workspace stack (v0.8 Phase 3) ----
-    # Derived per-child stack labels. The primary "Detection" card
-    # above is unchanged — this section sits right after it so the
-    # eye reads "primary stack, then per-child stacks" in one
-    # glance. Silent when no labelled workspace children.
+    # ---- Section 3.5: Adopt Summary (v0.8 Phase 4.4) ----
+    # Single consolidated card replacing the four separate Phase 3
+    # / 4.1 / 4.2 / 4.3 cards (Workspace stack, Stack reality,
+    # Project type, Suggested next actions). Sits directly under
+    # Detection so the reader gets one read-once block at the top.
+    # The standalone helpers (workspace_stack_html, reality_html,
+    # project_type_html, actions_html) are kept available below as
+    # empty lists for assembly compatibility but are no longer
+    # populated.
+    summary_html: list[str] = []
+    if summary is not None:
+        pt = summary.project_type
+        r = summary.reality
+        # Color the card by reality confidence (proxies overall
+        # how-much-to-trust signal).
+        sum_card = {"High": "card-ok", "Medium": "card-warn",
+                    "Low": "card-warn"}.get(r.confidence, "card-warn")
+        summary_html = [
+            f'<section class="card {sum_card}">',
+            '  <h2>Adopt Summary</h2>',
+            '  <div class="summary-grid">',
+            # Type
+            '    <div class="summary-block">',
+            '      <h3>Type</h3>',
+            f'      <p><strong>{_esc(pt.label)}</strong> '
+            f'<span class="dim">({_esc(pt.confidence)})</span></p>',
+            '    </div>',
+            # Structure
+            '    <div class="summary-block">',
+            '      <h3>Structure</h3>',
+        ]
+        if summary.workspace_pairs:
+            summary_html.append('      <ul class="parts">')
+            for name, label in summary.workspace_pairs:
+                summary_html.append(
+                    f'        <li><code>{_esc(name)}</code> → '
+                    f'{_esc(label)}</li>'
+                )
+            summary_html.append('      </ul>')
+        else:
+            summary_html.append(
+                '      <p class="dim">No workspace child projects detected.</p>'
+            )
+        summary_html.append('    </div>')
+        # Reality
+        summary_html += [
+            '    <div class="summary-block">',
+            '      <h3>Reality</h3>',
+            f'      <p><strong>{_esc(r.assessment)}</strong> '
+            f'<span class="dim">(confidence: {_esc(r.confidence)})</span></p>',
+            f'      <p class="dim">{_esc(r.why)}</p>',
+            '    </div>',
+        ]
+        # Next actions
+        summary_html.append('    <div class="summary-block">')
+        summary_html.append(
+            f'      <h3>Next actions ({len(summary.actions)})</h3>'
+        )
+        if summary.actions:
+            summary_html.append('      <ul class="parts">')
+            for a in summary.actions:
+                summary_html.append(
+                    f'        <li><strong>[{_esc(a.priority)}] '
+                    f'{_esc(a.title)}</strong> — {_esc(a.reason)}</li>'
+                )
+            summary_html.append('      </ul>')
+        summary_html.append('    </div>')
+        summary_html += ['  </div>', '</section>']
+
+    # ---- Phase 3 / 4.x standalone sections — REMOVED in 4.4 ----
+    # The Workspace stack, Stack reality, Project type, and
+    # Suggested next actions cards are now folded into Adopt
+    # Summary above. Empty lists kept for assembly compatibility
+    # so the existing out.extend(...) calls below stay valid.
+    # v0.8 Phase 4.4 — the four standalone Phase 3 / 4.x card
+    # blocks below are still computed (a future debug mode can
+    # surface them), but the assembly at the end of this function
+    # no longer extends them into ``out``. Adopt Summary above
+    # carries the same content in a single card.
     workspace_stack_html: list[str] = []
     ws_stack_pairs = _workspace_stack_pairs(stack)
     if ws_stack_pairs:
@@ -2211,7 +2379,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                 summary_bits.append("empty")
             elif not summary_bits and u.total_file_count > 0:
                 summary_bits.append(f"{u.total_file_count} files (no recognized source extensions)")
-            summary = " · ".join(summary_bits) if summary_bits else "(no signals)"
+            summary_text = " · ".join(summary_bits) if summary_bits else "(no signals)"
             ubp_hint_badge = (
                 f' <span class="hint-badge">'
                 f'{_esc(u.manifest_hint.split(";")[0])}</span>'
@@ -2223,7 +2391,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                 f'<span class="dir-name">{_esc(u.name)}/</span>'
                 f'{ubp_hint_badge}'
                 f'</div>'
-                f'<div class="dir-meta">{summary}</div>'
+                f'<div class="dir-meta">{summary_text}</div>'
                 '</summary>'
             )
             # Body contents.
@@ -2325,7 +2493,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                 )
             for ext in wsc_domain + wsc_generic:
                 summary_bits.append(f"{c.notable_extensions[ext]}{_esc(ext)}")
-            summary = " · ".join(summary_bits) if summary_bits else "(no signals)"
+            summary_text = " · ".join(summary_bits) if summary_bits else "(no signals)"
             hint_badge = (
                 f' <span class="hint-badge">'
                 f'{_esc(c.hint.split(";")[0])}</span>'
@@ -2349,7 +2517,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                     f'<span class="dir-name">{_esc(c.name)}</span>'
                     f'{hint_badge}'
                     f'</div>'
-                    f'<div class="dir-meta">{summary}</div>'
+                    f'<div class="dir-meta">{summary_text}</div>'
                     f'</div>'
                 )
                 continue
@@ -2359,7 +2527,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                 f'<span class="dir-name">{_esc(c.name)}</span>'
                 f'{hint_badge}'
                 f'</div>'
-                f'<div class="dir-meta">{summary}</div>'
+                f'<div class="dir-meta">{summary_text}</div>'
                 '</summary>'
             )
             workspace_html.append('    <div class="unc-body">')
@@ -2648,10 +2816,11 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     out.extend(header_html)
     out.extend(detection_html)
     out.extend(parts_html)
-    out.extend(workspace_stack_html)
-    out.extend(reality_html)
-    out.extend(project_type_html)
-    out.extend(actions_html)
+    # v0.8 Phase 4.4 — the four standalone Phase 3 / 4.x cards
+    # are folded into Adopt Summary; not extended into the final
+    # output. summary_html is rendered above unknown_html so the
+    # reader sees the consolidated assessment first.
+    out.extend(summary_html)
     out.extend(unknown_html)
     out.extend(workspace_html)
     out.extend(failures_html)
@@ -2710,6 +2879,7 @@ def plan_files(
     reality: Optional[StackReality] = None,
     project_type: Optional[ProjectType] = None,
     actions: Optional[list[SuggestedAction]] = None,
+    summary: Optional[AdoptSummary] = None,
 ) -> list[PlannedFile]:
     """Build the list of files we'd create / augment / skip, without writing.
 
@@ -2733,7 +2903,8 @@ def plan_files(
     plan.append(_plan_managed_doc(
         repo / "docs" / "BUILD_PLAN.md",
         generate_build_plan(stack, inputs, title, reality=reality,
-                            project_type=project_type, actions=actions),
+                            project_type=project_type, actions=actions,
+                            summary=summary),
     ))
     # v0 uses a fixed filename (``PROJECT_WHAT_IT_IS.md``) rather than
     # the slug-based ``<APP>_WHAT_IT_IS.md`` the rest of context-kit
@@ -2756,7 +2927,7 @@ def plan_files(
             path=claude_path,
             content=generate_claude_block(stack, inputs, title, reality=reality,
                                           project_type=project_type,
-                                          actions=actions),
+                                          actions=actions, summary=summary),
             kind="augment",
         ))
     else:
@@ -2764,7 +2935,7 @@ def plan_files(
             path=claude_path,
             content=generate_claude_md_fresh(stack, inputs, title, reality=reality,
                                              project_type=project_type,
-                                             actions=actions),
+                                             actions=actions, summary=summary),
             kind="create",
         ))
     return plan
@@ -3329,11 +3500,15 @@ def run_adopt(args: argparse.Namespace) -> int:
                              project_type=project_type)
     failures = analyze_failures(repo, stack, prelim_plan)
     suggested = derive_suggested_actions(stack, reality, project_type, failures)
-    # Final plan with suggested actions threaded into the persisted
-    # docs (BUILD_PLAN.md / CLAUDE.md) so all four output paths
-    # carry the same prioritized checklist.
+    # v0.8 Phase 4.4 — single Adopt Summary bundles workspace stack
+    # pairs + reality + project type + actions into one card that
+    # replaces the four standalone Phase 3 / 4.x cards in CLI,
+    # HTML, BUILD_PLAN, and CLAUDE.
+    summary = derive_adopt_summary(stack, reality, project_type, suggested)
+    # Final plan with summary threaded into the persisted docs.
     plan = plan_files(repo, stack, inputs, reality=reality,
-                      project_type=project_type, actions=suggested)
+                      project_type=project_type, actions=suggested,
+                      summary=summary)
 
     write = bool(getattr(args, "write", False))
     actions = apply_plan(plan, dry_run=not write)
@@ -3345,22 +3520,10 @@ def run_adopt(args: argparse.Namespace) -> int:
     if stack.notes:
         for note in stack.notes:
             print(f"  note: {note}")
-    # v0.8 Phase 3: derived workspace stack labels — sit right
-    # under the primary detection line so the AI session sees them
-    # together. Silent when no labelled children.
-    for line in _workspace_stack_block_dryrun(stack):
-        print(line)
-    # v0.8 Phase 4.1: derived stack reality assessment. Reality
-    # was computed once above (with prelim failures) and threaded
-    # through plan_files so BUILD_PLAN / CLAUDE see the same block.
-    for line in _stack_reality_block_dryrun(reality):
-        print(line)
-    # v0.8 Phase 4.2: derived project type, single human-readable
-    # label answering "what kind of project is this?".
-    for line in _project_type_block_dryrun(project_type):
-        print(line)
-    # v0.8 Phase 4.3: prioritized suggested next actions.
-    for line in _suggested_actions_block_dryrun(suggested):
+    # v0.8 Phase 4.4 — single Adopt Summary block replaces the
+    # standalone Phase 3 / 4.1 / 4.2 / 4.3 prints. Same content,
+    # one read-once section.
+    for line in _adopt_summary_block_dryrun(summary):
         print(line)
     # v0.2: visibility-first. Surface unclassified subdirs between the
     # stack line and the plan so the user reads them before scanning
@@ -3413,7 +3576,8 @@ def run_adopt(args: argparse.Namespace) -> int:
                                   write_mode=write, failures=failures,
                                   reality=reality,
                                   project_type=project_type,
-                                  actions=suggested),
+                                  actions=suggested,
+                                  summary=summary),
                 encoding="utf-8",
             )
         except OSError as exc:
