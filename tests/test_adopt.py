@@ -6204,6 +6204,113 @@ class TestAgentPromptBehaviorRules(unittest.TestCase):
             self.assertIn(required, text,
                           f"v0.10.x section missing: {required}")
 
+    # ---- 5. TO PRESERVE THIS CONTEXT (preservation hook) ----
+
+    def test_preservation_section_present_in_prompt(self):
+        # The preservation hook tells the agent to end its first
+        # response with a copy-paste command that captures
+        # findings — closes the loop where the user previously had
+        # to hand-copy notes into a follow-up --write run.
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        self.assertIn("TO PRESERVE THIS CONTEXT", text)
+        self.assertIn(
+            "end your response with a short copy-paste command",
+            text,
+        )
+
+    def test_preservation_command_includes_all_three_flags(self):
+        # The emitted command must wire all three context-carrying
+        # flags so the user gets a one-keystroke way to persist
+        # everything the agent learned.
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        # Locate the preservation block to scope the assertions.
+        block_start = text.index("TO PRESERVE THIS CONTEXT")
+        block = text[block_start:]
+        self.assertIn("context-kit adopt . --write", block)
+        self.assertIn("--project-summary", block)
+        self.assertIn("--next-task", block)
+        self.assertIn("--notes", block)
+        # Placeholders are visible so the agent knows what to fill in.
+        self.assertIn(
+            "<refined one-sentence project summary>",
+            block,
+        )
+        self.assertIn("<recommended next task>", block)
+        self.assertIn(
+            "<key findings from this inspection>", block,
+        )
+
+    def test_preservation_section_warns_against_secrets(self):
+        # Hard requirement — the agent must be told not to inline
+        # tokens / passwords / API keys into the suggested command.
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        block_start = text.index("TO PRESERVE THIS CONTEXT")
+        block = text[block_start:]
+        self.assertIn(
+            "Do not include secrets, tokens, or credentials in "
+            "any value",
+            block,
+        )
+
+    def test_preservation_section_specifies_emit_only(self):
+        # The agent must EMIT the command, not RUN it. Otherwise
+        # the inspection turn could mutate the user's repo without
+        # consent.
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        block_start = text.index("TO PRESERVE THIS CONTEXT")
+        block = text[block_start:]
+        self.assertIn(
+            "Do not run the command yourself", block,
+        )
+
+    def test_preservation_section_says_omit_notes_when_empty(self):
+        # If the agent didn't find anything worth preserving, it
+        # should drop --notes rather than pad the command with a
+        # weak placeholder.
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        block_start = text.index("TO PRESERVE THIS CONTEXT")
+        block = text[block_start:]
+        self.assertIn(
+            "If no meaningful findings exist, omit --notes",
+            block,
+        )
+
+    def test_preservation_section_sits_after_safety_before_wrapup(self):
+        # Placement contract: SAFETY (rails) → PRESERVATION
+        # (output-formatting) → WRAP-UP (call to action).
+        self._make_full_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        idx_safety = text.index("SAFETY INSTRUCTIONS")
+        idx_preserve = text.index("TO PRESERVE THIS CONTEXT")
+        idx_wrap = text.index(
+            "When you're ready to begin work, summarize what "
+            "you read and propose a concrete first task."
+        )
+        self.assertLess(idx_safety, idx_preserve,
+                        "PRESERVE must come after SAFETY")
+        self.assertLess(idx_preserve, idx_wrap,
+                        "PRESERVE must come before the wrap-up")
+
+    def test_preservation_section_renders_in_unclear_repo(self):
+        # The preservation hook must fire regardless of project
+        # type — unclear repos benefit the most from it because
+        # the agent's first inspection IS the source of truth.
+        self._make_unclear_repo()
+        text, _pt, _r = self._build_prompt()
+        self.assertIn("TO PRESERVE THIS CONTEXT", text)
+        self.assertIn("--notes", text)
+
+    def test_preservation_section_renders_in_single_stack_repo(self):
+        self._make_single_stack_repo()
+        text, _pt, _r = self._build_prompt()
+        self.assertIn("TO PRESERVE THIS CONTEXT", text)
+        self.assertIn("--notes", text)
+
     def test_new_rules_do_not_duplicate_safety_instructions(self):
         # Avoid bloat: the new rules must NOT repeat safety
         # language (no destructive commands, no stack swaps,
