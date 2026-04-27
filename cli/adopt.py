@@ -1077,6 +1077,24 @@ def _workspace_stack_pairs(stack: StackProfile) -> list[tuple[str, str]]:
 
 
 @dataclass
+class AgentLaunchPrompt:
+    """v0.10.0 Phase 6.1 — copy-paste prompt for an AI coding agent.
+
+    Bundles context-kit's view of the project into one self-
+    contained text block the user can paste as the first message
+    to Claude / Cursor / etc. The prompt names what the project
+    appears to be, the primary detection, the workspace
+    structure, a type-specific first action, and the standard
+    safety guardrails (don't change stack, don't run destructive
+    commands, ask before broad refactors).
+    """
+
+    title: str            # always "Agent launch prompt"
+    prompt_text: str      # the full copy-paste block
+    confidence: str       # "low" | "medium" | "high" (mirrors reality)
+
+
+@dataclass
 class AdoptSummary:
     """Phase 4.4 — single consolidated summary card.
 
@@ -1850,6 +1868,266 @@ def _adopt_summary_markdown(summary: AdoptSummary) -> list[str]:
     return out
 
 
+def _agent_first_action_for(project_type: ProjectType,
+                            summary: AdoptSummary) -> str:
+    """Type-specific recommended-first-action paragraph.
+
+    Names the concrete child workspaces or files the agent
+    should look at first. Falls back to a generic "read the
+    manifests + entry points" line for project types that don't
+    have a tailored rule yet.
+    """
+    label = project_type.label
+    pairs = summary.workspace_pairs
+
+    def kids_with(target_label: str) -> list[str]:
+        return [n for n, l in pairs if l == target_label]
+
+    if label == "Web3 dApp":
+        sol = kids_with("Solidity / EVM smart contracts")
+        web = kids_with("Next.js / React web app")
+        sol_ref = ", ".join(sol) if sol else "the smart-contract workspace(s)"
+        web_ref = ", ".join(web) if web else "the frontend workspace(s)"
+        return (
+            f"Inspect the contract/frontend boundary first.\n"
+            f"- Read {sol_ref} to understand the contract layout, "
+            f"build process, and deployment.\n"
+            f"- Read {web_ref} to understand how the frontend "
+            f"consumes the contracts.\n"
+            f"- Confirm how the two communicate (ABIs, hooks, "
+            f"environment variables) before changing either side."
+        )
+
+    if label == "Smart contract project":
+        sol_kids = kids_with("Solidity / EVM smart contracts")
+        sol_clause = (
+            f"Read the workspace child(ren) "
+            f"({', '.join(sol_kids)}) for the contract source."
+            if sol_kids
+            else "Read the contracts/ directory (or wherever .sol "
+                 "files live) for the contract source."
+        )
+        return (
+            f"Inspect the smart-contract layout first.\n"
+            f"- {sol_clause}\n"
+            f"- Read the deployment / build configuration "
+            f"(hardhat.config.*, foundry.toml, truffle-config.js, "
+            f"or brownie-config.yaml) to understand how contracts "
+            f"are compiled, tested, and deployed.\n"
+            f"- Confirm what's deployed where (mainnet / testnet "
+            f"addresses, network config) before making changes."
+        )
+
+    if label == "Full-stack web app":
+        return (
+            f"Inspect the backend/frontend boundary first.\n"
+            f"- Read the backend code to understand the API "
+            f"surface, models, and ownership.\n"
+            f"- Read the frontend workspace to see how it "
+            f"consumes the backend.\n"
+            f"- Confirm the local-dev startup order (which side "
+            f"starts first, on what ports) and the deployment "
+            f"boundary."
+        )
+
+    if label == "Mobile app suite":
+        mobile = kids_with("Flutter / Dart app") + kids_with(
+            "React Native / mobile framework")
+        if mobile:
+            sample = ", ".join(mobile[:3])
+            extra = (f" (and {len(mobile) - 3} more)"
+                     if len(mobile) > 3 else "")
+            kids_clause = (
+                f"Read each app workspace ({sample}{extra}) to "
+                f"understand which apps are primary, shared, or "
+                f"experimental."
+            )
+        else:
+            kids_clause = (
+                "Read each mobile app workspace to understand "
+                "which apps are primary, shared, or experimental."
+            )
+        return (
+            f"Inspect the app workspaces and shared modules first.\n"
+            f"- {kids_clause}\n"
+            f"- Read shared / platform-specific modules to see "
+            f"what's reused across apps.\n"
+            f"- Confirm the build / run setup (Xcode, Android "
+            f"Studio, or CLI) before touching anything."
+        )
+
+    if label == "Rust workspace / library":
+        rust_kids = kids_with("Rust crate")
+        if rust_kids:
+            sample = ", ".join(rust_kids[:3])
+            extra = (f" (and {len(rust_kids) - 3} more)"
+                     if len(rust_kids) > 3 else "")
+            kids_clause = (
+                f"Read each crate ({sample}{extra}) to understand "
+                f"the architecture and how they depend on each "
+                f"other."
+            )
+        else:
+            kids_clause = (
+                "Read each crate to understand the architecture "
+                "and how they depend on each other."
+            )
+        return (
+            f"Inspect the crates and entrypoint first.\n"
+            f"- Read root Cargo.toml to find the workspace "
+            f"members and the project's external dependencies.\n"
+            f"- {kids_clause}\n"
+            f"- Identify the binary or library entrypoint(s) "
+            f"before making changes."
+        )
+
+    if label == "Go project":
+        return (
+            f"Inspect go.mod, cmd/, and pkg/ first.\n"
+            f"- Read go.mod to understand the module path and "
+            f"external dependencies.\n"
+            f"- Read cmd/ to find the binary entrypoints (each "
+            f"subdirectory is typically one binary).\n"
+            f"- Read pkg/ (or internal/) to understand the "
+            f"package layout before touching anything."
+        )
+
+    if label == "Unclear project type":
+        return (
+            f"Do NOT write code yet. Clarify the project shape "
+            f"first.\n"
+            f"- Read all generated docs and the user's project "
+            f"description.\n"
+            f"- Ask the user explicitly: what is this project? "
+            f"what stack does it use? what are you trying to do?\n"
+            f"- Wait for their answer before proposing any "
+            f"concrete next step."
+        )
+
+    # Generic fallback for JS app/tooling, Python app/tooling,
+    # and any project type added later without a tailored rule.
+    return (
+        f"Inspect the project layout before writing code.\n"
+        f"- Read the project's manifests (package.json / "
+        f"pyproject.toml / etc.) to understand dependencies and "
+        f"entry points.\n"
+        f"- Read the major modules to learn the architecture.\n"
+        f"- Propose a concrete first task before making changes."
+    )
+
+
+def derive_agent_launch_prompt(
+    stack: StackProfile,
+    reality: StackReality,
+    project_type: ProjectType,
+    summary: AdoptSummary,
+) -> AgentLaunchPrompt:
+    """Build a copy-paste prompt for an AI coding agent.
+
+    v0.10.0 Phase 6.1 — pure derivation. The output is a single
+    self-contained text block the user can paste as the first
+    message to their AI agent (Claude Code, Cursor, Aider, etc.)
+    after running ``context-kit adopt``.
+
+    Confidence mirrors ``reality.confidence`` (lowercased) — if
+    adopt isn't sure about the project shape, the prompt isn't
+    sure either.
+    """
+    if summary.workspace_pairs:
+        struct_lines = "\n".join(
+            f"- {name} → {label}"
+            for name, label in summary.workspace_pairs
+        )
+    else:
+        struct_lines = "- No workspace child projects detected."
+
+    first_action = _agent_first_action_for(project_type, summary)
+
+    prompt_text = (
+        "You are working in a project that context-kit just "
+        "adopted. Before writing any code, do the following.\n"
+        "\n"
+        "WHAT THIS PROJECT APPEARS TO BE\n"
+        f"{project_type.label} ({project_type.confidence} "
+        f"confidence)\n"
+        f"Reasoning: {project_type.reason}\n"
+        "\n"
+        "PRIMARY DETECTION\n"
+        f"{reality.primary}\n"
+        "\n"
+        "WORKSPACE / PROJECT STRUCTURE\n"
+        f"{struct_lines}\n"
+        "\n"
+        "RECOMMENDED FIRST ACTION\n"
+        f"{first_action}\n"
+        "\n"
+        "SAFETY INSTRUCTIONS\n"
+        "- Read all generated docs (BUILD_PLAN.md, "
+        "PROJECT_WHAT_IT_IS.md, CLAUDE.md) before making "
+        "changes.\n"
+        "- Do not change the project's stack (e.g. swapping "
+        "frameworks, languages, or build tools) without asking "
+        "the user first.\n"
+        "- Do not run destructive commands (rm -rf, force-push, "
+        "drop database, schema deletes, etc.).\n"
+        "- Ask before broad refactors that touch more than 3-5 "
+        "files.\n"
+        "\n"
+        "When you're ready to begin work, summarize what you "
+        "read and propose a concrete first task."
+    )
+
+    return AgentLaunchPrompt(
+        title="Agent launch prompt",
+        prompt_text=prompt_text,
+        confidence=reality.confidence.lower(),
+    )
+
+
+def _agent_launch_prompt_block_dryrun(
+    prompt: AgentLaunchPrompt,
+) -> list[str]:
+    """The "Agent launch prompt" block for the CLI dry-run.
+
+    Surrounds the copy-paste body with delimiter lines so a
+    human (or a downstream tool) can extract the prompt cleanly
+    from the dry-run output.
+    """
+    out = [
+        "",
+        f"=== AGENT LAUNCH PROMPT ({prompt.confidence} confidence) ===",
+        "Copy-paste the block below into your AI coding agent "
+        "as the first message:",
+        "",
+    ]
+    out.extend(prompt.prompt_text.splitlines())
+    out.append("")
+    out.append("=== END AGENT LAUNCH PROMPT ===")
+    return out
+
+
+def _agent_launch_prompt_markdown(
+    prompt: AgentLaunchPrompt,
+) -> list[str]:
+    """The "Agent launch prompt" section for Markdown docs.
+
+    Wraps the prompt in a ``text`` code fence so it survives
+    Markdown rendering and copies cleanly out of any viewer.
+    """
+    return [
+        "",
+        "## Agent launch prompt",
+        "",
+        f"Copy-paste this into your AI coding agent (Claude Code, "
+        f"Cursor, Aider, etc.) as the first message. Confidence: "
+        f"{prompt.confidence}.",
+        "",
+        "```text",
+        prompt.prompt_text,
+        "```",
+    ]
+
+
 def _stack_reality_block_dryrun(reality: StackReality) -> list[str]:
     """The "Stack reality" derived-summary block for the CLI dry-run.
 
@@ -2304,7 +2582,8 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
                         *, reality: Optional[StackReality] = None,
                         project_type: Optional[ProjectType] = None,
                         actions: Optional[list[SuggestedAction]] = None,
-                        summary: Optional[AdoptSummary] = None) -> str:
+                        summary: Optional[AdoptSummary] = None,
+                        agent_prompt: Optional[AgentLaunchPrompt] = None) -> str:
     """The minimum BUILD_PLAN.md a freshly-adopted project needs.
 
     The strengthened first prompt (Step 8 of the wizard) tells agents
@@ -2349,6 +2628,10 @@ def generate_build_plan(stack: StackProfile, inputs: AdoptionInputs, title: str,
     # only emits the summary.
     if summary is not None:
         body += _adopt_summary_markdown(summary)
+    # v0.10.0 Phase 6.1: Agent launch prompt sits directly under
+    # the Adopt Summary so the user can grab it without scrolling.
+    if agent_prompt is not None:
+        body += _agent_launch_prompt_markdown(agent_prompt)
     # v0.2: visibility-first. Only added when there's something
     # unclassified to surface — clean classified projects still get
     # the same compact tech-stack section as v0.1.
@@ -2441,7 +2724,8 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
                           *, reality: Optional[StackReality] = None,
                           project_type: Optional[ProjectType] = None,
                           actions: Optional[list[SuggestedAction]] = None,
-                          summary: Optional[AdoptSummary] = None) -> str:
+                          summary: Optional[AdoptSummary] = None,
+                          agent_prompt: Optional[AgentLaunchPrompt] = None) -> str:
     """The managed block we append (or insert) into CLAUDE.md.
 
     Wrapped in markers so re-running ``adopt`` updates these facts in
@@ -2481,6 +2765,10 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
     # inside the managed block. Same content, one card.
     if summary is not None:
         lines += _adopt_summary_markdown(summary)
+    # v0.10.0 Phase 6.1: Agent launch prompt also lands inside the
+    # CLAUDE managed block so re-runs refresh it in place.
+    if agent_prompt is not None:
+        lines += _agent_launch_prompt_markdown(agent_prompt)
     if stack.unclassified_subdirs:
         lines += _unknown_present_markdown(stack)
     # v0.8: workspace children get a compact mention in the CLAUDE
@@ -2518,7 +2806,8 @@ def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title:
                              *, reality: Optional[StackReality] = None,
                              project_type: Optional[ProjectType] = None,
                              actions: Optional[list[SuggestedAction]] = None,
-                             summary: Optional[AdoptSummary] = None) -> str:
+                             summary: Optional[AdoptSummary] = None,
+                             agent_prompt: Optional[AgentLaunchPrompt] = None) -> str:
     """Full CLAUDE.md when none exists yet.
 
     Mirrors the shape of cli/_starter/root/CLAUDE.md but tighter — we
@@ -2528,7 +2817,8 @@ def generate_claude_md_fresh(stack: StackProfile, inputs: AdoptionInputs, title:
     """
     block = generate_claude_block(stack, inputs, title, reality=reality,
                                   project_type=project_type,
-                                  actions=actions, summary=summary)
+                                  actions=actions, summary=summary,
+                                  agent_prompt=agent_prompt)
     return "\n".join([
         f"# CLAUDE / AGENTS — {title}",
         "",
@@ -2589,7 +2879,8 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                       reality: Optional[StackReality] = None,
                       project_type: Optional[ProjectType] = None,
                       actions: Optional[list[SuggestedAction]] = None,
-                      summary: Optional[AdoptSummary] = None) -> str:
+                      summary: Optional[AdoptSummary] = None,
+                      agent_prompt: Optional[AgentLaunchPrompt] = None) -> str:
     """Build the full self-contained HTML report.
 
     Six sections per §21:
@@ -2726,6 +3017,33 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             summary_html.append('      </ul>')
         summary_html.append('    </div>')
         summary_html += ['  </div>', '</section>']
+
+    # ---- Section 3.6: Agent launch prompt (v0.10.0 Phase 6.1) ----
+    # Sits directly under the Adopt Summary card so the user can
+    # grab the prompt without scrolling past the rest of the
+    # report. Plain <pre> block + a single copy button — no
+    # fancy UI per spec ("This is great, but I want to plug it
+    # into my Agent and go").
+    agent_prompt_html: list[str] = []
+    if agent_prompt is not None:
+        ap_card = {"high": "card-ok", "medium": "card-warn",
+                   "low": "card-warn"}.get(agent_prompt.confidence,
+                                           "card-warn")
+        agent_prompt_html = [
+            f'<section class="card {ap_card}">',
+            f'  <h2>{_esc(agent_prompt.title)}</h2>',
+            f'  <p class="meta">Copy-paste this into your AI '
+            f'coding agent (Claude Code, Cursor, Aider, etc.) '
+            f'as the first message. Confidence: '
+            f'<strong>{_esc(agent_prompt.confidence)}</strong>.</p>',
+            f'  <pre class="prompt-block" '
+            f'id="agent-launch-prompt-text">'
+            f'<code>{_esc(agent_prompt.prompt_text)}</code></pre>',
+            f'  <button class="copy" '
+            f'data-copy-target="agent-launch-prompt-text">'
+            f'Copy prompt</button>',
+            '</section>',
+        ]
 
     # ---- Phase 3 / 4.x standalone sections — REMOVED in 4.4 ----
     # The Workspace stack, Stack reality, Project type, and
@@ -3245,6 +3563,16 @@ def render_adopt_html(repo: Path, stack: StackProfile,
       font-weight: 700; font-size: 1.05rem; color: var(--accent-strong);
     }
     .unc-trivial { padding: .55rem .85rem; }
+    /* v0.10.0 Phase 6.1 — agent launch prompt block. Plain
+       monospace, scrollable when long, sized so the entire
+       prompt fits without dwarfing the rest of the report. */
+    .prompt-block {
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: .85rem 1rem;
+      font-family: var(--mono); font-size: .82rem;
+      white-space: pre-wrap; word-break: break-word;
+      max-height: 30rem; overflow-y: auto; margin: .75rem 0;
+    }
     .unc-body { margin-top: .75rem; padding-top: .5rem; border-top: 1px solid var(--border); font-size: .9rem; }
     .unc-body ul { padding-left: 1.25rem; margin: .25rem 0; }
     pre.preview {
@@ -3325,6 +3653,10 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     # output. summary_html is rendered above unknown_html so the
     # reader sees the consolidated assessment first.
     out.extend(summary_html)
+    # v0.10.0 Phase 6.1 — Agent launch prompt sits directly under
+    # the Adopt Summary so the copy-paste block is the second
+    # thing the reader sees.
+    out.extend(agent_prompt_html)
     out.extend(unknown_html)
     out.extend(workspace_html)
     out.extend(failures_html)
@@ -3384,6 +3716,7 @@ def plan_files(
     project_type: Optional[ProjectType] = None,
     actions: Optional[list[SuggestedAction]] = None,
     summary: Optional[AdoptSummary] = None,
+    agent_prompt: Optional[AgentLaunchPrompt] = None,
 ) -> list[PlannedFile]:
     """Build the list of files we'd create / augment / skip, without writing.
 
@@ -3408,7 +3741,7 @@ def plan_files(
         repo / "docs" / "BUILD_PLAN.md",
         generate_build_plan(stack, inputs, title, reality=reality,
                             project_type=project_type, actions=actions,
-                            summary=summary),
+                            summary=summary, agent_prompt=agent_prompt),
     ))
     # v0 uses a fixed filename (``PROJECT_WHAT_IT_IS.md``) rather than
     # the slug-based ``<APP>_WHAT_IT_IS.md`` the rest of context-kit
@@ -3431,7 +3764,8 @@ def plan_files(
             path=claude_path,
             content=generate_claude_block(stack, inputs, title, reality=reality,
                                           project_type=project_type,
-                                          actions=actions, summary=summary),
+                                          actions=actions, summary=summary,
+                                          agent_prompt=agent_prompt),
             kind="augment",
         ))
     else:
@@ -3439,7 +3773,8 @@ def plan_files(
             path=claude_path,
             content=generate_claude_md_fresh(stack, inputs, title, reality=reality,
                                              project_type=project_type,
-                                             actions=actions, summary=summary),
+                                             actions=actions, summary=summary,
+                                             agent_prompt=agent_prompt),
             kind="create",
         ))
     return plan
@@ -4009,10 +4344,17 @@ def run_adopt(args: argparse.Namespace) -> int:
     # replaces the four standalone Phase 3 / 4.x cards in CLI,
     # HTML, BUILD_PLAN, and CLAUDE.
     summary = derive_adopt_summary(stack, reality, project_type, suggested)
-    # Final plan with summary threaded into the persisted docs.
+    # v0.10.0 Phase 6.1 — derive the agent launch prompt from the
+    # already-built summary. Pure aggregation; lives next to the
+    # other derive_*() calls so it ships with the rest of the
+    # decision layer.
+    agent_prompt = derive_agent_launch_prompt(stack, reality,
+                                              project_type, summary)
+    # Final plan with summary + agent prompt threaded into the
+    # persisted docs.
     plan = plan_files(repo, stack, inputs, reality=reality,
                       project_type=project_type, actions=suggested,
-                      summary=summary)
+                      summary=summary, agent_prompt=agent_prompt)
 
     write = bool(getattr(args, "write", False))
     actions = apply_plan(plan, dry_run=not write)
@@ -4028,6 +4370,11 @@ def run_adopt(args: argparse.Namespace) -> int:
     # standalone Phase 3 / 4.1 / 4.2 / 4.3 prints. Same content,
     # one read-once section.
     for line in _adopt_summary_block_dryrun(summary):
+        print(line)
+    # v0.10.0 Phase 6.1 — Agent launch prompt directly under the
+    # Adopt Summary block. Delimited so the user (or a tool) can
+    # extract the prompt cleanly.
+    for line in _agent_launch_prompt_block_dryrun(agent_prompt):
         print(line)
     # v0.2: visibility-first. Surface unclassified subdirs between the
     # stack line and the plan so the user reads them before scanning
@@ -4085,7 +4432,8 @@ def run_adopt(args: argparse.Namespace) -> int:
                                   reality=reality,
                                   project_type=project_type,
                                   actions=suggested,
-                                  summary=summary),
+                                  summary=summary,
+                                  agent_prompt=agent_prompt),
                 encoding="utf-8",
             )
         except OSError as exc:

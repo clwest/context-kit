@@ -4794,5 +4794,255 @@ class TestEcosystemCoverage(unittest.TestCase):
                             f"primary; got {ptype.label!r}")
 
 
+class TestAgentLaunchPrompt(unittest.TestCase):
+    """v0.10.0 Phase 6.1 — Agent launch prompt.
+
+    Verifies the type-specific recommended-first-action and the
+    rendering surfaces (CLI block + HTML copy button + BUILD_PLAN
+    + CLAUDE managed block).
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _derive_full_chain(self):
+        from cli.adopt import (
+            derive_adopt_summary, derive_agent_launch_prompt,
+            derive_project_type, derive_stack_reality,
+            derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality, prelim)
+        prelim_plan = plan_files(self.repo, self.inputs and self.inputs,
+                                 stack, reality=reality,
+                                 project_type=ptype) if False else None
+        actions = derive_suggested_actions(stack, reality, ptype, prelim)
+        summary = derive_adopt_summary(stack, reality, ptype, actions)
+        prompt = derive_agent_launch_prompt(stack, reality, ptype, summary)
+        return stack, reality, ptype, summary, prompt
+
+    # ---- Web3 dApp: prompt mentions contracts/frontend boundary ----
+
+    def test_web3_dapp_prompt_mentions_contracts_and_frontend(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        _, _, _, _, prompt = self._derive_full_chain()
+        text = prompt.prompt_text
+        # Section headings present.
+        self.assertIn("WHAT THIS PROJECT APPEARS TO BE", text)
+        self.assertIn("PRIMARY DETECTION", text)
+        self.assertIn("WORKSPACE / PROJECT STRUCTURE", text)
+        self.assertIn("RECOMMENDED FIRST ACTION", text)
+        self.assertIn("SAFETY INSTRUCTIONS", text)
+        # Web3 dApp first-action wording.
+        self.assertIn("contract/frontend boundary", text)
+        # Concrete child names appear.
+        self.assertIn("apps/forge", text)
+        self.assertIn("apps/next", text)
+        # Confidence mirrors Stack reality.
+        self.assertEqual(prompt.confidence, "medium")
+
+    # ---- Rust: prompt mentions crates ------------------------------
+
+    def test_rust_workspace_prompt_mentions_crates(self):
+        (self.repo / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+        (self.repo / "crates").mkdir()
+        for name in ("cli", "core"):
+            d = self.repo / "crates" / name
+            d.mkdir()
+            (d / "Cargo.toml").write_text("# c\n", encoding="utf-8")
+            (d / "src").mkdir()
+            (d / "src" / "lib.rs").write_text("// rs\n", encoding="utf-8")
+
+        _, _, _, _, prompt = self._derive_full_chain()
+        text = prompt.prompt_text
+        self.assertIn("crates", text)
+        # Specifically names some workspace crates.
+        self.assertIn("crates/cli", text)
+        # Mentions root Cargo.toml.
+        self.assertIn("Cargo.toml", text)
+
+    # ---- Go: prompt mentions go.mod / cmd / pkg --------------------
+
+    def test_go_project_prompt_mentions_go_mod_cmd_pkg(self):
+        (self.repo / "go.mod").write_text("module foo\n", encoding="utf-8")
+        for d in ("cmd", "pkg"):
+            (self.repo / d).mkdir()
+            (self.repo / d / f"main.go").write_text("// go\n", encoding="utf-8")
+        _, _, _, _, prompt = self._derive_full_chain()
+        text = prompt.prompt_text
+        self.assertIn("go.mod", text)
+        self.assertIn("cmd/", text)
+        self.assertIn("pkg/", text)
+
+    # ---- Mobile app suite: prompt mentions app workspaces / shared -
+
+    def test_mobile_app_suite_prompt_mentions_app_workspaces(self):
+        (self.repo / "melos.yaml").write_text("name: x\n", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app in ("buyer_app", "seller_app"):
+            d = self.repo / "apps" / app
+            d.mkdir()
+            (d / "pubspec.yaml").write_text(f"name: {app}\n", encoding="utf-8")
+            (d / "lib").mkdir()
+            (d / "lib" / "main.dart").write_text("// dart\n", encoding="utf-8")
+        _, _, _, _, prompt = self._derive_full_chain()
+        text = prompt.prompt_text
+        self.assertIn("app workspaces", text)
+        self.assertIn("shared", text.lower())
+        # Both apps named.
+        self.assertIn("apps/buyer_app", text)
+        self.assertIn("apps/seller_app", text)
+
+    # ---- Full-stack web app: prompt mentions backend/frontend ------
+
+    def test_full_stack_prompt_mentions_backend_frontend(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        web = self.repo / "apps" / "web"
+        web.mkdir()
+        (web / "package.json").write_text("{}", encoding="utf-8")
+        (web / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (web / "app").mkdir()
+        for n in range(3):
+            (web / "app" / f"p{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "backend").mkdir()
+        (self.repo / "server" / "backend" / "manage.py").write_text(
+            "# d\n", encoding="utf-8")
+        for n in range(5):
+            (self.repo / "server" / "backend" / f"v{n}.py").write_text(
+                "# x\n", encoding="utf-8")
+        _, _, _, _, prompt = self._derive_full_chain()
+        text = prompt.prompt_text
+        self.assertIn("backend/frontend boundary", text)
+
+    # ---- Unclear: prompt asks to clarify before coding -------------
+
+    def test_unclear_project_type_prompt_asks_to_clarify(self):
+        # Mix of Rust crates AND Next.js apps (no clean primary
+        # identity, like next.js itself) → Unclear project type.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "crates").mkdir()
+        for name in ("a", "b"):
+            d = self.repo / "crates" / name
+            d.mkdir()
+            (d / "Cargo.toml").write_text("# c\n", encoding="utf-8")
+            (d / "src").mkdir()
+            (d / "src" / "lib.rs").write_text("// rs\n", encoding="utf-8")
+        _, _, ptype, _, prompt = self._derive_full_chain()
+        self.assertEqual(ptype.label, "Unclear project type")
+        text = prompt.prompt_text
+        self.assertIn("Do NOT write code yet", text)
+        self.assertIn("Clarify the project shape", text)
+        self.assertIn("Wait for their answer", text)
+
+    # ---- HTML: prompt block + copy button --------------------------
+
+    def test_html_includes_prompt_block_and_copy_button(self):
+        (self.repo / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+        (self.repo / "crates").mkdir()
+        d = self.repo / "crates" / "cli"
+        d.mkdir()
+        (d / "Cargo.toml").write_text("# c\n", encoding="utf-8")
+        (d / "src").mkdir()
+        (d / "src" / "lib.rs").write_text("// rs\n", encoding="utf-8")
+
+        stack, reality, ptype, summary, prompt = self._derive_full_chain()
+        plan = plan_files(self.repo, stack, self.inputs,
+                          reality=reality, project_type=ptype,
+                          summary=summary, agent_prompt=prompt)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[],
+                                 reality=reality, project_type=ptype,
+                                 summary=summary, agent_prompt=prompt)
+        # Section title.
+        self.assertIn("<h2>Agent launch prompt</h2>", html)
+        # Plain <pre> block with the prompt text inside <code>.
+        self.assertIn('<pre class="prompt-block" '
+                      'id="agent-launch-prompt-text">'
+                      '<code>', html)
+        # Single copy button targeting the prompt block.
+        self.assertIn(
+            '<button class="copy" '
+            'data-copy-target="agent-launch-prompt-text">',
+            html,
+        )
+        self.assertIn("Copy prompt", html)
+        # CSS for the prompt block ships in the style block.
+        self.assertIn(".prompt-block {", html)
+
+    # ---- BUILD_PLAN.md and CLAUDE.md include the prompt ------------
+
+    def test_build_plan_includes_prompt_section(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        stack, reality, ptype, summary, prompt = self._derive_full_chain()
+        md = generate_build_plan(stack, self.inputs, "Test",
+                                 reality=reality, project_type=ptype,
+                                 summary=summary, agent_prompt=prompt)
+        self.assertIn("## Agent launch prompt", md)
+        # Wrapped in a text code fence so the copy survives Markdown
+        # rendering.
+        self.assertIn("```text", md)
+        # Confidence noted in the intro paragraph.
+        self.assertIn("Confidence:", md)
+        # Body content of the prompt is present.
+        self.assertIn("WHAT THIS PROJECT APPEARS TO BE", md)
+        self.assertIn("SAFETY INSTRUCTIONS", md)
+
+    def test_claude_block_includes_prompt_section(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        stack, reality, ptype, summary, prompt = self._derive_full_chain()
+        block = generate_claude_block(stack, self.inputs, "Test",
+                                      reality=reality, project_type=ptype,
+                                      summary=summary,
+                                      agent_prompt=prompt)
+        self.assertIn("## Agent launch prompt", block)
+        self.assertIn("WHAT THIS PROJECT APPEARS TO BE", block)
+        # Stays inside the adopt-managed markers.
+        self.assertIn(START_MARKER, block)
+        self.assertIn(END_MARKER, block)
+
+    # ---- CLI dry-run: delimited block ------------------------------
+
+    def test_cli_dryrun_includes_delimited_prompt_block(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_adopt(_ns(self.repo, write=False,
+                          description="x", next_step="y"))
+        out = buf.getvalue()
+        self.assertIn("AGENT LAUNCH PROMPT", out)
+        self.assertIn("=== END AGENT LAUNCH PROMPT ===", out)
+        # Body content present in the dry-run output.
+        self.assertIn("WHAT THIS PROJECT APPEARS TO BE", out)
+        self.assertIn("SAFETY INSTRUCTIONS", out)
+
+
 if __name__ == "__main__":
     unittest.main()
