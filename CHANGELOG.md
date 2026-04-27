@@ -9,6 +9,67 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-04-27
+
+**Discovered-notes preservation.** `context-kit adopt` gains a
+`--notes TEXT` flag so findings from a prior dry-run / inspection
+pass survive the user's later `--write` run with a refined
+`--project-summary` or `--next-task`. Closes the trust-loss case
+where probe findings vanish when the user iterates on the inputs.
+
+### Added — `--notes TEXT`
+
+- **Flag-only** — never prompted. When omitted, no notes section
+  appears anywhere in adopt's output (no empty headings).
+- **Surfaces in four places when provided:**
+  - **Agent Launch Prompt** — new `DISCOVERED NOTES / CONTEXT`
+    section between `USER CONTEXT` and `PRIMARY DETECTION`.
+  - **`docs/BUILD_PLAN.md`** — new `## Discovered notes` section
+    between the project summary and the tech-stack block.
+  - **`00-START-NEXT-SESSION.md`** — new `## Discovered notes`
+    section between "What's next" and "How to start the session".
+  - **`CLAUDE.md`** — new `### Discovered notes` heading inside
+    the adopt-managed block (between "What the user told adopt"
+    and "Rule for this session"). Re-running `--write` refreshes
+    the notes in place; no stacking.
+- **Multi-line notes preserve line breaks.** First line carries
+  the bullet prefix; subsequent lines indent two spaces so the
+  result reads naturally in plain text and renders as a markdown
+  list continuation. Whitespace-only notes collapse to "no notes".
+
+### Why this exists
+
+The v0.10.0 release flow exposed a trust-loss case: a user runs
+`adopt --html` in probe mode, discovers something useful (port
+collision, deployment quirk, demo credentials, etc.), then later
+runs `--write` with a sharper `--project-summary` — and their
+findings vanish from the generated docs. `--notes` is the
+escape hatch: hand adopt the discoveries explicitly and they
+ride along into every doc the agent will read.
+
+### Internals
+
+- **`AdoptionInputs`** gains `notes: str = ""` (default-safe
+  for every existing test that constructs it positionally).
+- **`collect_inputs`** gains a `notes=None` kwarg; never prompts
+  for it. Empty / whitespace-only notes collapse to `""`.
+- **`_format_notes_block`** centralizes the bullet + indent
+  rendering; reused by all four surfaces so the format stays
+  identical across the prompt and the three docs.
+- **`derive_agent_launch_prompt`** threads notes through; when
+  empty, the entire DISCOVERED NOTES section is omitted (no
+  empty heading, no prelude line).
+- **`run_adopt`** reads `getattr(args, "notes", None)` so legacy
+  test namespaces without the attribute still work.
+
+### Tests
+
+13 new tests in `TestDiscoveredNotes` cover the argparse layer,
+the dry-run Agent Launch Prompt path, all three written docs,
+the omission case (no `--notes` => no section anywhere), the
+multi-line preservation contract, and the re-run refresh-in-place
+guarantee for the CLAUDE.md managed block. 471/471 tests green.
+
 ## [0.10.0] — 2026-04-27
 
 **Agent Launch Prompt milestone.** Adopt now produces a single
