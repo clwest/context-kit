@@ -291,6 +291,100 @@ def _detect_in_dir(d: Path) -> tuple[str, list[str]]:
     return "unknown", signals
 
 
+# v0.9 Phase 5.1 — mixed-root resolution. Used by detect_stack
+# only when both JS and Python root manifests are present. The
+# walk is bounded by these constants so even pathological repos
+# (django/django itself surfaces ~377 .py at depth-2) resolve
+# in well under a second.
+_MIXED_ROOT_BUDGET = 5000           # max files inspected
+_MIXED_ROOT_MIN_DOMINANT = 5        # winner needs at least this many
+_MIXED_ROOT_RATIO = 3               # winner needs >= ratio * loser
+
+
+def _root_source_evidence(repo: Path) -> dict[str, int]:
+    """Shallow source-extension counts for mixed-root resolution.
+
+    Walks ``repo`` to depth 2, skipping hidden directories and
+    anything ``_is_noise_dir`` flags (venv variants, node_modules,
+    dist/build, etc.). Counts only the five extensions that matter
+    for distinguishing a Python primary from a JavaScript primary.
+
+    Cost-bounded by ``_MIXED_ROOT_BUDGET``. Pure I/O — no other
+    side effects.
+    """
+    counts: dict[str, int] = {
+        ".py": 0, ".js": 0, ".ts": 0, ".tsx": 0, ".jsx": 0,
+    }
+    seen = 0
+    try:
+        for root, dirs, files in os.walk(repo):
+            rel = Path(root).relative_to(repo)
+            if len(rel.parts) > 2:
+                dirs[:] = []
+                continue
+            dirs[:] = [
+                d for d in dirs
+                if not d.startswith(".") and not _is_noise_dir(d)
+            ]
+            for name in files:
+                seen += 1
+                if seen > _MIXED_ROOT_BUDGET:
+                    break
+                ext = Path(name).suffix.lower()
+                if ext in counts:
+                    counts[ext] += 1
+            if seen > _MIXED_ROOT_BUDGET:
+                break
+    except OSError:
+        pass
+    return counts
+
+
+def _resolve_mixed_root(repo: Path,
+                        signals: list[str]) -> tuple[str, str]:
+    """Decide JS vs Python at root when both manifests are present.
+
+    Counts shallow ``.py`` vs ``.js`` / ``.ts`` / ``.tsx`` / ``.jsx``
+    evidence at depth ≤ 2. Picks the dominant side when one side has
+    at least ``_MIXED_ROOT_MIN_DOMINANT`` files AND at least
+    ``_MIXED_ROOT_RATIO`` × the other side's count. Otherwise falls
+    back to JavaScript (preserves the v0 default for callers that
+    haven't been audited) and notes the inconclusiveness.
+
+    Returns ``(language, note)`` where note explains which side won
+    and why. Pure modulo the underlying source walk.
+    """
+    counts = _root_source_evidence(repo)
+    py = counts.get(".py", 0)
+    js = sum(counts.get(e, 0) for e in (".js", ".ts", ".tsx", ".jsx"))
+    py_signal = next(
+        (s for s in signals
+         if s in ("manage.py", "requirements.txt", "pyproject.toml")),
+        "Python manifest",
+    )
+    if py >= _MIXED_ROOT_MIN_DOMINANT and py >= _MIXED_ROOT_RATIO * js:
+        return ("python", (
+            f"Mixed root manifests (package.json + {py_signal}); "
+            f"Python primary based on source dominance "
+            f"({py} .py files vs {js} .js/.ts/.tsx/.jsx files at "
+            f"depth ≤ 2)."
+        ))
+    if js >= _MIXED_ROOT_MIN_DOMINANT and js >= _MIXED_ROOT_RATIO * py:
+        return ("javascript", (
+            f"Mixed root manifests (package.json + {py_signal}); "
+            f"JavaScript primary based on source dominance "
+            f"({js} .js/.ts/.tsx/.jsx files vs {py} .py files at "
+            f"depth ≤ 2)."
+        ))
+    return ("javascript", (
+        f"Mixed root manifests (package.json + {py_signal}); source "
+        f"counts inconclusive ({py} .py vs {js} .js/.ts/.tsx/.jsx "
+        f"at depth ≤ 2). Defaulting to JavaScript — Stack reality "
+        f"confidence is downgraded to Medium because mixed-root "
+        f"setups rarely behave as a single stack."
+    ))
+
+
 def _pick_primary(parts: dict[str, str]) -> str:
     """Backend wins by convention; otherwise first detected in scan order.
 
@@ -328,16 +422,18 @@ def detect_stack(repo: Path) -> StackProfile:
     root_lang, root_signals = _detect_in_dir(repo)
     if root_signals:
         notes: list[str] = []
-        # Preserve the v0 "mixed JS+Python at root" honest note.
+        # v0.9 Phase 5.1 — when both JS and Python root manifests
+        # are present, walk shallow source evidence to decide which
+        # side is the actual primary. v0 always picked JavaScript;
+        # that produced the django/django dogfood failure where 198
+        # .py files in django/ + 163 in tests/ silently lost to a
+        # tooling-only root package.json.
         if (
             "package.json" in root_signals
             and any(s in root_signals for s in ("manage.py", "requirements.txt", "pyproject.toml"))
         ):
-            notes.append(
-                "Detected both JavaScript and Python manifests at root. "
-                "v0 reports JavaScript and notes Python presence; "
-                "multi-stack handling is planned for a later release."
-            )
+            root_lang, mixed_note = _resolve_mixed_root(repo, root_signals)
+            notes.append(mixed_note)
         profile = StackProfile(language=root_lang, signals=root_signals, notes=notes)
         profile.unclassified_subdirs = scan_unclassified_subdirs(repo, set(profile.parts))
         profile.workspace_children = scan_workspace_children(repo)
@@ -1130,6 +1226,28 @@ def derive_stack_reality(stack: StackProfile,
             why=("Root manifest matches a single stack, but a stronger "
                  "framework signal at root suggests the primary label "
                  "may undersell the actual stack."),
+            primary=primary,
+            workspace_signals=workspace_signals,
+        )
+    # v0.9 Phase 5.1 — mixed-root JS+Python at root never claims
+    # High confidence regardless of which side won the source-
+    # dominance check. Even when the dominance call is clear-cut,
+    # mixed-root setups in practice often have hidden glue (build
+    # tooling, CI, generated code) that the single-stack frame
+    # underserves; Medium is the honest ceiling.
+    has_js_root = "package.json" in stack.signals
+    has_py_root = any(
+        s in stack.signals
+        for s in ("manage.py", "requirements.txt", "pyproject.toml")
+    )
+    if has_js_root and has_py_root:
+        return StackReality(
+            assessment="Single-stack project",
+            confidence="Medium",
+            why=("Root has both JavaScript and Python manifests; "
+                 "primary chosen by source-file dominance at depth ≤ 2. "
+                 "Mixed-root setups rarely behave as a single stack in "
+                 "practice — verify the choice before relying on it."),
             primary=primary,
             workspace_signals=workspace_signals,
         )

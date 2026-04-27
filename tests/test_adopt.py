@@ -99,17 +99,25 @@ class TestDetectStack(unittest.TestCase):
         # Honest about what was missing — the user should see why.
         self.assertTrue(any("No package.json" in n for n in result.notes))
 
-    def test_mixed_repo_reports_javascript_and_notes_python(self):
-        # v0 doesn't handle this properly; the test locks the
-        # documented v0 behavior so the eventual upgrade is a real
-        # signal, not a silent change.
+    def test_mixed_repo_with_no_source_evidence_defaults_to_javascript(self):
+        # v0.9 Phase 5.1 behavior: bare-manifest mixed-root with
+        # no source evidence is "inconclusive". Falls back to
+        # JavaScript (preserves the v0 default) but the note
+        # explicitly says the source counts were inconclusive.
+        # Replaces the v0 "multi-stack" note that always fired
+        # regardless of evidence.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "requirements.txt").write_text("flask\n", encoding="utf-8")
         result = detect_stack(self.repo)
         self.assertEqual(result.language, "javascript")
         self.assertTrue(
-            any("multi-stack" in n.lower() for n in result.notes),
-            f"expected multi-stack note; got {result.notes!r}",
+            any("Mixed root manifests" in n for n in result.notes),
+            f"expected mixed-root note; got {result.notes!r}",
+        )
+        self.assertTrue(
+            any("inconclusive" in n.lower() for n in result.notes),
+            f"no-source-evidence case must say inconclusive; "
+            f"got {result.notes!r}",
         )
 
 
@@ -4384,6 +4392,166 @@ class TestSuggestedActionsContextAware(unittest.TestCase):
         priority_rank = {"high": 0, "medium": 1, "low": 2}
         ranks = [priority_rank[a.priority] for a in actions]
         self.assertEqual(ranks, sorted(ranks))
+
+
+class TestMixedRootDominance(unittest.TestCase):
+    """v0.9 Phase 5.1 — mixed-root JS+Python source-dominance.
+
+    Fixes the django/django dogfood failure where v0's classifier
+    picked JavaScript whenever both root manifests were present,
+    even on overwhelmingly Python repos. The new resolver walks
+    shallow source evidence and picks the dominant side; the
+    Stack reality confidence is also capped at Medium for any
+    mixed-root case.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _notes_text(self, stack):
+        return "\n".join(stack.notes)
+
+    # ---- 1. django-shape: Python wins via dominance ----------------
+
+    def test_django_shape_promotes_to_python(self):
+        # Mirrors django/django: root has package.json (likely
+        # tooling) + pyproject.toml; depth-2 source is
+        # overwhelmingly .py.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "pyproject.toml").write_text("# py\n", encoding="utf-8")
+        (self.repo / "django").mkdir()
+        for n in range(50):
+            (self.repo / "django" / f"mod{n}.py").write_text(
+                "# py\n", encoding="utf-8")
+        (self.repo / "tests").mkdir()
+        for n in range(40):
+            (self.repo / "tests" / f"test{n}.py").write_text(
+                "# py\n", encoding="utf-8")
+        # A handful of .js for tooling — well below the 3x ratio
+        # threshold so Python should still win.
+        (self.repo / "js_tests").mkdir()
+        for n in range(3):
+            (self.repo / "js_tests" / f"x{n}.js").write_text(
+                "// js\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "python",
+                         f"Python should win when source dominance "
+                         f"clearly favors it; got {stack.language!r}")
+        # Both manifests still in the signals list.
+        self.assertIn("package.json", stack.signals)
+        self.assertIn("pyproject.toml", stack.signals)
+        # Note explicitly says mixed-root + which side won + why.
+        notes = self._notes_text(stack)
+        self.assertIn("Mixed root manifests", notes)
+        self.assertIn("Python primary based on source dominance", notes)
+        self.assertIn(".py files", notes)
+
+    # ---- 2. JS-dominant mixed-root: JavaScript wins -------------
+
+    def test_js_dominant_mixed_root_stays_javascript(self):
+        # Symmetric: lots of .tsx files dwarf a handful of .py
+        # tooling scripts. JS should win via dominance.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "requirements.txt").write_text(
+            "pytest\n", encoding="utf-8")
+        (self.repo / "src").mkdir()
+        for n in range(60):
+            (self.repo / "src" / f"comp{n}.tsx").write_text(
+                "// tsx\n", encoding="utf-8")
+        (self.repo / "scripts").mkdir()
+        for n in range(3):
+            (self.repo / "scripts" / f"tool{n}.py").write_text(
+                "# py\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "javascript")
+        notes = self._notes_text(stack)
+        self.assertIn("Mixed root manifests", notes)
+        self.assertIn("JavaScript primary based on source dominance",
+                      notes)
+
+    # ---- 3. Ambiguous mixed-root: defaults to JavaScript --------
+
+    def test_ambiguous_mixed_root_defaults_to_javascript(self):
+        # 4 .py + 4 .js — both below the 5-file MIN_DOMINANT
+        # floor. Resolver falls back to JavaScript (preserves v0
+        # default) but the note flags the inconclusiveness.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "pyproject.toml").write_text("# py\n", encoding="utf-8")
+        (self.repo / "src").mkdir()
+        for n in range(4):
+            (self.repo / "src" / f"a{n}.py").write_text(
+                "# py\n", encoding="utf-8")
+            (self.repo / "src" / f"b{n}.js").write_text(
+                "// js\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "javascript")
+        notes = self._notes_text(stack)
+        self.assertIn("Mixed root manifests", notes)
+        self.assertIn("inconclusive", notes)
+        self.assertIn("Defaulting to JavaScript", notes)
+
+    # ---- 4. Plain JS / plain Python: regression checks ----------
+
+    def test_plain_js_project_unchanged(self):
+        # No mixed-root: only package.json. Behavior identical to
+        # v0.7/v0.8 — no mixed-root note, no source-dominance walk.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "javascript")
+        self.assertNotIn("Mixed root", self._notes_text(stack))
+
+    def test_plain_python_project_unchanged(self):
+        (self.repo / "pyproject.toml").write_text("# py\n", encoding="utf-8")
+        (self.repo / "main.py").write_text("# py\n", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "python")
+        self.assertNotIn("Mixed root", self._notes_text(stack))
+
+    # ---- 5. Stack Reality: never High when mixed-root -----------
+
+    def test_stack_reality_drops_to_medium_on_mixed_root(self):
+        # Even when source dominance gives a clear winner, the
+        # Stack Reality confidence must be Medium — mixed-root
+        # setups rarely behave as a single stack in practice.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "pyproject.toml").write_text("# py\n", encoding="utf-8")
+        (self.repo / "django").mkdir()
+        for n in range(50):
+            (self.repo / "django" / f"mod{n}.py").write_text(
+                "# py\n", encoding="utf-8")
+
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        self.assertEqual(reality.assessment, "Single-stack project")
+        self.assertEqual(reality.confidence, "Medium",
+                         f"Mixed-root must never be High confidence; "
+                         f"got {reality.confidence!r}")
+        self.assertIn("both JavaScript and Python", reality.why)
+
+    def test_stack_reality_high_preserved_on_plain_python(self):
+        # Regression: plain-Python (no mixed-root) keeps the Single-
+        # stack/High path — Phase 5.1 must not silently downgrade
+        # all Python projects.
+        (self.repo / "pyproject.toml").write_text("# py\n", encoding="utf-8")
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "main.py").write_text(
+            "# py\n", encoding="utf-8")
+        from cli.adopt import derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        self.assertEqual(reality.confidence, "High")
 
 
 if __name__ == "__main__":
