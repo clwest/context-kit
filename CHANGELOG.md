@@ -9,6 +9,172 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-04-27
+
+**`context-kit adopt` gains a depth-2 workspace walk plus a
+derived decision layer.** The output now leads with a single
+"Adopt Summary" card (Type / Structure / Reality / Next actions)
+that names the concrete project's content instead of emitting
+raw signals. Built across twelve incremental ships in Phases
+1–4.6; see `docs/handoffs/SESSION_010_ADOPT_V0_8_DECISION_LAYER.md`
+for the per-ship breakdown.
+
+Detection logic and the failure taxonomy from 0.7.0 are
+unchanged. Classification gains exactly one new behavior:
+workspace-aware primary inference for Flutter / Solidity /
+Next.js when the root scan returns "unknown".
+
+### Added — Workspace awareness
+
+- **Depth-2 workspace child detection.** New
+  `StackProfile.workspace_children` field populated by
+  `scan_workspace_children`, which walks one level deeper into
+  known workspace containers (`apps/`, `packages/`,
+  `services/`, `crates/`, `members/`, `workspaces/`). Each
+  child carries its name (e.g. `apps/forge`), manifest files,
+  notable extensions, and a hint string. Pure data — no
+  classification change.
+- **Workspace-aware deduplication.** When `workspace_children`
+  covers a container, the same container no longer renders
+  again in "Needs clarification" — eliminates the
+  contradictory dual-counts the v0.7 dogfood revealed
+  (`apps/` showing 29 .sol in the depth-1 summary while
+  individual children showed different per-child counts).
+- **Visible directory titles in the HTML report.** Both
+  Workspace children cards and the renamed "Needs
+  clarification" cards now lead with a block-level
+  `<span class="dir-name">` (bold monospace, accent color)
+  followed by manifests / extensions on a dim meta line
+  beneath. Trivial children (only `package.json`, no notable
+  extensions) render as a non-collapsible row instead of an
+  empty-body `<details>` element.
+
+### Added — Decision layer
+
+- **Adopt Summary** (`AdoptSummary` dataclass +
+  `derive_adopt_summary`). Single consolidated card at the top
+  of every output — CLI dry-run, HTML report, BUILD_PLAN.md,
+  and the CLAUDE managed block — with four sub-sections:
+  - **Type** — derived project-type label (see below).
+  - **Structure** — per-child stack labels.
+  - **Reality** — `assessment` (Single-stack / Mixed
+    workspace / Unclear), `confidence` (High / Medium / Low),
+    and a one-sentence `why`.
+  - **Next actions** — up to 5 prioritized actions (see
+    below).
+- **Stack reality assessment** (`StackReality` dataclass +
+  `derive_stack_reality`). Five-rule cascade over the existing
+  primary classification, parts table, workspace stack
+  summary, and failure labels. Confidence drops from High to
+  Medium for single-stack projects when MISLEADING_CLASSIFICATION
+  or ROOT_SIGNAL_OVERRIDE fires (e.g. Hardhat repos with root
+  `package.json` plus `hardhat.config.ts`).
+- **Project type inference** (`ProjectType` dataclass +
+  `derive_project_type`). Six deterministic rules over Phase 3
+  workspace signals: Web3 dApp, Full-stack web app, Mobile
+  app suite, JavaScript app/tooling project, Python app/tooling
+  project, Unclear project type. Each carries a confidence
+  band and a one-line reason.
+- **Workspace stack summary** (Phase 3 — pre-consolidation).
+  Per-child stack labels derived from a small fixed signal set:
+  `app.config.*` → Expo, `foundry.toml`/`.sol` → Solidity,
+  `pubspec.yaml`/`.dart` → Flutter, `next.config.*` or
+  `package.json + .tsx`/`.jsx` → Next.js. The standalone
+  section was folded into Adopt Summary's Structure block in
+  Phase 4.4.
+
+### Added — Suggested next actions
+
+- **Context-aware suggested actions** (`SuggestedAction`
+  dataclass + `derive_suggested_actions`). Up to 5 actions
+  per run, each with a title, reason, and priority
+  (high / medium / low). Deduped by title; sorted high-first.
+  Reasons name the concrete things the user should inspect:
+  - **Web3 dApp** → "Confirm smart-contract + frontend
+    boundary" (high). Reason names the Solidity child(ren)
+    and the Next.js child(ren) by path.
+  - **Mobile app suite** → "Confirm mobile app structure"
+    (high). Reason names up to two Flutter children.
+  - **Full-stack web app** → "Confirm backend/frontend
+    boundaries" (medium). Reason calls out API ownership,
+    local dev startup order, and deployment boundaries.
+  - **Needs-clarification dirs** → "Classify unrecognized
+    directories" (medium). Reason lists up to 3 dir names
+    verbatim; with more than 3, uses count + first 3.
+  - **MONOREPO_DEPTH_LIMIT** → "Review workspace children"
+    (high). Reason names up to two child workspaces.
+  - **Stack reality Low confidence** → "Clarify project shape
+    before coding" (high).
+  - **IDEMPOTENCY_RISK** → "Preserve existing context docs
+    before writing" (high).
+  - **Catch-all (clean project)** → "Run adopt with --write
+    when ready" (low).
+
+### Added — Detection improvements
+
+- **Workspace-aware primary inference**
+  (`StackProfile.inferred_primary` +
+  `_infer_primary_from_workspace`). When the root scan returns
+  "unknown" but every non-trivial workspace child shares the
+  same Phase 3 stack label, adopt promotes that into the
+  primary detection. Three target labels (Flutter / Dart,
+  Solidity / EVM smart contracts, Next.js / React); JS / Python
+  root detections are never overridden. The detection line
+  reads `<label> (inferred from workspace children)` so the
+  source of evidence is visible.
+
+### Changed — UX polish
+
+- **"Unknown but present" → "Needs clarification".** New
+  description copy: "These directories contain files adopt
+  can see, but it cannot confidently identify their role yet.
+  Confirm what they are before making changes." Applied
+  consistently to CLI / HTML / BUILD_PLAN / CLAUDE.
+- **"Detected issues" → "Diagnostic signals".** New
+  description copy: "Signals from adopt's internal failure
+  taxonomy. These help explain classification limits and
+  review priorities; they do not mean the project is broken."
+  Failure type names (MONOREPO_DEPTH_LIMIT,
+  UNRECOGNIZED_ECOSYSTEM, etc.) unchanged.
+- **Top-level section consolidation.** The four standalone
+  Phase 3 / 4.x sections (Workspace stack, Stack reality,
+  Project type, Suggested next actions) are folded into a
+  single Adopt Summary card. Standalone helper builders are
+  retained in the module for a future debug toggle but no
+  longer assembled into the rendered output.
+- **MONOREPO_DEPTH_LIMIT description** updated to reflect that
+  child workspaces are surfaced (and labeled in the workspace
+  stack summary) but not yet part of primary classification.
+  Label, severity, and surface_area unchanged.
+
+### Tests
+
+- 407 passing (was 327 in 0.7.0). +80 across new test classes
+  for workspace child data model, rendering, dedup, name
+  visibility, workspace stack summary, stack reality, project
+  type, suggested actions, Adopt Summary consolidation,
+  workspace-aware detection, diagnostic signals wording, and
+  context-aware actions.
+
+### Dogfood validation
+
+Verified end-to-end against the eight repos in
+`/Users/donkeyking/development/context-kit-dogfood-repos/`:
+
+  fns-monorepo                      → Web3 dApp           (3 actions)
+  turborepo-next-django-starter     → Full-stack web app  (3 actions)
+  flutter-monorepo-example          → Mobile app suite    (3 actions)
+  expo-monorepo-example             → Unclear project type (1 action)
+  solidity-template                 → JavaScript app/tooling project
+  aave-v3-core                      → JavaScript app/tooling project
+  openzeppelin-contracts            → JavaScript app/tooling project
+  v3-core                           → JavaScript app/tooling project
+
+Known acknowledged limitation: Hardhat-style Solidity repos
+without an `apps/` workspace currently classify as JavaScript
+app/tooling project (Phase 4.2 Rule 4 fires, spec-faithful).
+Tracked for a future Phase 4.x refinement.
+
 ## [0.7.0] — 2026-04-26
 
 **`context-kit adopt` — the existing-project entry point.** A new

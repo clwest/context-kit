@@ -67,6 +67,58 @@ While working in the project:
   The collaboration rule is "AI drafts, human edits, AI is expected to
   push back when framing looks wrong."
 
+## Optional — run seed before orient on a fresh project
+
+If the project's `00-START-NEXT-SESSION.md` frontmatter shows
+`state: scaffold` *and* there's an `idea.md` (or similar structured
+idea file) at the project root, the user hasn't seeded yet. Suggest:
+
+```bash
+context-kit seed idea.md
+```
+
+This populates the narrative anchor's TL;DR, the start-here doc's
+first milestone, a bootstrap handoff, a product-framing topic, and a
+`BUILD_PLAN.md` from the idea file. After that, `orient` will surface
+real intent instead of empty stubs. Deterministic — no LLM calls.
+
+If `state:` is `seeded` or anything other than `scaffold`, the
+project has already moved past the seed step; don't re-suggest it.
+
+## Optional — run recommend-stack when the user doesn't know what to build with
+
+If the user has a clear *what* but vague or empty *tech stack* in their
+idea file (or hasn't started one), suggest:
+
+```bash
+context-kit recommend-stack idea.md
+```
+
+It returns an opinionated v0 stack pick: what to use, why, what not to
+add yet, when to upgrade. Deterministic, no LLM. Designed for
+beginners who can describe the problem but not the implementation.
+
+If the user runs `seed` next and their idea file has no `## Tech stack`
+section, `seed` calls this same engine automatically and bakes the
+recommendation into `docs/BUILD_PLAN.md`.
+
+## Optional — run doctor when something feels off in the environment
+
+If the user is hitting build/run errors that look like environment
+issues (EMFILE, "command not found", Expo Go won't connect, Python
+version mismatch, etc.) suggest:
+
+```bash
+context-kit doctor
+```
+
+It runs read-only checks against Python, git, Node.js, Expo SDK +
+config, file-watcher / `ulimit` pressure, and the project's own
+context-kit structure. Exits 1 only on **blocking** issues; warnings
+are advisory.
+
+Use `--json` to pipe the result somewhere structured.
+
 ## Optional — run hotpath when scope feels large
 
 If the orient output reveals a project with many or very long anchor
@@ -105,6 +157,27 @@ The order is what matters. Read all five before doing project work.
   clearly driving and just wants a small change.
 - Pure documentation edits to `docs/docs-pattern/` itself — that's the
   framework, not a project using the framework.
+
+## If the project ISN'T context-kit yet
+
+If a user asks you to help with a project that has no
+context-kit markers but they want the same memory layer wrapped
+around their existing code, **suggest `context-kit adopt`**.
+It's the retrofit entry point — read-only against source by
+default. Output leads with an **Adopt Summary** card naming
+the project's Type, Structure (per-child workspace stacks),
+Reality (assessment + confidence + why), and prioritized Next
+actions. It generates the load-bearing docs
+(`docs/BUILD_PLAN.md`, `docs/PROJECT_WHAT_IT_IS.md`,
+`00-START-NEXT-SESSION.md`, augments any existing `CLAUDE.md`),
+and surfaces "Diagnostic signals" — metadata from adopt's
+internal failure taxonomy — when classification limits or
+review priorities are worth flagging. (Diagnostic signals are
+informational, not errors in the user's repo.)
+
+The dry-run plus `--html` (`context-kit adopt . --html`) opens
+a single self-contained static review report that's much easier
+to scan than terminal output on large repos.
 
 ---
 

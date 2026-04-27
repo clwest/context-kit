@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # name is namespaced because PyPI rejected `context-kit` as too similar
 # to an existing project.
 name = "contextkit-ai"
-version = "0.7.0"
+version = "0.8.0"
 description = "Bootstrap tool for AI-assisted projects that preserves context across sessions, prevents doc drift, and scaffolds a memory layer around your code."
 readme = "README.md"
 requires-python = ">=3.9"

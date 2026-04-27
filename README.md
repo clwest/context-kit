@@ -200,32 +200,53 @@ Run `python3 context_kit.py <command> --help` for per-command options.
 | `--html-out PATH` | (none) | Explicit destination for the HTML report (implies `--html`). Default keeps the source tree untouched by writing under the system temp dir |
 | `--no-browser` | off | Don't auto-open the HTML report in the browser (tests, headless, CI) |
 
-`adopt` is the entry point when you have an *existing* project and
-want context-kit's docs layer wrapped around it. It detects basic
-stack signals (JavaScript / Python / unknown) from manifest files
-at the repo root and one level deep into seven recognized subdirs
-(`backend`, `frontend`, `web`, `mobile`, `api`, `client`,
-`server`). It then asks two beginner-friendly prompts — what the
-project is, what you're trying to do next — and generates
-`docs/BUILD_PLAN.md`, `docs/PROJECT_WHAT_IT_IS.md`,
-`00-START-NEXT-SESSION.md`, plus a fresh or augment-only
-`CLAUDE.md`. **Source code is never modified.**
+`adopt` is the entry point when you have an *existing* project
+and want context-kit's docs layer wrapped around it. It detects
+the project's stack — at the root, one level deep into the seven
+recognized subdirs (`backend`, `frontend`, `web`, `mobile`,
+`api`, `client`, `server`), and one level deeper inside known
+workspace containers (`apps/`, `packages/`, `services/`,
+`crates/`, `members/`, `workspaces/`). When the root scan can't
+find a manifest but every workspace child shares the same stack
+(Flutter / Solidity / Next.js), adopt promotes that into the
+primary detection. **Source code is never modified.**
 
-The CLAUDE.md augment-mode is byte-safe: existing CLAUDE.md content
-outside `<!-- context-kit:adopt:start --> / :end -->` markers is
-preserved verbatim, and re-running `adopt --write` updates the
-managed block in place rather than stacking duplicates. The
-generated docs surface the framework's load-bearing rule —
-"Always read `docs/BUILD_PLAN.md` before choosing a stack or
-writing code" — so an AI session loaded into the adopted project
-treats the detected stack as authoritative.
+Output leads with a single **Adopt Summary** card — one block
+per run that names the concrete project's content:
 
-`adopt` is dry-run by default. Pass `--write` only when the
-preview looks right. Designed in
-`docs/proposals/SESSION_009_ADOPT.md`; v0 + v0.1 are shipped, the
-v0.2 backlog (deeper-than-1 monorepo layouts, framework-level
-detection inside the manifests, `[adopt: please describe]`
-`doctor` checks, wizard branch) is tracked there.
+- **Type** — derived project label (e.g. *Web3 dApp*,
+  *Full-stack web app*, *Mobile app suite*, *JavaScript
+  app/tooling project*) with a confidence band.
+- **Structure** — per-child workspace stacks (e.g.
+  `apps/forge → Solidity / EVM smart contracts`,
+  `apps/next → Next.js / React web app`).
+- **Reality** — overall assessment + confidence + a one-sentence
+  *why* explaining how detection got there.
+- **Next actions** — up to 5 prioritized actions that name the
+  concrete things to inspect (specific child workspaces,
+  unclassified directories, etc.).
+
+Below the summary, adopt surfaces **Workspace children** (the
+depth-2 walk's per-child detail), **Needs clarification**
+(directories adopt sees but can't confidently classify — these
+are not errors), and the planned files it would create or
+augment. A **Diagnostic signals** section appears when adopt's
+internal failure taxonomy (MONOREPO_DEPTH_LIMIT,
+UNRECOGNIZED_ECOSYSTEM, etc.) flags anything worth knowing
+about — these are metadata, not failures in your repo.
+
+`adopt` is dry-run by default; pass `--write` only when the
+preview looks right. The CLAUDE.md augment-mode is byte-safe:
+content outside `<!-- context-kit:adopt:start --> / :end -->`
+markers is preserved verbatim, and re-running `adopt --write`
+updates the managed block in place rather than stacking
+duplicates. Pass `--html` to also write a single self-contained
+review report that's much easier to scan than terminal output
+on large repos.
+
+The full design lives in `docs/proposals/SESSION_009_ADOPT.md`;
+the v0.8.0 decision-layer ships are documented in
+`docs/handoffs/SESSION_010_ADOPT_V0_8_DECISION_LAYER.md`.
 
 **`start` options**
 

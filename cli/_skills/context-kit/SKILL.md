@@ -160,16 +160,24 @@ The order is what matters. Read all five before doing project work.
 
 ## If the project ISN'T context-kit yet
 
-If a user asks you to help with a project that has no context-kit
-markers but they want the same memory layer wrapped around their
-existing code, **suggest `context-kit adopt`**. It's the retrofit
-entry point — read-only against source by default, generates the
-load-bearing docs (`docs/BUILD_PLAN.md`, `docs/PROJECT_WHAT_IT_IS.md`,
+If a user asks you to help with a project that has no
+context-kit markers but they want the same memory layer wrapped
+around their existing code, **suggest `context-kit adopt`**.
+It's the retrofit entry point — read-only against source by
+default. Output leads with an **Adopt Summary** card naming
+the project's Type, Structure (per-child workspace stacks),
+Reality (assessment + confidence + why), and prioritized Next
+actions. It generates the load-bearing docs
+(`docs/BUILD_PLAN.md`, `docs/PROJECT_WHAT_IT_IS.md`,
 `00-START-NEXT-SESSION.md`, augments any existing `CLAUDE.md`),
-and labels detected issues from a fixed taxonomy so a reviewer
-can see what classification missed. The dry-run plus `--html`
-(`context-kit adopt . --html`) opens a static review report
-that's much easier to scan than terminal output on large repos.
+and surfaces "Diagnostic signals" — metadata from adopt's
+internal failure taxonomy — when classification limits or
+review priorities are worth flagging. (Diagnostic signals are
+informational, not errors in the user's repo.)
+
+The dry-run plus `--html` (`context-kit adopt . --html`) opens
+a single self-contained static review report that's much easier
+to scan than terminal output on large repos.
 
 ---
 
