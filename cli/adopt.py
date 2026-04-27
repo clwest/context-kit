@@ -1318,6 +1318,19 @@ def generate_claude_block(stack: StackProfile, inputs: AdoptionInputs, title: st
     # rendered as bullets under a new H3 inside the managed block.
     if stack.unclassified_subdirs:
         lines += _unknown_present_markdown(stack)
+    # v0.8: workspace children get a compact mention in the CLAUDE
+    # managed block too — the AI session reading the entry point
+    # should know about depth-2 child projects without having to
+    # cross-read BUILD_PLAN.md. Tighter format than BUILD_PLAN's
+    # version since CLAUDE blocks are scanned, not skimmed.
+    if stack.workspace_children:
+        n = len(stack.workspace_children)
+        lines += ["", f"### Workspace children ({n})", ""]
+        for c in stack.workspace_children:
+            if c.hint:
+                lines.append(f"- **{c.name}** — *{c.hint}*")
+            else:
+                lines.append(f"- **{c.name}**")
     lines += [
         "",
         "### What the user told adopt",
@@ -1627,18 +1640,28 @@ def render_adopt_html(repo: Path, stack: StackProfile,
                 c.manifest_files == ["package.json"]
                 and not c.notable_extensions
             )
+            # Name is rendered as its own block so the user can
+            # scan child names down the left edge of the report.
+            # Manifests / extensions render as a smaller dim line
+            # underneath. Hint badge sits inline next to the name.
             if trivial:
                 workspace_html.append(
                     f'  <div class="unc unc-trivial">'
-                    f'<code class="dirname">{_esc(c.name)}</code> '
-                    f'<span class="dim">{summary}</span>{hint_badge}'
+                    f'<div class="wsc-head">'
+                    f'<span class="wsc-name">{_esc(c.name)}</span>'
+                    f'{hint_badge}'
+                    f'</div>'
+                    f'<div class="wsc-meta">{summary}</div>'
                     f'</div>'
                 )
                 continue
             workspace_html.append(
                 f'  <details class="unc"><summary>'
-                f'<code class="dirname">{_esc(c.name)}</code> '
-                f'<span class="dim">{summary}</span>{hint_badge}'
+                f'<div class="wsc-head">'
+                f'<span class="wsc-name">{_esc(c.name)}</span>'
+                f'{hint_badge}'
+                f'</div>'
+                f'<div class="wsc-meta">{summary}</div>'
                 '</summary>'
             )
             workspace_html.append('    <div class="unc-body">')
@@ -1828,6 +1851,23 @@ def render_adopt_html(repo: Path, stack: StackProfile,
       cursor: pointer; user-select: none; font-size: .95rem;
     }
     details.unc summary code.dirname { font-weight: 600; }
+    /* Workspace child cards (v0.8): the child name is the load-bearing
+       label, so it gets its own line with bigger/bolder weight than the
+       inherited summary text. The meta line beneath stays muted so the
+       eye reads the names first when scanning down the section. */
+    .wsc-head {
+      display: flex; align-items: baseline; gap: .55rem;
+      flex-wrap: wrap;
+    }
+    .wsc-name {
+      font-family: var(--mono); font-weight: 700; font-size: 1.02rem;
+      color: var(--accent-strong); letter-spacing: -0.005em;
+    }
+    .wsc-meta {
+      color: var(--muted); font-size: .85rem; margin-top: .2rem;
+      font-family: var(--mono);
+    }
+    .unc-trivial { padding: .55rem .85rem; }
     .unc-body { margin-top: .75rem; padding-top: .5rem; border-top: 1px solid var(--border); font-size: .9rem; }
     .unc-body ul { padding-left: 1.25rem; margin: .25rem 0; }
     pre.preview {

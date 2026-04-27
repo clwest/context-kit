@@ -9,6 +9,7 @@ intentionally small and focused.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import tempfile
 import unittest
@@ -2161,10 +2162,11 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
                                  write_mode=False, failures=[])
         # v0.8 polish: header carries the count.
         self.assertIn("<h2>Workspace children (2)</h2>", html)
-        # Each child gets a <details> block with the container/child
-        # name as a code span. _esc keeps the slash literal.
-        self.assertIn('<code class="dirname">apps/forge</code>', html)
-        self.assertIn('<code class="dirname">apps/next</code>', html)
+        # Each child gets a <details> block. v0.8 polish renders the
+        # name as a block-level <span class="wsc-name"> so the user
+        # can scan child names down the left edge of the section.
+        self.assertIn('<span class="wsc-name">apps/forge</span>', html)
+        self.assertIn('<span class="wsc-name">apps/next</span>', html)
         # Manifests render as inline <code> in the body.
         self.assertIn("<code>foundry.toml</code>", html)
         # The forge child's Solidity hint surfaces in the body.
@@ -2306,8 +2308,8 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
                          "Unknown-but-present in HTML when its "
                          "children render in Workspace children")
         self.assertIn("<h2>Workspace children (2)</h2>", html)
-        self.assertIn('<code class="dirname">apps/forge</code>', html)
-        self.assertIn('<code class="dirname">apps/next</code>', html)
+        self.assertIn('<span class="wsc-name">apps/forge</span>', html)
+        self.assertIn('<span class="wsc-name">apps/next</span>', html)
 
         # BUILD_PLAN.md.
         md = generate_build_plan(stack, self.inputs, "Test")
@@ -2427,21 +2429,28 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
         plan = plan_files(self.repo, stack, self.inputs)
         html = render_adopt_html(self.repo, stack, self.inputs, plan,
                                  write_mode=False, failures=[])
-        # Trivial child: non-collapsible div.
+        # Trivial child: non-collapsible div with the name as a
+        # visible header (wsc-name) so it still reads as a card title.
+        self.assertIn('<div class="unc unc-trivial">', html)
+        # The trivial card contains the wsc-name for "packages/trivial"
+        # — search for them adjacent in the same div.
         self.assertIn(
             '<div class="unc unc-trivial">'
-            '<code class="dirname">packages/trivial</code>',
+            '<div class="wsc-head">'
+            '<span class="wsc-name">packages/trivial</span>',
             html,
-            "trivial child must render as <div class='unc unc-trivial'>",
+            "trivial child must render with wsc-name as visible header",
         )
-        # Non-trivial child: still a <details> element.
-        # Search for the rich child's name inside a <details> block.
+        # Non-trivial child: still a <details> element with the same
+        # wsc-name treatment in the summary.
         details_with_rich = (
             '<details class="unc"><summary>'
-            '<code class="dirname">packages/rich</code>' in html
+            '<div class="wsc-head">'
+            '<span class="wsc-name">packages/rich</span>' in html
         )
         self.assertTrue(details_with_rich,
-                        "non-trivial child must still render as <details>")
+                        "non-trivial child must still render as "
+                        "<details> with wsc-name in the summary")
 
     def test_workspace_html_body_does_not_duplicate_hint(self):
         # The expanded body must NOT repeat the hint that's already
@@ -2471,6 +2480,158 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
                          "the long-form hint (with 'verify with user') "
                          "must not appear inside the workspace body — "
                          "only the shorter badge in the summary")
+
+
+class TestWorkspaceChildNameVisibility(unittest.TestCase):
+    """v0.8 polish — child name must be the visible card header in
+    the HTML report (it was getting lost between manifests/extensions
+    when both rendered as inline dim text). Also: workspace children
+    must appear in the CLAUDE.md generated managed block, not just
+    in BUILD_PLAN.md.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _build_fns_fixture(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+    # ---- HTML: name visible at the card header ------------------------
+
+    def test_html_workspace_child_name_is_card_header(self):
+        # The child name must be present near the card header — i.e.
+        # inside the <summary> for collapsible cards, inside the
+        # <div class="unc unc-trivial"> for trivial cards. It must
+        # also be in the load-bearing wsc-name span (block-level
+        # header treatment, not mixed inline with manifest text).
+        self._build_fns_fixture()
+        # Add a trivial child to cover both code paths.
+        (self.repo / "packages").mkdir()
+        triv = self.repo / "packages" / "tsconfig"
+        triv.mkdir()
+        (triv / "package.json").write_text("{}", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+
+        # Names appear in wsc-name spans (block header treatment).
+        for name in ("apps/forge", "apps/next", "packages/tsconfig"):
+            self.assertIn(f'<span class="wsc-name">{name}</span>', html,
+                          f"{name} must render as a wsc-name header")
+
+        # The name must be visible at the card header, not buried.
+        # For collapsible: name is inside <summary>. For trivial:
+        # name is inside the <div class="unc unc-trivial">.
+        # Slice each card and confirm the name appears in the head.
+        # apps/forge — collapsible with summary.
+        forge_summary_re = re.search(
+            r'<details class="unc"><summary>(.*?)</summary>',
+            html, re.DOTALL,
+        )
+        self.assertIsNotNone(forge_summary_re,
+                             "expected at least one collapsible workspace card")
+        # Find which one is forge.
+        any_summary_has_forge = any(
+            'wsc-name">apps/forge<' in m.group(1)
+            for m in re.finditer(
+                r'<details class="unc"><summary>(.*?)</summary>',
+                html, re.DOTALL,
+            )
+        )
+        self.assertTrue(any_summary_has_forge,
+                        "apps/forge name must appear inside the <summary> "
+                        "block of its collapsible card")
+
+        # packages/tsconfig — trivial card.
+        triv_re = re.search(
+            r'<div class="unc unc-trivial">(.*?)</div>\s*</div>',
+            html, re.DOTALL,
+        )
+        self.assertIsNotNone(triv_re, "expected a trivial workspace card")
+        self.assertIn('packages/tsconfig', triv_re.group(0),
+                      "packages/tsconfig name must appear inside the "
+                      "trivial card's div")
+
+    def test_html_card_renders_meta_below_name(self):
+        # The wsc-meta line (manifests / extensions) must appear in
+        # the same card as wsc-name, AFTER the name in DOM order.
+        # That ordering is what makes the name visible as a header.
+        self._build_fns_fixture()
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack, self.inputs)
+        html = render_adopt_html(self.repo, stack, self.inputs, plan,
+                                 write_mode=False, failures=[])
+        # Find the apps/forge card slice and verify wsc-name appears
+        # before wsc-meta in DOM order.
+        forge_slice = re.search(
+            r'<span class="wsc-name">apps/forge</span>.*?</summary>',
+            html, re.DOTALL,
+        )
+        self.assertIsNotNone(forge_slice,
+                             "apps/forge wsc-name must precede </summary>")
+        self.assertIn('wsc-meta', forge_slice.group(0),
+                      "wsc-meta line (manifests/extensions) must appear "
+                      "after the wsc-name in the same summary")
+
+    # ---- CLAUDE.md: workspace children block --------------------------
+
+    def test_claude_block_includes_workspace_children_when_present(self):
+        # The managed block in CLAUDE.md (generate_claude_block) must
+        # carry a compact "Workspace children (N)" section so the AI
+        # session reading the entry-point doc sees depth-2 child
+        # projects without cross-reading BUILD_PLAN.md.
+        self._build_fns_fixture()
+        stack = detect_stack(self.repo)
+        block = generate_claude_block(stack, self.inputs, "Test")
+        # Section heading with count.
+        self.assertIn("### Workspace children (2)", block,
+                      "CLAUDE block must include the workspace section "
+                      "with a count")
+        # Child names + hint formatting (italic for hints, bare name
+        # without). apps/forge has the Solidity hint; apps/next has
+        # no DOMAIN_HINTS-eligible extension at the threshold so it
+        # gets a bare bullet.
+        self.assertIn("- **apps/forge**", block)
+        self.assertIn("Solidity", block,
+                      "apps/forge's Solidity hint must appear in the "
+                      "CLAUDE block")
+        self.assertIn("- **apps/next**", block)
+        # The block must remain inside adopt's managed markers so
+        # re-runs refresh it cleanly.
+        self.assertIn(START_MARKER, block)
+        self.assertIn(END_MARKER, block)
+
+    def test_claude_block_omits_workspace_section_when_empty(self):
+        # Plain repo (no workspace containers) keeps the v0.7
+        # CLAUDE block shape — no empty "Workspace children (0)"
+        # heading.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        block = generate_claude_block(stack, self.inputs, "Test")
+        self.assertNotIn("Workspace children", block,
+                         "CLAUDE block must omit section when no "
+                         "workspace children exist")
 
 
 if __name__ == "__main__":
