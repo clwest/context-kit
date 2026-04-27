@@ -265,11 +265,16 @@ RECOGNIZED_SUBDIRS = ("backend", "frontend", "web", "mobile", "api", "client", "
 def _detect_in_dir(d: Path) -> tuple[str, list[str]]:
     """Return ``(language, signals)`` for a single directory.
 
-    ``language`` is "javascript" | "python" | "unknown". ``signals``
-    lists the manifest filenames found in ``d`` (for reporting; not
-    prefixed with the directory). Mixed JS+Python in the same
-    directory still resolves to JavaScript with a multi-stack note
-    appended at the call site.
+    ``language`` is "javascript" | "python" | "rust" | "go" |
+    "unknown". ``signals`` lists the manifest filenames found in
+    ``d`` (for reporting; not prefixed with the directory). Mixed
+    JS+Python in the same directory still resolves to JavaScript
+    with a mixed-root note appended at the call site (Phase 5.1
+    later overrides via source-dominance check).
+
+    JS/Python take precedence over Rust/Go when multiple manifests
+    coexist at root — keeps Phase 5.1's mixed-root resolution as
+    the single source of truth for language tie-breaks.
     """
     signals: list[str] = []
     if (d / "package.json").is_file():
@@ -280,14 +285,24 @@ def _detect_in_dir(d: Path) -> tuple[str, list[str]]:
         signals.append("requirements.txt")
     if (d / "pyproject.toml").is_file():
         signals.append("pyproject.toml")
+    if (d / "go.mod").is_file():
+        signals.append("go.mod")
+    if (d / "Cargo.toml").is_file():
+        signals.append("Cargo.toml")
     has_js = "package.json" in signals
     has_py = any(s in signals for s in ("manage.py", "requirements.txt", "pyproject.toml"))
+    has_go = "go.mod" in signals
+    has_rust = "Cargo.toml" in signals
     if has_js and has_py:
         return "javascript", signals  # caller decides whether to add a note
     if has_js:
         return "javascript", signals
     if has_py:
         return "python", signals
+    if has_go:
+        return "go", signals
+    if has_rust:
+        return "rust", signals
     return "unknown", signals
 
 
@@ -950,12 +965,34 @@ def _classify_workspace_child(c: WorkspaceChild) -> Optional[str]:
     """
     mset = set(c.manifest_files)
     exts = c.notable_extensions
+    # v0.9 Phase 5.5 — mobile signals block the package.json+.tsx
+    # fallback from misclassifying a React Native workspace as a
+    # Next.js web app. Detected via configs that only mobile builds
+    # produce (metro.config.*, react-native.config.*, Podfile,
+    # Gemfile) and via .swift / .kt source files.
+    has_mobile_config = (
+        any(m.startswith("metro.config.") for m in mset)
+        or any(m.startswith("react-native.config.") for m in mset)
+        or "Podfile" in mset
+        or "Gemfile" in mset
+    )
+    has_mobile_source = ".swift" in exts or ".kt" in exts
     if any(m.startswith("app.config.") for m in mset):
         return "Expo / React Native app"
     if "foundry.toml" in mset or ".sol" in exts:
         return "Solidity / EVM smart contracts"
     if "pubspec.yaml" in mset or ".dart" in exts:
         return "Flutter / Dart app"
+    # v0.9 Phase 5.2 — Rust crate (workspace member or standalone).
+    if "Cargo.toml" in mset or ".rs" in exts:
+        return "Rust crate"
+    # v0.9 Phase 5.5 — React Native workspace child. Fires on any
+    # of the strong mobile-config signals (metro / react-native
+    # config, Podfile, Gemfile) regardless of whether package.json
+    # or .tsx are also present. Catches packages/react-native and
+    # packages/rn-tester from the react-native dogfood failure.
+    if has_mobile_config or has_mobile_source:
+        return "React Native / mobile framework"
     if any(m.startswith("next.config.") for m in mset):
         return "Next.js / React web app"
     if "package.json" in mset and (".tsx" in exts or ".jsx" in exts):
@@ -974,6 +1011,10 @@ _INFERRED_PRIMARY_BY_CHILD_LABEL: dict[str, str] = {
     "Flutter / Dart app":             "Flutter / Dart",
     "Solidity / EVM smart contracts": "Solidity / EVM smart contracts",
     "Next.js / React web app":        "Next.js / React",
+    # v0.9 Phase 5.2 — Cargo workspaces without a root Cargo.toml are
+    # rare in practice (most Rust workspaces declare members at root),
+    # but the inference is correct + cheap when it fires.
+    "Rust crate":                     "Rust workspace",
 }
 
 
@@ -1261,33 +1302,59 @@ def derive_stack_reality(stack: StackProfile,
     )
 
 
+# v0.9 Phase 5.4 — smart-contract framework configs that imply a
+# Solidity primary even when classification picked plain JS.
+_SMART_CONTRACT_ROOT_CONFIGS = frozenset({
+    "hardhat.config.js", "hardhat.config.ts",
+    "hardhat.config.mjs", "hardhat.config.cjs",
+    "foundry.toml", "truffle-config.js",
+    "brownie-config.yaml",
+})
+
+# v0.9 Phase 5.4 — minimum .sol file count in a depth-1 subdir
+# before adopt is willing to call the project a Smart contract
+# project on Solidity content alone.
+_SMART_CONTRACT_MIN_SOL_FILES = 10
+
+
 def derive_project_type(stack: StackProfile,
-                        reality: StackReality) -> ProjectType:
-    """Apply Phase 4.2 deterministic rules; return a ``ProjectType``.
+                        reality: StackReality,
+                        failures: Optional[list[FailureRecord]] = None) -> ProjectType:
+    """Apply Phase 4.2 / 5.x deterministic rules; return a ``ProjectType``.
 
     Rules in priority order (more specific first):
 
     1. Solidity + Next.js workspace signals -> "Web3 dApp" / medium
-    2. Python/Django anywhere + Next.js workspace -> "Full-stack web
-       app" / medium. Python signal is detected via primary, parts,
-       OR an unclassified subdir containing ``manage.py`` / ``.py``
-       files (handles the turborepo-django shape where Django lives
-       under ``server/`` and the classifier doesn't pick it up).
-    3. Flutter only in workspace, no other web/contract signals
-       -> "Mobile app suite" / medium
-    4. Single primary JavaScript with no parts and no workspace
+    2. Smart contract evidence (workspace Solidity, ``contracts/``
+       heavy with .sol, or root has hardhat/foundry/truffle/brownie
+       config) and NO Next.js -> "Smart contract project" / medium
+    3. Python/Django anywhere + Next.js workspace -> "Full-stack web
+       app" / medium
+    4. Mobile signals (Flutter or React Native workspace) and no
+       web/contract signals -> "Mobile app suite" / medium
+    5. Rust signal at root or in workspace -> "Rust workspace /
+       library" / medium
+    6. Go signal at root -> "Go project" / medium
+    7. Single primary JavaScript with no parts and no workspace
        children -> "JavaScript app/tooling project" / medium
-    5. Single primary Python with no parts and no workspace
+    8. Single primary Python with no parts and no workspace
        children -> "Python app/tooling project" / medium
-    6. Catch-all -> "Unclear project type" / low
+    9. Catch-all -> "Unclear project type" / low
 
-    Pure function. No I/O. Reason text adapts per rule so a reader
-    sees a one-line rationale, not just a label.
+    ``failures`` (optional) lets the smart-contract rule see
+    MISLEADING_CLASSIFICATION / UNRECOGNIZED_ECOSYSTEM examples so
+    root configs like ``hardhat.config.js`` can promote the type
+    even when the file isn't tracked in stack.signals. Pure
+    function; reason text adapts per rule.
     """
+    failures = failures or []
+    failure_examples = {f.example for f in failures}
     signals = set(reality.workspace_signals)
     has_solidity = "Solidity / EVM smart contracts" in signals
     has_nextjs = "Next.js / React web app" in signals
     has_flutter = "Flutter / Dart app" in signals
+    has_react_native = "React Native / mobile framework" in signals
+    has_rust_child = "Rust crate" in signals
 
     python_anywhere = (
         stack.language == "python"
@@ -1298,6 +1365,26 @@ def derive_project_type(stack: StackProfile,
                for u in stack.unclassified_subdirs)
     )
 
+    # Phase 5.4 — smart-contract evidence collection. Three sources:
+    # workspace Solidity child, depth-1 dir with many .sol files, or
+    # a root smart-contract framework config (visible via failure
+    # examples since stack.signals only carries the four classifier-
+    # tracked manifests).
+    sc_root_config = next(
+        iter(failure_examples & _SMART_CONTRACT_ROOT_CONFIGS),
+        None,
+    )
+    heavy_sol_dir = next(
+        (u for u in stack.unclassified_subdirs
+         if u.notable_extensions.get(".sol", 0)
+         >= _SMART_CONTRACT_MIN_SOL_FILES),
+        None,
+    )
+    has_smart_contract = bool(
+        has_solidity or sc_root_config or heavy_sol_dir
+    )
+
+    # ---- Rule 1: Web3 dApp (Solidity + Next.js) ----
     if has_solidity and has_nextjs:
         return ProjectType(
             label="Web3 dApp",
@@ -1306,6 +1393,35 @@ def derive_project_type(stack: StackProfile,
                     "with a Next.js / React web app."),
         )
 
+    # ---- Rule 2: Smart contract project (no Next.js) ----
+    if has_smart_contract and not has_nextjs:
+        bits: list[str] = []
+        if sc_root_config:
+            bits.append(f"root has {sc_root_config}")
+        if heavy_sol_dir:
+            cnt = heavy_sol_dir.notable_extensions[".sol"]
+            bits.append(f"{heavy_sol_dir.name}/ contains {cnt} .sol files")
+        if has_solidity:
+            sol_kids = [
+                name for name, l in _workspace_stack_pairs(stack)
+                if l == "Solidity / EVM smart contracts"
+            ]
+            if sol_kids:
+                bits.append(
+                    f"workspace child(ren) {', '.join(sol_kids)} "
+                    f"contain Solidity contracts"
+                )
+        evidence = "; ".join(bits) if bits else "Solidity content detected"
+        return ProjectType(
+            label="Smart contract project",
+            confidence="medium",
+            reason=(
+                f"{evidence}. Primary is on-chain code; any frontend "
+                f"is secondary."
+            ),
+        )
+
+    # ---- Rule 3: Full-stack web app (Python + Next.js) ----
     if python_anywhere and has_nextjs:
         return ProjectType(
             label="Full-stack web app",
@@ -1314,13 +1430,81 @@ def derive_project_type(stack: StackProfile,
                     "React frontend in the workspace."),
         )
 
-    if has_flutter and not has_solidity and not has_nextjs:
+    # ---- Rule 4: Mobile app suite (Flutter or React Native, no web/contract) ----
+    if (has_flutter or has_react_native) and not has_solidity and not has_nextjs:
+        mobile_kids = [
+            name for name, l in _workspace_stack_pairs(stack)
+            if l in ("Flutter / Dart app",
+                     "React Native / mobile framework")
+        ]
+        if mobile_kids:
+            sample = ", ".join(mobile_kids[:3])
+            extra = (
+                f" Detected {sample}."
+                if len(mobile_kids) <= 3
+                else f" Detected {sample} (and "
+                     f"{len(mobile_kids) - 3} more)."
+            )
+        else:
+            extra = ""
+        if has_react_native and not has_flutter:
+            kind = "React Native"
+        elif has_flutter and not has_react_native:
+            kind = "Flutter / Dart"
+        else:
+            kind = "Flutter and React Native"
         return ProjectType(
             label="Mobile app suite",
             confidence="medium",
-            reason="Workspace contains Flutter / Dart app(s) only.",
+            reason=(
+                f"Workspace contains {kind} app workspace(s).{extra}"
+            ),
         )
 
+    # ---- Rule 5: Rust workspace / library ----
+    # Fires only when Rust is the primary identity: either root
+    # has Cargo.toml OR root detection is unknown and the
+    # workspace has Rust crates. JS / Python primary repos that
+    # happen to have auxiliary Rust tooling (e.g. next.js's
+    # crates/turbopack-*) fall through to the JS/Python rules
+    # below — Rust isn't their identity.
+    rust_is_primary = (
+        stack.language == "rust"
+        or (stack.language == "unknown" and has_rust_child)
+    )
+    if rust_is_primary and not has_smart_contract:
+        rust_kids = [
+            name for name, l in _workspace_stack_pairs(stack)
+            if l == "Rust crate"
+        ]
+        if rust_kids:
+            sample = ", ".join(rust_kids[:3])
+            kid_clause = (
+                f" Workspace crates: {sample}"
+                + (f" (and {len(rust_kids) - 3} more)."
+                   if len(rust_kids) > 3 else ".")
+            )
+        else:
+            kid_clause = ""
+        return ProjectType(
+            label="Rust workspace / library",
+            confidence="medium",
+            reason=(
+                f"Cargo.toml at root or Rust crate(s) in the "
+                f"workspace.{kid_clause}"
+            ),
+        )
+
+    # ---- Rule 6: Go project ----
+    if stack.language == "go":
+        return ProjectType(
+            label="Go project",
+            confidence="medium",
+            reason=("Root go.mod detected; primary is a Go project "
+                    "(library, CLI, or service)."),
+        )
+
+    # ---- Rule 7: Single primary JavaScript ----
     if (stack.language == "javascript"
             and not stack.parts
             and not stack.workspace_children):
@@ -1331,6 +1515,7 @@ def derive_project_type(stack: StackProfile,
                     "workspace containers."),
         )
 
+    # ---- Rule 8: Single primary Python ----
     if (stack.language == "python"
             and not stack.parts
             and not stack.workspace_children):
@@ -1341,6 +1526,7 @@ def derive_project_type(stack: StackProfile,
                     "containers."),
         )
 
+    # ---- Catch-all ----
     workspace_str = (", ".join(reality.workspace_signals)
                      if reality.workspace_signals else "none")
     return ProjectType(
@@ -1708,6 +1894,10 @@ def _lang_label(lang: str) -> str:
         return "JavaScript / Node.js"
     if lang == "python":
         return "Python"
+    if lang == "rust":
+        return "Rust"
+    if lang == "go":
+        return "Go"
     return "Unknown"
 
 
@@ -1732,6 +1922,10 @@ def _stack_summary(stack: StackProfile) -> str:
             "manifest",
         )
         return f"Python (detected from {sig})"
+    if stack.language == "rust":
+        return "Rust (detected from Cargo.toml)"
+    if stack.language == "go":
+        return "Go (detected from go.mod)"
     # v0.8 Phase 4.5: when root detection returned "unknown" but
     # workspace inference produced a label, surface it instead of
     # the bare "Unknown stack" line. The "(inferred from workspace
@@ -3798,7 +3992,7 @@ def run_adopt(args: argparse.Namespace) -> int:
     # in the final dry-run / HTML output.
     prelim_failures = analyze_failures(repo, stack, [])
     reality = derive_stack_reality(stack, prelim_failures)
-    project_type = derive_project_type(stack, reality)
+    project_type = derive_project_type(stack, reality, prelim_failures)
     # v0.8 Phase 4.3 — IDEMPOTENCY_RISK is plan-dependent, so we
     # need a prelim plan to know whether that rule should fire in
     # suggested_actions. The prelim plan content gets thrown away;

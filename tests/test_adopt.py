@@ -4554,5 +4554,237 @@ class TestMixedRootDominance(unittest.TestCase):
         self.assertEqual(reality.confidence, "High")
 
 
+class TestEcosystemCoverage(unittest.TestCase):
+    """v0.9 Phase 5.2 / 5.3 / 5.4 / 5.5 — fixture-shaped tests for
+    the four new ecosystem coverage rules.
+
+    Mirrors the dogfood failures from SESSION_011 in synthesized
+    form. Each fixture stands in for a real repo (ripgrep,
+    kubernetes, openzeppelin-contracts, react-native, fns-monorepo,
+    transformers) and locks in the new project-type / detection
+    behavior so a future regression is caught early.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="x", next_step="y")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _derive(self):
+        from cli.adopt import derive_project_type, derive_stack_reality
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality, prelim)
+        return stack, reality, ptype
+
+    # ---- Phase 5.2: Rust ------------------------------------------
+
+    def test_ripgrep_shape_is_rust_workspace(self):
+        # Root Cargo.toml + crates/ workspace + .rs files.
+        (self.repo / "Cargo.toml").write_text(
+            "[workspace]\n", encoding="utf-8")
+        (self.repo / "crates").mkdir()
+        for name in ("cli", "core", "globset"):
+            d = self.repo / "crates" / name
+            d.mkdir()
+            (d / "Cargo.toml").write_text("# crate\n", encoding="utf-8")
+            (d / "src").mkdir()
+            (d / "src" / "lib.rs").write_text("// rs\n", encoding="utf-8")
+        stack, reality, ptype = self._derive()
+        self.assertEqual(stack.language, "rust")
+        self.assertEqual(ptype.label, "Rust workspace / library")
+        self.assertEqual(ptype.confidence, "medium")
+        # Reason names some of the crates.
+        self.assertIn("crates", ptype.reason)
+
+    def test_rust_inferred_from_workspace_when_no_root_cargo(self):
+        # No root manifest, but every workspace child is a Rust
+        # crate. Phase 4.5 inference + Phase 5.2 rule combine to
+        # promote the project to Rust workspace / library.
+        (self.repo / "members").mkdir()
+        for name in ("a", "b"):
+            d = self.repo / "members" / name
+            d.mkdir()
+            (d / "Cargo.toml").write_text("# c\n", encoding="utf-8")
+            (d / "src").mkdir()
+            (d / "src" / "lib.rs").write_text("// rs\n", encoding="utf-8")
+        stack, _, ptype = self._derive()
+        self.assertEqual(stack.inferred_primary, "Rust workspace")
+        self.assertEqual(ptype.label, "Rust workspace / library")
+
+    # ---- Phase 5.3: Go --------------------------------------------
+
+    def test_kubernetes_shape_is_go_project(self):
+        # Root go.mod + many .go files in cmd/ and pkg/.
+        (self.repo / "go.mod").write_text("module foo\n", encoding="utf-8")
+        for d in ("cmd", "pkg"):
+            (self.repo / d).mkdir()
+            for n in range(20):
+                (self.repo / d / f"a{n}.go").write_text("// go\n", encoding="utf-8")
+        stack, _, ptype = self._derive()
+        self.assertEqual(stack.language, "go")
+        self.assertEqual(ptype.label, "Go project")
+        self.assertEqual(ptype.confidence, "medium")
+        self.assertIn("go.mod", ptype.reason)
+
+    # ---- Phase 5.4: Smart contract project ------------------------
+
+    def test_openzeppelin_shape_is_smart_contract_project(self):
+        # Root has hardhat.config.js + foundry.toml + package.json.
+        # No apps/ workspace. Many .sol files in contracts/.
+        # Despite v0 picking JavaScript at root, Phase 5.4 promotes
+        # to Smart contract project via the failure-example route.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "hardhat.config.js").write_text(
+            "// hh\n", encoding="utf-8")
+        (self.repo / "foundry.toml").write_text(
+            "# foundry\n", encoding="utf-8")
+        (self.repo / "contracts").mkdir()
+        for n in range(15):
+            (self.repo / "contracts" / f"C{n}.sol").write_text(
+                "// sol\n", encoding="utf-8")
+        stack, _, ptype = self._derive()
+        # Primary stays JavaScript (v0 classifier rule unchanged).
+        self.assertEqual(stack.language, "javascript")
+        # But project type is now Smart contract project.
+        self.assertEqual(ptype.label, "Smart contract project")
+        self.assertEqual(ptype.confidence, "medium")
+        # Reason names concrete evidence.
+        self.assertIn("hardhat.config.js", ptype.reason)
+        self.assertIn(".sol files", ptype.reason)
+
+    def test_smart_contract_workspace_only_via_solidity_child(self):
+        # No root config — workspace child(ren) are Solidity. Smart
+        # contract rule still fires from the workspace signal alone.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        _, _, ptype = self._derive()
+        self.assertEqual(ptype.label, "Smart contract project")
+
+    # ---- Phase 5.5: React Native correction -----------------------
+
+    def test_react_native_shape_is_mobile_app_suite(self):
+        # Mirrors react-native: root package.json (the framework's
+        # own) + packages/react-native (metro.config + RN config +
+        # .tsx) + packages/rn-tester (Podfile + Gemfile + .swift).
+        # v0.8 mislabeled this as Full-stack web app via the
+        # over-eager Phase 3 Next.js rule.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "packages").mkdir()
+        rn = self.repo / "packages" / "react-native"
+        rn.mkdir()
+        (rn / "package.json").write_text("{}", encoding="utf-8")
+        (rn / "metro.config.js").write_text(
+            "// metro\n", encoding="utf-8")
+        (rn / "react-native.config.js").write_text(
+            "// rn\n", encoding="utf-8")
+        (rn / "src").mkdir()
+        for n in range(5):
+            (rn / "src" / f"comp{n}.tsx").write_text(
+                "// tsx\n", encoding="utf-8")
+        rn_tester = self.repo / "packages" / "rn-tester"
+        rn_tester.mkdir()
+        (rn_tester / "package.json").write_text("{}", encoding="utf-8")
+        (rn_tester / "Podfile").write_text("# pod\n", encoding="utf-8")
+        (rn_tester / "Gemfile").write_text("# gem\n", encoding="utf-8")
+        (rn_tester / "ios").mkdir()
+        (rn_tester / "ios" / "AppDelegate.swift").write_text(
+            "// swift\n", encoding="utf-8")
+        # Some Python tooling (mirrors react-native's scripts/).
+        (self.repo / "scripts").mkdir()
+        for n in range(3):
+            (self.repo / "scripts" / f"tool{n}.py").write_text(
+                "# py\n", encoding="utf-8")
+
+        stack, _, ptype = self._derive()
+        # Primary stays JavaScript (root package.json).
+        self.assertEqual(stack.language, "javascript")
+        # Project type is Mobile app suite, NOT Full-stack web app.
+        self.assertEqual(ptype.label, "Mobile app suite")
+        self.assertNotEqual(ptype.label, "Full-stack web app")
+        # Reason mentions React Native.
+        self.assertIn("React Native", ptype.reason)
+
+    def test_metro_config_alone_blocks_nextjs_classification(self):
+        # Defense: a child with metro.config.js + package.json +
+        # .tsx must NOT classify as "Next.js / React web app".
+        # The fix would have left react-native broken without this.
+        from cli.adopt import _classify_workspace_child
+        from cli.adopt import WorkspaceChild
+        c = WorkspaceChild(
+            name="packages/some-rn-pkg",
+            manifest_files=["metro.config.js", "package.json"],
+            notable_extensions={".tsx": 8},
+        )
+        label = _classify_workspace_child(c)
+        self.assertEqual(label, "React Native / mobile framework",
+                         f"metro.config.js must block Next.js "
+                         f"classification; got {label!r}")
+
+    # ---- Regression sanity: Phase 4.x behavior preserved ---------
+
+    def test_fns_monorepo_shape_still_web3_dapp(self):
+        # Web3 dApp rule (Solidity + Next.js) must still beat the
+        # new Smart contract rule on combined fixtures.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text(
+                "// tsx\n", encoding="utf-8")
+        _, _, ptype = self._derive()
+        self.assertEqual(ptype.label, "Web3 dApp")
+
+    def test_transformers_shape_still_python_app_tooling(self):
+        # Plain Python project with no mixed-root manifests.
+        # Phase 5.x must not regress it.
+        (self.repo / "pyproject.toml").write_text("# py\n", encoding="utf-8")
+        (self.repo / "src").mkdir()
+        for n in range(20):
+            (self.repo / "src" / f"m{n}.py").write_text(
+                "# py\n", encoding="utf-8")
+        stack, _, ptype = self._derive()
+        self.assertEqual(stack.language, "python")
+        self.assertEqual(ptype.label, "Python app/tooling project")
+
+    def test_jsplus_rust_aux_does_not_promote_to_rust(self):
+        # next.js shape: root JS primary, but workspace also
+        # contains Rust crates (Turbopack source). Rust rule must
+        # NOT fire — those are auxiliary tooling, not the project's
+        # identity. Also: with workspace_children present, the
+        # Single-primary-JS rule (which requires no workspace
+        # children) doesn't fire either, so we expect Unclear.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "crates").mkdir()
+        for name in ("turbopack-cli", "turbopack-core"):
+            d = self.repo / "crates" / name
+            d.mkdir()
+            (d / "Cargo.toml").write_text("# c\n", encoding="utf-8")
+            (d / "src").mkdir()
+            (d / "src" / "lib.rs").write_text("// rs\n", encoding="utf-8")
+        _, _, ptype = self._derive()
+        self.assertNotEqual(ptype.label, "Rust workspace / library",
+                            f"Rust rule must not fire when JS is "
+                            f"primary; got {ptype.label!r}")
+
+
 if __name__ == "__main__":
     unittest.main()
