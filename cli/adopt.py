@@ -60,6 +60,15 @@ class StackProfile:
     # shaped files and notable source extensions are inside. See
     # ``UnclassifiedSubdir`` and ``scan_unclassified_subdirs``.
     unclassified_subdirs: list[UnclassifiedSubdir] = field(default_factory=list)
+    # v0.8: depth-2 walk inside known workspace containers (apps/,
+    # packages/, services/, crates/, members/, workspaces/). Each
+    # entry is one child project (e.g. apps/forge, apps/next). Pure
+    # data — does NOT change classification: ``language``, ``parts``,
+    # and ``unclassified_subdirs`` are computed exactly as in v0.7.
+    # Renderers do not yet consume this field; v0.8 only gets the
+    # data model right so a follow-up ship can teach the BUILD_PLAN
+    # / HTML report / failure analyzer to use it.
+    workspace_children: list[WorkspaceChild] = field(default_factory=list)
 
 
 @dataclass
@@ -112,6 +121,41 @@ class UnclassifiedSubdir:
     # dirs full of .json / .md / config files (e.g. dbao-studio's
     # agents/ contains JSON dumps but no .py source).
     total_file_count: int = 0
+
+
+@dataclass
+class WorkspaceChild:
+    """A child project found at depth-2 inside a known workspace
+    container (apps/, packages/, services/, crates/, members/,
+    workspaces/).
+
+    v0.8 introduces this as pure data on ``StackProfile``. The point
+    is to make depth-2 child projects visible to downstream code
+    without flattening them into ``unclassified_subdirs`` (depth-1
+    only) or rewriting the depth-1 classifier. The v0.8 ship does
+    *not* change classification or rendering — that's a follow-up.
+
+    Fields:
+    - ``name``: container/child path (e.g. "apps/forge"). Always
+      includes the container prefix so downstream code can
+      distinguish "apps/foo" from "packages/foo".
+    - ``manifest_files``: filenames at the immediate top of the
+      child that look manifest-shaped (same definition as
+      ``UnclassifiedSubdir.manifest_files``).
+    - ``notable_extensions``: per-extension count from a depth-2
+      walk inside the child, capped at ``MAX_FILES_PER_SUBDIR`` and
+      filtered through the same generic-vs-domain threshold rules
+      as the visibility scan.
+    - ``hint``: a single best-effort label. Prefers the manifest
+      pattern hint (Vite + Tailwind, Expo, etc.); falls back to the
+      dominant DOMAIN_HINTS extension note. ``None`` when neither
+      applies.
+    """
+
+    name: str
+    manifest_files: list[str] = field(default_factory=list)
+    notable_extensions: dict[str, int] = field(default_factory=dict)
+    hint: Optional[str] = None
 
 
 @dataclass
@@ -289,6 +333,7 @@ def detect_stack(repo: Path) -> StackProfile:
             )
         profile = StackProfile(language=root_lang, signals=root_signals, notes=notes)
         profile.unclassified_subdirs = scan_unclassified_subdirs(repo, set(profile.parts))
+        profile.workspace_children = scan_workspace_children(repo)
         return profile
 
     # Step 2: one-level-deep scan into recognized subdirs only.
@@ -323,6 +368,7 @@ def detect_stack(repo: Path) -> StackProfile:
             part_signals=part_signals,
         )
         profile.unclassified_subdirs = scan_unclassified_subdirs(repo, set(profile.parts))
+        profile.workspace_children = scan_workspace_children(repo)
         return profile
 
     # Nothing at root, nothing in recognized subdirs.
@@ -336,6 +382,7 @@ def detect_stack(repo: Path) -> StackProfile:
         ],
     )
     profile.unclassified_subdirs = scan_unclassified_subdirs(repo, set(profile.parts))
+    profile.workspace_children = scan_workspace_children(repo)
     return profile
 
 
@@ -677,6 +724,91 @@ def scan_unclassified_subdirs(repo: Path,
             continue
         manifests, ext_counts, examples, total_files = _scan_subdir_contents(entry)
         out.append(_build_unclassified(name, manifests, ext_counts, examples, total_files))
+    return out
+
+
+def scan_workspace_children(repo: Path) -> list[WorkspaceChild]:
+    """Walk depth-2 inside known workspace containers; return children.
+
+    v0.8 — additive depth-2 walk. Only enters directory names in
+    ``_WORKSPACE_CONTAINERS`` (apps, packages, services, crates,
+    members, workspaces) and walks exactly one level deeper. So
+    ``apps/forge/`` is captured, but ``apps/forge/sub/`` is not.
+
+    For each child, ``_scan_subdir_contents`` produces the manifests
+    + extension counts (already capped at ``MAX_FILES_PER_SUBDIR``
+    per child). Generic-vs-domain extension thresholds match the
+    visibility-first scan so the data is shaped the same way.
+
+    Empty children (no manifests, no notable extensions after
+    threshold filtering) are dropped — they tell downstream code
+    nothing useful and would only inflate the list.
+
+    Hidden dirs and noise dirs are skipped at both the container
+    and child level. Container-name dedup with classification is
+    not needed because ``_WORKSPACE_CONTAINERS`` and
+    ``RECOGNIZED_SUBDIRS`` don't overlap.
+
+    The result is sorted by ``"<container>/<child>"`` for
+    deterministic output.
+    """
+    out: list[WorkspaceChild] = []
+    try:
+        containers = sorted(repo.iterdir(), key=lambda e: e.name)
+    except OSError:
+        return out
+    for container in containers:
+        if not container.is_dir():
+            continue
+        cname = container.name
+        if cname.startswith("."):
+            continue
+        if _is_noise_dir(cname):
+            continue
+        if cname not in _WORKSPACE_CONTAINERS:
+            continue
+        try:
+            children = sorted(container.iterdir(), key=lambda e: e.name)
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            chname = child.name
+            if chname.startswith("."):
+                continue
+            if _is_noise_dir(chname):
+                continue
+            manifests, ext_counts, _examples, _total = _scan_subdir_contents(child)
+            # Apply the same threshold rules as the visibility scan:
+            # domain extensions report at any count, generic
+            # extensions only above MIN_SOURCE_FILES_TO_REPORT.
+            reportable: dict[str, int] = {}
+            for ext, count in ext_counts.items():
+                if ext in DOMAIN_HINTS:
+                    reportable[ext] = count
+                elif ext in GENERIC_EXTENSIONS and count >= MIN_SOURCE_FILES_TO_REPORT:
+                    reportable[ext] = count
+            if not manifests and not reportable:
+                # Empty placeholder child — nothing to report.
+                continue
+            # Single best-effort hint: framework manifest pattern
+            # wins (Vite+Tailwind, Expo, etc.); else dominant
+            # domain-extension hint.
+            hint = _manifest_hint(manifests)
+            if hint is None:
+                domain_present = sorted(
+                    [e for e in reportable if e in DOMAIN_HINTS],
+                    key=lambda e: (-reportable[e], e),
+                )
+                if domain_present:
+                    hint = DOMAIN_HINTS[domain_present[0]] + "; verify with user"
+            out.append(WorkspaceChild(
+                name=f"{cname}/{chname}",
+                manifest_files=manifests,
+                notable_extensions=reportable,
+                hint=hint,
+            ))
     return out
 
 

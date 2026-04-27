@@ -37,6 +37,7 @@ from cli.adopt import (  # noqa: E402
     END_MARKER,
     FailureRecord,
     START_MARKER,
+    WorkspaceChild,
     _default_html_path,
     _is_data_only_subdir,
     _is_noise_dir,
@@ -50,6 +51,7 @@ from cli.adopt import (  # noqa: E402
     render_adopt_html,
     run_adopt,
     scan_unclassified_subdirs,
+    scan_workspace_children,
 )
 
 
@@ -1804,6 +1806,266 @@ class TestRootLevelUnrecognizedEcosystem(unittest.TestCase):
                          f"{[(r.detected_in, r.example) for r in eco_records]}")
         targets = {r.detected_in for r in eco_records}
         self.assertEqual(targets, {"root", "shared"})
+
+
+class TestWorkspaceChildren(unittest.TestCase):
+    """v0.8 — depth-2 walk inside known workspace containers (apps/,
+    packages/, services/, crates/, members/, workspaces/). Pure data
+    extension of StackProfile; does NOT change classification or
+    rendering.
+
+    Each fixture mirrors a cloned dogfood repo's shape in miniature:
+      - fns-monorepo: apps/forge (Foundry) + apps/next (Next.js)
+      - turborepo example: apps/web + apps/docs
+      - flutter example: apps/buyer_app + apps/seller_app
+
+    Invariants checked across fixtures: classification (`language` /
+    `parts`) is unchanged from v0.7's behavior; visibility-first
+    `unclassified_subdirs` still surfaces the container; the new
+    `workspace_children` field exposes the depth-2 children with
+    container-prefixed names.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # ---- fns-monorepo ---------------------------------------------------
+
+    def test_fns_monorepo_detects_forge_and_next(self):
+        # Root package.json + apps/forge (Foundry/Solidity) +
+        # apps/next (Next.js TSX). v0.8 must surface BOTH children.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        # apps/forge
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        # apps/next
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        names = [c.name for c in stack.workspace_children]
+        self.assertEqual(names, ["apps/forge", "apps/next"],
+                         f"expected ordered ['apps/forge', 'apps/next'], "
+                         f"got {names!r}")
+
+        forge_child = next(c for c in stack.workspace_children
+                           if c.name == "apps/forge")
+        # Manifests at depth-1 of the child are surfaced.
+        self.assertIn("foundry.toml", forge_child.manifest_files)
+        self.assertIn("package.json", forge_child.manifest_files)
+        # .sol is a domain extension — surfaces at any count >= 1.
+        self.assertEqual(forge_child.notable_extensions.get(".sol"), 1)
+        # Hint should mention Solidity (no manifest pattern matches
+        # foundry-only, so we fall back to the dominant DOMAIN_HINTS
+        # extension which is .sol).
+        self.assertIsNotNone(forge_child.hint)
+        self.assertIn("Solidity", forge_child.hint)
+
+        nxt_child = next(c for c in stack.workspace_children
+                         if c.name == "apps/next")
+        self.assertIn("package.json", nxt_child.manifest_files)
+        # .tsx is generic; needs >= MIN_SOURCE_FILES_TO_REPORT (3).
+        self.assertEqual(nxt_child.notable_extensions.get(".tsx"), 3)
+
+    def test_fns_monorepo_classification_unchanged_v07_behavior(self):
+        # The v0.8 ship explicitly does NOT touch classification.
+        # Same fns-monorepo shape: language must still be "javascript"
+        # (root package.json wins), parts must stay empty, and apps/
+        # must still appear in unclassified_subdirs.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.language, "javascript",
+                         "language must stay 'javascript' — root package.json wins")
+        self.assertEqual(stack.parts, {},
+                         "parts must stay empty — v0.8 does not promote "
+                         "workspace children into the primary classifier")
+        unclassified_names = [u.name for u in stack.unclassified_subdirs]
+        self.assertIn("apps", unclassified_names,
+                      "apps/ must still appear as an unclassified depth-1 subdir")
+
+    # ---- turborepo (apps/web, apps/docs) -------------------------------
+
+    def test_turborepo_detects_web_and_docs(self):
+        # Stripped-down Turborepo shape: apps/web + apps/docs, both
+        # Next.js-style with .tsx files. Mirrors
+        # turborepo-next-django-starter's apps/ container.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app_name in ("web", "docs"):
+            app = self.repo / "apps" / app_name
+            app.mkdir()
+            (app / "package.json").write_text("{}", encoding="utf-8")
+            (app / "next.config.mjs").write_text("// next\n", encoding="utf-8")
+            (app / "app").mkdir()
+            for n in range(4):
+                (app / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        names = [c.name for c in stack.workspace_children]
+        self.assertEqual(names, ["apps/docs", "apps/web"],
+                         f"expected sorted ['apps/docs', 'apps/web'], "
+                         f"got {names!r}")
+        for child in stack.workspace_children:
+            self.assertIn("package.json", child.manifest_files)
+            self.assertIn("next.config.mjs", child.manifest_files,
+                          f"next.config.mjs should be manifest-shaped "
+                          f"in {child.name}; got {child.manifest_files!r}")
+            self.assertGreaterEqual(child.notable_extensions.get(".tsx", 0), 3,
+                                    f"{child.name}: .tsx count should be "
+                                    f">= 3 (MIN_SOURCE_FILES_TO_REPORT)")
+
+    # ---- flutter (apps/buyer_app, apps/seller_app) ---------------------
+
+    def test_flutter_monorepo_detects_buyer_and_seller(self):
+        # Stripped-down flutter-monorepo-example shape: melos.yaml at
+        # root + apps/buyer_app + apps/seller_app, each with
+        # pubspec.yaml + .dart files.
+        (self.repo / "melos.yaml").write_text("name: x\n", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app_name in ("buyer_app", "seller_app"):
+            app = self.repo / "apps" / app_name
+            app.mkdir()
+            (app / "pubspec.yaml").write_text(
+                f"name: {app_name}\n", encoding="utf-8")
+            (app / "lib").mkdir()
+            (app / "lib" / "main.dart").write_text("// dart\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        names = [c.name for c in stack.workspace_children]
+        self.assertEqual(names, ["apps/buyer_app", "apps/seller_app"],
+                         f"expected sorted ['apps/buyer_app', 'apps/seller_app'], "
+                         f"got {names!r}")
+        for child in stack.workspace_children:
+            self.assertIn("pubspec.yaml", child.manifest_files)
+            # .dart is a domain extension — surfaces at any count.
+            self.assertEqual(child.notable_extensions.get(".dart"), 1,
+                             f"{child.name}: .dart count should be 1; "
+                             f"got {child.notable_extensions!r}")
+            # Hint should mention Dart / Flutter (DOMAIN_HINTS fallback).
+            self.assertIsNotNone(child.hint)
+            self.assertIn("Dart", child.hint)
+
+    # ---- guards --------------------------------------------------------
+
+    def test_empty_workspace_container_has_no_children(self):
+        # An empty apps/ produces an empty workspace_children list —
+        # no per-empty-dir noise entries. Also: no crash.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.workspace_children, [])
+
+    def test_empty_child_dir_is_dropped(self):
+        # apps/foo/ exists but has no manifests and no notable
+        # extensions — it must NOT appear in workspace_children.
+        # apps/bar/ is a real child and should be the only entry.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        (self.repo / "apps" / "foo").mkdir()  # truly empty
+        bar = self.repo / "apps" / "bar"
+        bar.mkdir()
+        (bar / "package.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        names = [c.name for c in stack.workspace_children]
+        self.assertEqual(names, ["apps/bar"],
+                         f"empty apps/foo/ must be dropped; got {names!r}")
+
+    def test_non_workspace_container_is_ignored(self):
+        # A depth-1 dir whose name is NOT in _WORKSPACE_CONTAINERS
+        # (e.g. "thirdparty/") must not contribute children, even
+        # if it has substantial nested content.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "thirdparty").mkdir()
+        (self.repo / "thirdparty" / "vendor").mkdir()
+        (self.repo / "thirdparty" / "vendor" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        self.assertEqual(stack.workspace_children, [],
+                         "thirdparty/ is not a known workspace container")
+
+    def test_multiple_workspace_containers_both_walked(self):
+        # apps/ and packages/ must both contribute children; names
+        # carry the container prefix so consumers can distinguish.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        (self.repo / "apps" / "web").mkdir()
+        (self.repo / "apps" / "web" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        (self.repo / "packages").mkdir()
+        (self.repo / "packages" / "ui").mkdir()
+        (self.repo / "packages" / "ui" / "package.json").write_text(
+            "{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        names = [c.name for c in stack.workspace_children]
+        self.assertEqual(names, ["apps/web", "packages/ui"],
+                         f"both containers must be walked, got {names!r}")
+
+    def test_no_recursion_into_grandchildren(self):
+        # The depth-2 constraint: apps/forge/sub/ must NOT itself
+        # appear as a workspace child. Only apps/forge/ does.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "package.json").write_text("{}", encoding="utf-8")
+        sub = forge / "sub"
+        sub.mkdir()
+        (sub / "package.json").write_text("{}", encoding="utf-8")
+        stack = detect_stack(self.repo)
+        names = [c.name for c in stack.workspace_children]
+        self.assertEqual(names, ["apps/forge"],
+                         f"only depth-2 children allowed, got {names!r}")
+
+    def test_workspace_walk_does_not_change_existing_failure_label(self):
+        # MONOREPO_DEPTH_LIMIT must continue to fire on the same
+        # fns-monorepo shape — the v0.8 data-model addition is
+        # purely additive and must not silence the v0.3 detector.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        stack = detect_stack(self.repo)
+        plan = plan_files(self.repo, stack,
+                          AdoptionInputs(project_description="x", next_step="y"))
+        types = {f.failure_type for f in analyze_failures(self.repo, stack, plan)}
+        self.assertIn(FAILURE_MONOREPO_DEPTH_LIMIT, types,
+                      f"MONOREPO_DEPTH_LIMIT must still fire; got {types!r}")
 
 
 if __name__ == "__main__":
