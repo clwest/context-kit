@@ -1268,24 +1268,84 @@ def derive_suggested_actions(
     project_type: ProjectType,
     failures: list[FailureRecord],
 ) -> list[SuggestedAction]:
-    """Apply Phase 4.3 deterministic rules; return up to 5 actions.
+    """Apply the deterministic rules; return up to 5 actions.
 
-    Rules in priority order (high before medium before low). Each
-    rule emits at most one action; duplicates by title are
-    collapsed; final list is sorted by priority then preserved
-    insertion order; capped at ``_MAX_SUGGESTED_ACTIONS``.
+    v0.8 Phase 4.6 — context-aware refinement of the Phase 4.3
+    rules. Each action's reason now names the concrete things the
+    user should inspect (workspace child paths, needs-clarification
+    dir names, etc.) instead of generic prose. The rule cascade,
+    dedup-by-title, priority-sort, and 5-cap invariants are
+    unchanged from Phase 4.3.
 
     Pure function. No I/O.
     """
     failure_types = {f.failure_type for f in failures}
+    pairs = _workspace_stack_pairs(stack)
     out: list[SuggestedAction] = []
 
+    def children_with_label(label: str) -> list[str]:
+        return [name for name, l in pairs if l == label]
+
+    # Web3 dApp — name the Solidity vs frontend children.
     if project_type.label == "Web3 dApp":
+        sol_children = children_with_label("Solidity / EVM smart contracts")
+        web_children = children_with_label("Next.js / React web app")
+        bits: list[str] = []
+        if sol_children:
+            bits.append(
+                f"{', '.join(sol_children)} appears to contain "
+                f"Solidity contracts"
+            )
+        if web_children:
+            bits.append(
+                f"{', '.join(web_children)} appears to contain the "
+                f"frontend"
+            )
+        prefix = "; ".join(bits) + ". " if bits else ""
         out.append(SuggestedAction(
-            title="Confirm contract workspace",
-            reason=("Smart-contract code and frontend code appear to "
-                    "live in separate workspaces."),
+            title="Confirm smart-contract + frontend boundary",
+            reason=(
+                f"Smart-contract workspace(s) and frontend "
+                f"workspace(s) appear separate. {prefix}"
+                f"Confirm how contracts are built/deployed and how "
+                f"the frontend consumes them."
+            ),
             priority="high",
+        ))
+
+    # Mobile app suite — name the Flutter children.
+    if project_type.label == "Mobile app suite":
+        flutter_children = children_with_label("Flutter / Dart app")
+        if flutter_children:
+            sample = " and ".join(flutter_children[:2])
+            extra = (
+                f" Detected {sample}."
+                if len(flutter_children) <= 2
+                else f" Detected {sample} (and "
+                     f"{len(flutter_children) - 2} more)."
+            )
+        else:
+            extra = ""
+        out.append(SuggestedAction(
+            title="Confirm mobile app structure",
+            reason=(
+                f"Multiple Flutter/Dart app workspaces were detected. "
+                f"Confirm which apps are primary, shared, or "
+                f"experimental.{extra}"
+            ),
+            priority="high",
+        ))
+
+    # Full-stack web app — refined boundary copy.
+    if project_type.label == "Full-stack web app":
+        out.append(SuggestedAction(
+            title="Confirm backend/frontend boundaries",
+            reason=(
+                "Backend and frontend code appear to live in separate "
+                "workspaces. Confirm API ownership, local dev startup "
+                "order, and deployment boundaries."
+            ),
+            priority="medium",
         ))
 
     if reality.confidence == "Low":
@@ -1296,23 +1356,45 @@ def derive_suggested_actions(
             priority="high",
         ))
 
-    # Needs-clarification dirs are the v0.8-deduped partition output.
+    # Needs-clarification dirs — name them, cap at 3 with overflow phrasing.
     signal_subs, data_only_subs = _partition_unclassified(stack)
-    if signal_subs or data_only_subs:
+    clar_dirs = (
+        [u.name + "/" for u in signal_subs]
+        + [u.name + "/" for u in data_only_subs]
+    )
+    if clar_dirs:
+        if len(clar_dirs) <= 3:
+            reason = f"Confirm the role of: {', '.join(clar_dirs)}."
+        else:
+            first3 = ", ".join(clar_dirs[:3])
+            reason = (
+                f"Confirm the role of {len(clar_dirs)} unclassified "
+                f"directories, starting with: {first3}."
+            )
         out.append(SuggestedAction(
-            title="Review unclassified directories",
-            reason=("These directories exist but adopt couldn't classify "
-                    "their role. Confirm what they are before making "
-                    "changes."),
+            title="Classify unrecognized directories",
+            reason=reason,
             priority="medium",
         ))
 
+    # Workspace depth — name child workspaces when known.
     if FAILURE_MONOREPO_DEPTH_LIMIT in failure_types:
+        all_children = [name for name, _ in pairs]
+        if all_children:
+            sample = " and ".join(all_children[:2])
+            reason = (
+                f"adopt surfaced child workspaces but does not yet "
+                f"fold them into primary classification. Review "
+                f"workspace children such as {sample}."
+            )
+        else:
+            reason = (
+                "adopt surfaced child workspaces but does not yet "
+                "fold them into primary classification."
+            )
         out.append(SuggestedAction(
-            title="Inspect child workspaces",
-            reason=("Workspace containers hold child projects adopt's "
-                    "depth-2 walk surfaces but doesn't classify into "
-                    "the primary stack."),
+            title="Review workspace children",
+            reason=reason,
             priority="high",
         ))
 
@@ -1323,15 +1405,6 @@ def derive_suggested_actions(
                     "without our markers. Adopt will skip them to "
                     "protect your hand-written content."),
             priority="high",
-        ))
-
-    if project_type.label == "Full-stack web app":
-        out.append(SuggestedAction(
-            title="Confirm backend/frontend boundaries",
-            reason=("Backend and frontend live in different parts of "
-                    "the project; making the boundary explicit reduces "
-                    "mis-edits."),
-            priority="medium",
         ))
 
     # Catch-all clean-project action — only when no other rules fired.

@@ -3510,16 +3510,28 @@ class TestSuggestedActions(unittest.TestCase):
 
         _, _, _, _, actions = self._derive_actions()
         titles = self._titles(actions)
-        self.assertIn("Confirm contract workspace", titles,
-                      f"Web3 dApp must include the contract workspace "
+        # v0.8 Phase 4.6: titles refined for context-awareness.
+        self.assertIn("Confirm smart-contract + frontend boundary",
+                      titles,
+                      f"Web3 dApp must include the boundary action; "
+                      f"got {titles!r}")
+        self.assertIn("Review workspace children", titles,
+                      f"MONOREPO_DEPTH_LIMIT must trigger the review "
                       f"action; got {titles!r}")
-        self.assertIn("Inspect child workspaces", titles,
-                      f"MONOREPO_DEPTH_LIMIT must trigger the inspect "
-                      f"action; got {titles!r}")
-        # Both should be high priority.
+        # Reasons must name the concrete child workspaces, not just
+        # talk about "smart-contract code" / "frontend code" generically.
+        boundary = next(a for a in actions
+                        if a.title == "Confirm smart-contract + frontend boundary")
+        self.assertIn("apps/forge", boundary.reason,
+                      f"boundary reason must name the Solidity child; "
+                      f"got: {boundary.reason!r}")
+        self.assertIn("apps/next", boundary.reason,
+                      f"boundary reason must name the frontend child; "
+                      f"got: {boundary.reason!r}")
+        # Both refined actions are high priority.
         for a in actions:
-            if a.title in ("Confirm contract workspace",
-                           "Inspect child workspaces"):
+            if a.title in ("Confirm smart-contract + frontend boundary",
+                           "Review workspace children"):
                 self.assertEqual(a.priority, "high")
 
     # ---- 2. unknown shape: Clarify project shape ------------------
@@ -3676,10 +3688,11 @@ class TestSuggestedActions(unittest.TestCase):
         from cli.adopt import derive_adopt_summary
         summary = derive_adopt_summary(stack, reality, ptype, actions)
 
+        # v0.8 Phase 4.6: refined Web3 dApp action title.
         out = self._run_cli()
         self.assertIn("Adopt Summary", out)
         self.assertIn("Next actions", out)
-        self.assertIn("Confirm contract workspace", out)
+        self.assertIn("Confirm smart-contract + frontend boundary", out)
         self.assertIn("[high]", out)
 
         plan = plan_files(self.repo, stack, self.inputs, summary=summary)
@@ -3688,18 +3701,21 @@ class TestSuggestedActions(unittest.TestCase):
                                  summary=summary)
         self.assertIn("<h2>Adopt Summary</h2>", html)
         self.assertIn("Next actions (", html)
-        self.assertIn("[high] Confirm contract workspace", html)
+        self.assertIn("[high] Confirm smart-contract + frontend boundary",
+                      html)
 
         md = generate_build_plan(stack, self.inputs, "Test", summary=summary)
         self.assertIn("## Adopt Summary", md)
         self.assertIn("Next actions (", md)
-        self.assertIn("**[high] Confirm contract workspace**", md)
+        self.assertIn("**[high] Confirm smart-contract + frontend boundary**",
+                      md)
 
         block = generate_claude_block(stack, self.inputs, "Test",
                                       summary=summary)
         self.assertIn("## Adopt Summary", block)
         self.assertIn("Next actions (", block)
-        self.assertIn("**[high] Confirm contract workspace**", block)
+        self.assertIn("**[high] Confirm smart-contract + frontend boundary**",
+                      block)
         self.assertIn(START_MARKER, block)
         self.assertIn(END_MARKER, block)
 
@@ -4142,6 +4158,232 @@ class TestWorkspaceAwarePrimaryDetection(unittest.TestCase):
         self.assertEqual(reality.assessment, "Single-stack project")
         self.assertEqual(reality.confidence, "Medium")
         self.assertIn("inferred", reality.why)
+
+
+class TestSuggestedActionsContextAware(unittest.TestCase):
+    """v0.8 Phase 4.6 — context-aware action refinement.
+
+    Each refined rule now names the concrete things the user
+    should inspect (workspace child paths, needs-clarification
+    dir names, etc.) rather than emitting generic prose. The
+    Phase 4.3 invariants (max 5, dedupe by title, sort by
+    priority) are preserved and re-tested here.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inputs = AdoptionInputs(project_description="demo",
+                                     next_step="ship v1")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _derive_actions(self):
+        from cli.adopt import (
+            derive_project_type, derive_stack_reality,
+            derive_suggested_actions,
+        )
+        stack = detect_stack(self.repo)
+        prelim = analyze_failures(self.repo, stack, [])
+        reality = derive_stack_reality(stack, prelim)
+        ptype = derive_project_type(stack, reality)
+        prelim_plan = plan_files(self.repo, stack, self.inputs,
+                                 reality=reality, project_type=ptype)
+        failures = analyze_failures(self.repo, stack, prelim_plan)
+        actions = derive_suggested_actions(stack, reality, ptype, failures)
+        return actions
+
+    def _by_title(self, actions, title):
+        match = [a for a in actions if a.title == title]
+        self.assertEqual(len(match), 1,
+                         f"expected exactly one action titled "
+                         f"{title!r}; got {[a.title for a in actions]!r}")
+        return match[0]
+
+    # ---- 1. Web3 dApp: reason names Solidity + frontend children ----
+
+    def test_fns_monorepo_action_names_concrete_children(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+
+        actions = self._derive_actions()
+        boundary = self._by_title(
+            actions, "Confirm smart-contract + frontend boundary")
+        self.assertIn("apps/forge", boundary.reason)
+        self.assertIn("apps/next", boundary.reason)
+        self.assertIn("Solidity", boundary.reason)
+        self.assertIn("frontend", boundary.reason)
+
+    # ---- 2. Mobile: action mentions Flutter children ----------------
+
+    def test_flutter_monorepo_has_mobile_app_structure_action(self):
+        (self.repo / "melos.yaml").write_text("name: x\n", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for app in ("buyer_app", "seller_app"):
+            d = self.repo / "apps" / app
+            d.mkdir()
+            (d / "pubspec.yaml").write_text(f"name: {app}\n", encoding="utf-8")
+            (d / "lib").mkdir()
+            (d / "lib" / "main.dart").write_text("// dart\n", encoding="utf-8")
+
+        actions = self._derive_actions()
+        mobile = self._by_title(actions, "Confirm mobile app structure")
+        self.assertEqual(mobile.priority, "high")
+        # Both child names appear in the reason.
+        self.assertIn("apps/buyer_app", mobile.reason)
+        self.assertIn("apps/seller_app", mobile.reason)
+        self.assertIn("Flutter", mobile.reason)
+
+    # ---- 3. Full-stack: refined boundary copy ----------------------
+
+    def test_full_stack_boundary_action_uses_refined_copy(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        web = self.repo / "apps" / "web"
+        web.mkdir()
+        (web / "package.json").write_text("{}", encoding="utf-8")
+        (web / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (web / "app").mkdir()
+        for n in range(3):
+            (web / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+        (self.repo / "server").mkdir()
+        (self.repo / "server" / "backend").mkdir()
+        (self.repo / "server" / "backend" / "manage.py").write_text(
+            "# d\n", encoding="utf-8")
+        for n in range(5):
+            (self.repo / "server" / "backend" / f"v{n}.py").write_text(
+                "# x\n", encoding="utf-8")
+
+        actions = self._derive_actions()
+        boundary = self._by_title(
+            actions, "Confirm backend/frontend boundaries")
+        self.assertEqual(boundary.priority, "medium")
+        # Refined Phase 4.6 wording calls out the concrete
+        # boundary concerns, not the prior generic "mis-edits" line.
+        self.assertIn("API ownership", boundary.reason)
+        self.assertIn("local dev startup", boundary.reason)
+        self.assertIn("deployment boundaries", boundary.reason)
+        self.assertNotIn("mis-edits", boundary.reason)
+
+    # ---- 4a. Needs clarification: <=3 dirs lists names -------------
+
+    def test_clarification_action_lists_dir_names_when_few(self):
+        # Three needs-clarification dirs (recognized-but-unclassified
+        # subdirs trigger the unknown branch). Reason must list all
+        # three by name.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        for d in ("alpha", "beta", "gamma"):
+            (self.repo / d).mkdir()
+            (self.repo / d / "data.json").write_text("{}", encoding="utf-8")
+
+        actions = self._derive_actions()
+        clar = self._by_title(actions, "Classify unrecognized directories")
+        self.assertIn("alpha/", clar.reason)
+        self.assertIn("beta/", clar.reason)
+        self.assertIn("gamma/", clar.reason)
+        # No "starting with" overflow phrasing for <= 3.
+        self.assertNotIn("starting with", clar.reason)
+
+    # ---- 4b. Needs clarification: >3 dirs uses count + first 3 -----
+
+    def test_clarification_action_uses_count_when_many(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        for d in ("a", "b", "c", "d", "e"):
+            (self.repo / d).mkdir()
+            (self.repo / d / "data.json").write_text("{}", encoding="utf-8")
+
+        actions = self._derive_actions()
+        clar = self._by_title(actions, "Classify unrecognized directories")
+        # Count appears verbatim.
+        self.assertIn("5 unclassified directories", clar.reason)
+        self.assertIn("starting with", clar.reason)
+        # First three names listed.
+        self.assertIn("a/", clar.reason)
+        self.assertIn("b/", clar.reason)
+        self.assertIn("c/", clar.reason)
+
+    # ---- 5. MONOREPO_DEPTH_LIMIT: refined "Review workspace children"
+
+    def test_review_workspace_children_action_names_children(self):
+        # fns-monorepo shape — MONOREPO_DEPTH_LIMIT fires; the
+        # refined action mentions concrete child names.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        for name in ("forge", "next"):
+            d = self.repo / "apps" / name
+            d.mkdir()
+            (d / "package.json").write_text("{}", encoding="utf-8")
+            (d / "src").mkdir()
+            (d / "src" / "main.tsx").write_text("// x\n", encoding="utf-8")
+            (d / "src" / "x.tsx").write_text("// x\n", encoding="utf-8")
+            (d / "src" / "y.tsx").write_text("// x\n", encoding="utf-8")
+
+        actions = self._derive_actions()
+        review = self._by_title(actions, "Review workspace children")
+        self.assertEqual(review.priority, "high")
+        self.assertIn("apps/forge", review.reason)
+        self.assertIn("apps/next", review.reason)
+
+    # ---- 6. Clean project case still falls through ----------------
+
+    def test_clean_plain_js_still_emits_run_with_write(self):
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "main.js").write_text("// js\n", encoding="utf-8")
+        actions = self._derive_actions()
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].title,
+                         "Run adopt with --write when ready")
+        self.assertEqual(actions[0].priority, "low")
+
+    # ---- 7. invariants: max 5 + dedup -----------------------------
+
+    def test_invariants_max_5_and_dedup_preserved(self):
+        # Maximally-noisy fixture: Web3 dApp + multiple unclassified
+        # dirs + IDEMPOTENCY_RISK + workspace depth limit. Should
+        # produce <= 5 distinct actions, all unique titles.
+        (self.repo / "package.json").write_text("{}", encoding="utf-8")
+        (self.repo / "apps").mkdir()
+        forge = self.repo / "apps" / "forge"
+        forge.mkdir()
+        (forge / "foundry.toml").write_text("# foundry\n", encoding="utf-8")
+        (forge / "contracts").mkdir()
+        (forge / "contracts" / "Foo.sol").write_text("// sol\n", encoding="utf-8")
+        nxt = self.repo / "apps" / "next"
+        nxt.mkdir()
+        (nxt / "package.json").write_text("{}", encoding="utf-8")
+        (nxt / "next.config.js").write_text("// next\n", encoding="utf-8")
+        (nxt / "app").mkdir()
+        for n in range(3):
+            (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
+        # Pre-existing hand-written doc → IDEMPOTENCY_RISK
+        (self.repo / "00-START-NEXT-SESSION.md").write_text(
+            "# Hand-written\n", encoding="utf-8")
+        # An unrelated dir for clarification.
+        (self.repo / "scripts").mkdir()
+        (self.repo / "scripts" / "tool.py").write_text("# x\n", encoding="utf-8")
+
+        actions = self._derive_actions()
+        titles = [a.title for a in actions]
+        self.assertEqual(len(titles), len(set(titles)),
+                         f"actions must be deduped; got {titles!r}")
+        self.assertLessEqual(len(actions), 5)
+        # Sorted by priority high-first.
+        priority_rank = {"high": 0, "medium": 1, "low": 2}
+        ranks = [priority_rank[a.priority] for a in actions]
+        self.assertEqual(ranks, sorted(ranks))
 
 
 if __name__ == "__main__":
