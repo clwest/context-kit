@@ -37,7 +37,9 @@ Your job is to identify:
 
 Be specific. Reference real files. Prioritize findings as P0 / P1 / P2 by impact.
 
-Then propose a concrete cleanup plan with phases."""
+Then propose a concrete cleanup plan with phases.
+
+Report back as if you're updating a small project team. Keep it concise, specific, and action-oriented: what you checked, what you'd change or recommend, what remains open, and what you need from the team next."""
 
 
 AUDIT_V1_TEMPLATE = """\

@@ -67,25 +67,29 @@ Constraints:
 
 _PROMPT_OUTPUT_EXPECTATIONS = """\
 Output expectations:
-For each task you complete, report:
+Report back as if you're updating a small project team — concise,
+specific, action-oriented. For each task you complete:
   1. Which task (phase number + first ~10 words of the bullet)
   2. Files changed (paths)
   3. Test result before / after
   4. Anything you didn't do, and why
 
-When the requested scope finishes, return a one-paragraph summary
-naming what landed and what's still open."""
+When the requested scope finishes, summarize in one paragraph:
+what landed, what's still open, and what you need from the team
+next."""
 
 
 _PROMPT_OUTPUT_EXPECTATIONS_SINGLE_STEP = """\
 Output expectations:
-This invocation requested a single step. Report:
+Report back as if you're updating a small project team — concise,
+specific, action-oriented. This invocation requested a single step:
   1. The task you executed (verbatim, from "Task" above)
   2. Files changed (paths)
   3. Test result before / after
   4. Whether the project is ready for the next
      `context-kit exec --next` invocation, or whether something
-     blocks it."""
+     blocks it. If you need anything from the team to unblock,
+     name it explicitly."""
 
 
 def run_exec(args: argparse.Namespace) -> int:

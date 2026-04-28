@@ -165,6 +165,20 @@ class TestExecFullPrompt(_CwdSandbox):
         self.assertIn("docs/audit/AUDIT_V1.md", out)
         self.assertIn("docs/audit/CLEANUP_PLAN.md", out)
 
+    def test_includes_team_reporting_framing(self):
+        _, out = _run_exec_capture()
+        # Output expectations leads with the team-reporting framing.
+        self.assertIn("Report back as if you're updating a small project team", out)
+        self.assertIn("concise", out.lower())
+        self.assertIn("action-oriented", out.lower())
+        # The wrap-up sentence asks for the four-beat communication
+        # (what landed / what's open / what's needed from the team).
+        # Each is checked as a short substring so line-wrap doesn't
+        # break the assertions.
+        self.assertIn("what landed", out)
+        self.assertIn("what's still open", out)
+        self.assertIn("from the team", out)
+
 
 # ---------------------------------------------------------------------------
 # --phase filtering
@@ -241,12 +255,22 @@ class TestExecNextStep(_CwdSandbox):
     def test_next_uses_single_step_output_expectations(self):
         _, out = _run_exec_capture(next_step=True)
         # Single-step variant of the output-expectations block fires.
-        self.assertIn("This invocation requested a single step.", out)
+        self.assertIn("This invocation requested a single step", out)
         # The "ready for the next ... invocation" wording, allowing the
         # `context-kit exec --next` literal to wrap onto its own line.
         self.assertIn("ready for the next", out)
         self.assertIn("`context-kit exec --next`", out)
         self.assertIn("invocation", out)
+
+    def test_next_includes_team_reporting_framing(self):
+        _, out = _run_exec_capture(next_step=True)
+        # The single-step output-expectations block leads with the
+        # same team-reporting framing as the full prompt.
+        self.assertIn("Report back as if you're updating a small project team", out)
+        self.assertIn("concise", out.lower())
+        self.assertIn("action-oriented", out.lower())
+        # And asks for explicit unblock-asks when relevant.
+        self.assertIn("from the team", out.lower())
 
     def test_next_skips_empty_phases_to_find_a_step(self):
         plan = (

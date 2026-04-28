@@ -67,6 +67,17 @@ class TestAuditPromptOutput(unittest.TestCase):
         self.assertIn("P2", out)
         self.assertIn("phases", out.lower())
 
+    def test_includes_team_reporting_framing(self):
+        _, out = _run_audit_capture()
+        lower = out.lower()
+        self.assertIn("report back", lower)
+        self.assertIn("project team", lower)
+        # The four communication beats — what was checked, what was
+        # changed/recommended, what remains, what's needed next.
+        self.assertIn("what you checked", lower)
+        self.assertIn("what remains open", lower)
+        self.assertIn("from the team next", lower)
+
 
 class TestAuditWriteScaffolding(unittest.TestCase):
     def setUp(self):
@@ -163,6 +174,9 @@ class TestAuditWriteUX(unittest.TestCase):
         self.assertIn("P0", out)
         self.assertIn("P1", out)
         self.assertIn("P2", out)
+        # Team-reporting framing rides along with the embedded prompt.
+        self.assertIn("Report back", out)
+        self.assertIn("project team", out)
 
     def test_skipped_scaffold_files_report_appear_unfilled(self):
         audit_dir = self.tmpdir / "docs" / "audit"
