@@ -351,6 +351,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # audit
+    sub.add_parser(
+        "audit",
+        help="Print a structured audit prompt for an AI agent",
+        description=(
+            "Print a predefined prompt that instructs an AI to perform a "
+            "deep audit of this repository: stale docs, duplicated logic, "
+            "dead code, risky areas, runtime/doc inconsistencies — with "
+            "P0/P1/P2 prioritization and a phased cleanup plan. Writes to "
+            "stdout only; takes no arguments."
+        ),
+    )
+
     return parser
 
 
@@ -408,6 +421,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "adopt":
         from cli.adopt import run_adopt
         return run_adopt(args)
+
+    if args.command == "audit":
+        from cli.audit import run_audit
+        return run_audit(args)
 
     parser.print_help()
     return 1
