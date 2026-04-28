@@ -13,6 +13,7 @@ at the root and a ``docs/`` folder with the two-doc anchor).
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -20,6 +21,12 @@ START_DOC = "00-START-NEXT-SESSION.md"
 HANDOFFS_DIR = Path("docs/handoffs")
 DOCS_DIR = Path("docs")
 PATTERN_DIR = Path("docs/docs-pattern")
+
+# Numbered session handoff: ``SESSION_<digits>_<anything>.md``. Files
+# that don't match this shape (e.g. ``SESSION_ROADMAP_*.md``,
+# ``SESSION_NOTES.md``) are not handoffs and must not be picked as
+# "latest". The capture group holds the numeric session ID.
+_HANDOFF_RE = re.compile(r"^SESSION_(\d+)_.+\.md$")
 
 # How many lines of each doc to preview in the orient report. Enough to
 # show the source-of-truth header + first real content; not so much that
@@ -118,13 +125,47 @@ def _section_latest_handoff(project: Path) -> str:
     if not handoffs_dir.is_dir():
         return f"## LATEST HANDOFF\n  (missing) {HANDOFFS_DIR}/"
 
-    handoffs = sorted(p for p in handoffs_dir.glob("SESSION_*.md") if p.is_file())
-    if not handoffs:
+    latest = _latest_numbered_handoff(handoffs_dir)
+    if latest is None:
         return f"## LATEST HANDOFF\n  (none yet) {HANDOFFS_DIR}/"
 
-    latest = handoffs[-1]
     rel = latest.relative_to(project)
     return f"## LATEST HANDOFF — {rel}\n\n" + _preview(latest)
+
+
+def _latest_numbered_handoff(handoffs_dir: Path) -> Path | None:
+    """Pick the most-recent numbered session handoff.
+
+    Selection rule (in order):
+    1. Only files matching ``SESSION_<digits>_*.md`` are considered.
+       Non-numbered names (``SESSION_ROADMAP_*``, ``SESSION_NOTES``)
+       are ignored entirely — they're not session handoffs and must
+       not win selection on lexicographic luck.
+    2. Sort by integer session number ascending. This makes
+       ``SESSION_1098_*`` beat ``SESSION_999_*`` instead of losing
+       to it under ASCII string ordering.
+    3. Tiebreak on ``mtime`` ascending — when two handoffs share a
+       session number (e.g. addendum / wrap pairs), the most-recently
+       modified file wins.
+
+    Returns ``None`` when no numbered handoffs exist (the directory
+    may still hold non-handoff markdown).
+    """
+    candidates: list[tuple[int, float, Path]] = []
+    for path in handoffs_dir.glob("SESSION_*.md"):
+        if not path.is_file():
+            continue
+        match = _HANDOFF_RE.match(path.name)
+        if match is None:
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        candidates.append((int(match.group(1)), mtime, path))
+    if not candidates:
+        return None
+    return max(candidates)[2]
 
 
 def _section_pattern_pointer(project: Path) -> str:
