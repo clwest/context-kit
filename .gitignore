@@ -49,3 +49,6 @@ tmp/
 !.claude/skills/
 .env
 .env.local
+
+# Engagement telemetry (private)
+metrics/
