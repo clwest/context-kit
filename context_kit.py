@@ -370,6 +370,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scaffold docs/audit/ with empty AUDIT_V1.md + CLEANUP_PLAN.md",
     )
 
+    # fix
+    fix = sub.add_parser(
+        "fix",
+        help="Print the phased cleanup plan from docs/audit/ as actionable steps",
+        description=(
+            "Read docs/audit/AUDIT_V1.md + docs/audit/CLEANUP_PLAN.md and "
+            "print the phased cleanup plan as an execution-ready outline. "
+            "Read-only: never modifies files, never invokes an AI, never "
+            "executes any printed step. Exits 1 if the workspace isn't "
+            "initialized or still carries scaffold placeholders."
+        ),
+    )
+    fix_mode = fix.add_mutually_exclusive_group()
+    fix_mode.add_argument(
+        "--phase",
+        type=int,
+        metavar="N",
+        help="Print only phase N",
+    )
+    fix_mode.add_argument(
+        "--next",
+        dest="next_step",
+        action="store_true",
+        help="Print only the next step (first bullet of the first phase with steps)",
+    )
+
     return parser
 
 
@@ -431,6 +457,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "audit":
         from cli.audit import run_audit
         return run_audit(args)
+
+    if args.command == "fix":
+        from cli.fix import run_fix
+        return run_fix(args)
 
     parser.print_help()
     return 1
