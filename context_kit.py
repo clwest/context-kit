@@ -396,6 +396,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print only the next step (first bullet of the first phase with steps)",
     )
 
+    # exec
+    exec_cmd = sub.add_parser(
+        "exec",
+        help="Render docs/audit/CLEANUP_PLAN.md as an execution-ready AI prompt",
+        description=(
+            "Read docs/audit/AUDIT_V1.md + docs/audit/CLEANUP_PLAN.md and "
+            "print a structured execution prompt (Goal / Context / "
+            "Instructions / Phase tasks / Constraints / Output expectations) "
+            "that an AI agent can run against. Read-only: never modifies "
+            "files, never invokes an AI, never executes any printed step. "
+            "Exits 1 if the workspace isn't initialized or still carries "
+            "scaffold placeholders."
+        ),
+    )
+    exec_mode = exec_cmd.add_mutually_exclusive_group()
+    exec_mode.add_argument(
+        "--phase",
+        type=int,
+        metavar="N",
+        help="Print prompt for phase N only",
+    )
+    exec_mode.add_argument(
+        "--next",
+        dest="next_step",
+        action="store_true",
+        help="Print prompt for the next single step only",
+    )
+
     return parser
 
 
@@ -461,6 +489,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "fix":
         from cli.fix import run_fix
         return run_fix(args)
+
+    if args.command == "exec":
+        from cli.exec import run_exec
+        return run_exec(args)
 
     parser.print_help()
     return 1
