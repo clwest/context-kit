@@ -133,5 +133,73 @@ class TestAuditWriteScaffolding(unittest.TestCase):
         self.assertIn("# Cleanup Plan", plan_path.read_text(encoding="utf-8"))
 
 
+class TestAuditWriteUX(unittest.TestCase):
+    """UX assertions on the --write output: next steps, prompt embedding,
+    and the 'appear unfilled' notice for stale-scaffold cases."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmpdir = Path(self._tmp.name)
+        self._prev_cwd = Path.cwd()
+        os.chdir(self.tmpdir)
+
+    def tearDown(self):
+        os.chdir(self._prev_cwd)
+        self._tmp.cleanup()
+
+    def test_write_output_includes_next_steps_block(self):
+        _, out = _run_audit_capture(write=True)
+        self.assertIn("Next steps:", out)
+        self.assertIn("Run: context-kit audit", out)
+        self.assertIn("Paste the audit output into docs/audit/AUDIT_V1.md", out)
+        self.assertIn("Extract phases into docs/audit/CLEANUP_PLAN.md", out)
+
+    def test_write_output_embeds_audit_prompt(self):
+        _, out = _run_audit_capture(write=True)
+        # Prompt header + recognizable phrases from AUDIT_PROMPT itself.
+        self.assertIn("Audit prompt:", out)
+        self.assertIn("Stop explaining the project", out)
+        self.assertIn("senior engineer", out.lower())
+        self.assertIn("P0", out)
+        self.assertIn("P1", out)
+        self.assertIn("P2", out)
+
+    def test_skipped_scaffold_files_report_appear_unfilled(self):
+        audit_dir = self.tmpdir / "docs" / "audit"
+        audit_dir.mkdir(parents=True)
+        # Pre-seed both files with the verbatim scaffold content -> still
+        # carry their unfilled markers.
+        from cli.audit import AUDIT_V1_TEMPLATE, CLEANUP_PLAN_TEMPLATE
+        (audit_dir / "AUDIT_V1.md").write_text(AUDIT_V1_TEMPLATE, encoding="utf-8")
+        (audit_dir / "CLEANUP_PLAN.md").write_text(CLEANUP_PLAN_TEMPLATE, encoding="utf-8")
+
+        _, out = _run_audit_capture(write=True)
+        self.assertIn("skipped", out)
+        self.assertIn("Audit files exist but appear unfilled.", out)
+
+    def test_filled_existing_files_do_not_report_appear_unfilled(self):
+        audit_dir = self.tmpdir / "docs" / "audit"
+        audit_dir.mkdir(parents=True)
+        # Real user content; the scaffold marker substrings are gone.
+        (audit_dir / "AUDIT_V1.md").write_text(
+            "# Audit V1\n\nP0 finding: foo bar\n", encoding="utf-8"
+        )
+        (audit_dir / "CLEANUP_PLAN.md").write_text(
+            "# Cleanup Plan\n\n- Phase 1: ship the thing\n", encoding="utf-8"
+        )
+
+        _, out = _run_audit_capture(write=True)
+        self.assertIn("skipped", out)
+        self.assertNotIn("appear unfilled", out)
+
+    def test_freshly_created_files_do_not_report_appear_unfilled(self):
+        # Even though the just-written scaffold contains the marker, the
+        # 'appear unfilled' notice is reserved for *pre-existing* files
+        # that the user hasn't filled in yet.
+        _, out = _run_audit_capture(write=True)
+        self.assertIn("created", out)
+        self.assertNotIn("appear unfilled", out)
+
+
 if __name__ == "__main__":
     unittest.main()
