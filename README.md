@@ -176,9 +176,76 @@ Commands:
   hotpath              Show the largest files most likely to dominate AI context
   inventory            Generate a runtime-derived inventory of the project
   doctor               Read-only environment + setup diagnostics
+  audit                Print a structured audit prompt for an AI agent
+  fix                  Print docs/audit/CLEANUP_PLAN.md as an actionable outline
+  exec                 Render docs/audit/CLEANUP_PLAN.md as an AI execution prompt
 
 Run `python3 context_kit.py <command> --help` for per-command options.
 ```
+
+### The audit → fix → exec loop (v0.12.0)
+
+`audit`, `fix`, and `exec` are three small commands that work on
+`docs/audit/AUDIT_V1.md` + `docs/audit/CLEANUP_PLAN.md`. They turn
+context-kit into a full audit → plan → execute loop usable on any
+repo, not just ones it scaffolded.
+
+```bash
+# 1. Print a senior-engineer audit prompt to stdout.
+context-kit audit
+
+# 2. Scaffold docs/audit/ with empty AUDIT_V1.md + CLEANUP_PLAN.md
+#    templates and embed the audit prompt at the bottom. Existing
+#    files are NEVER overwritten; a re-run reports "skipped" and
+#    flags "Audit files exist but appear unfilled" if scaffold text
+#    is still present.
+context-kit audit --write
+
+# 3. After you (or your agent) fill in the workspace, validate it
+#    by printing the parsed plan as a human outline.
+context-kit fix
+context-kit fix --phase 1     # one phase only
+context-kit fix --next        # first step of the first non-empty phase
+
+# 4. Render the same plan as an AI execution prompt with explicit
+#    anti-scope-creep constraints, ready to paste into Claude /
+#    Cursor / Aider as a kickoff message.
+context-kit exec
+context-kit exec --phase 2
+context-kit exec --next
+```
+
+`exec`'s prompt has six fixed sections — Goal / Context /
+Instructions / Phase tasks / Constraints / Output expectations.
+The Output expectations block asks the agent to **report back like
+a teammate** (concise, specific, action-oriented; what was checked,
+what changed, what remains open, what's needed from the team next).
+Agents trained on the `audit` prompt produce findings in the same
+shape, so the loop stays consistent end-to-end.
+
+For a real-world end-to-end example — running this loop on an
+external Django + Celery project, with concrete numbers and a
+stacked-PR pattern — see [`docs/WORKFLOWS_REAL_WORLD.md`](docs/WORKFLOWS_REAL_WORLD.md).
+
+**`audit` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--write` | off | Scaffold `docs/audit/AUDIT_V1.md` + `docs/audit/CLEANUP_PLAN.md` and embed the audit prompt below the create/skip output |
+
+**`fix` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--phase N` | (none) | Print only phase `N`. Mutually exclusive with `--next` |
+| `--next` | off | Print only the first step of the first non-empty phase. Mutually exclusive with `--phase` |
+
+**`exec` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--phase N` | (none) | Render an execution prompt scoped to phase `N` only. Mutually exclusive with `--next` |
+| `--next` | off | Render a single-step execution prompt for the first step of the first non-empty phase. Mutually exclusive with `--phase` |
 
 **`init` options**
 

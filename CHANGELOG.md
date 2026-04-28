@@ -9,6 +9,217 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-04-28
+
+**Audit-execution loop milestone.** Three new commands —
+`audit`, `fix`, and `exec` — turn `context-kit` from a
+project-bootstrap tool into a full audit → plan → execute
+loop usable on any repo, not just ones it scaffolded. Plus
+an upstream fix to `orient`'s latest-handoff selection
+(discovered while dogfooding the new loop on a real
+external project), team-reporting tone added to all
+AI-facing prompts, and a real-world workflow writeup that
+records an actual end-to-end run.
+
+### Added — `context-kit audit`
+
+- **New top-level command.** Prints a structured
+  senior-engineer audit prompt to stdout: stale or
+  misleading documentation, duplicated logic, dead code,
+  risky / fragile patterns, and inconsistencies between
+  declared state and actual runtime. Findings are
+  P0 / P1 / P2 prioritized; the agent then proposes a
+  concrete cleanup plan with phases.
+- **`audit --write` scaffolds an audit workspace.** Creates
+  `docs/audit/AUDIT_V1.md` (paste-target with a Metadata
+  block) and `docs/audit/CLEANUP_PLAN.md` (Phase 1/2/3
+  template) under the project root. **Existing files are
+  never overwritten.** A re-run prints `skipped` for files
+  that already exist; if either still carries its scaffold
+  marker substring, the output also prints
+  `Audit files exist but appear unfilled.` so a stale
+  workspace is visible at a glance.
+- **`audit --write` embeds the audit prompt.** After the
+  scaffold output, the same prompt the no-flag invocation
+  prints is included under `Audit prompt:` plus a numbered
+  `Next steps:` block — so the user can scaffold + copy
+  the prompt in one invocation instead of two.
+
+### Added — `context-kit fix`
+
+- **Reads `docs/audit/AUDIT_V1.md` + `docs/audit/CLEANUP_PLAN.md`
+  and prints the phased cleanup plan as a human-readable
+  outline.** Validates the workspace first (both files must
+  exist and neither can still carry a scaffold-marker
+  substring); exits `1` with a one-line pointer at
+  `context-kit audit --write` when the workspace isn't
+  ready.
+- **Two markdown shapes for the plan are supported equally:**
+  H1–H6 `### Phase N — Title` headings with top-level
+  bullets, and top-level `- Phase N — Title` bullets with
+  indented sub-bullets. Bullets between two phase boundaries
+  belong to the preceding phase.
+- **Modes:** default prints all phases under
+  `=== CONTEXT-KIT FIX PLAN ===`; `--phase N` scopes to one
+  phase only (errors if `N` isn't present, names the
+  available phases); `--next` returns the first step of the
+  first phase that has steps (skips empty phases). `--phase`
+  and `--next` are mutually exclusive. Read-only by
+  contract: never modifies files, never invokes an AI,
+  never executes any printed step.
+
+### Added — `context-kit exec`
+
+- **Renders the same cleanup plan as a structured AI
+  execution prompt** instead of a human-readable outline.
+  Six fixed sections: **Goal / Context / Instructions /
+  Phase tasks / Constraints / Output expectations**.
+  Designed to be pasted into an AI coding agent as a
+  kickoff message.
+- **Anti-scope-creep constraints baked into the prompt.**
+  *"Do not modify source files outside the scope of the
+  listed tasks. Do not invent new tasks. Do not commit on
+  a broken test suite. Read-only operations first."* So
+  the constraint language doesn't have to be re-typed
+  every session.
+- **Same modes as `fix`:** default prints all phases;
+  `--phase N` scopes to one phase with explicit
+  *"Do not start other phases in the same invocation"*
+  language in the Goal; `--next` returns a single-step
+  prompt with single-step variants of the Goal and Output
+  expectations sections. `--phase` and `--next` are
+  mutually exclusive.
+- **Validation, marker detection, and phase parsing
+  reuse `cli.fix`** so both commands speak the same
+  markdown grammar. Adding a new phase shape only needs
+  to land in fix.py.
+
+### Added — Team-reporting tone in all AI-facing prompts
+
+- **AUDIT_PROMPT** gains a final paragraph asking the
+  agent to *"report back as if you're updating a small
+  project team. Keep it concise, specific, and
+  action-oriented: what you checked, what you'd change or
+  recommend, what remains open, and what you need from the
+  team next."* Surfaces in `audit` (default) and inside
+  the embedded prompt printed by `audit --write`.
+- **`exec`'s Output expectations block** in both the
+  full-prompt and `--next` variants leads with the same
+  team-reporting framing, and the wrap-up sentence asks
+  for the four-beat summary explicitly: what landed,
+  what's still open, what's needed from the team next.
+- **Senior-engineer / execution framing is preserved.**
+  Team-reporting is a communication style, not a tone
+  change — the prompts still ask for prioritized findings,
+  specific file references, and a phased plan.
+
+### Fixed — `orient` latest-handoff selection
+
+- **Discovered while dogfooding `audit` on a real external
+  project.** `context-kit orient` was selecting the wrong
+  "latest handoff" because `cli/orient.py:121` used
+  `sorted()` over a `glob("SESSION_*.md")` — a
+  lexicographic sort. Two trap layers surfaced:
+  - `SESSION_ROADMAP_*.md` lex-sorted after `SESSION_999_*`
+    because `'R' > '9'`. Renaming the ROADMAP file in the
+    target repo closed only the outermost layer.
+  - 3-digit `SESSION_999_*` lex-sorts AFTER 4-digit
+    `SESSION_1098_*` because ASCII `'9' > '1'`. So even
+    after the rename, sessions kept regressing as repos
+    crossed 999 → 1000.
+- **New rule in `_latest_numbered_handoff`:**
+  1. Only files matching `SESSION_<digits>_*.md` are
+     considered. Non-numbered names (`SESSION_ROADMAP_*`,
+     `SESSION_NOTES_*`, etc.) are ignored.
+  2. Sort by **integer session number** (1098 > 999).
+  3. Tiebreak on `mtime` ascending — when two files share
+     a session number (wrap + addendum pattern), the most
+     recently modified file wins.
+- 7 new tests cover empty dir, ROADMAP ignored,
+  only-non-numbered returns `None`, 4-digit beats 3-digit,
+  mtime tiebreak among same session number, higher session
+  beats newer mtime, and end-to-end orient output names
+  the right file when ROADMAP and a 1100 session live
+  alongside the auto-scaffolded 001.
+
+### Added — `scripts/track_engagement.py`
+
+- **Daily-snapshot tracker for PyPI download stats and
+  GitHub traffic / repo metrics.** stdlib-only; appends
+  one row per run to `metrics/engagement.csv` (PyPI
+  day/week/month, GH views/uniques/clones/cloners 14d,
+  stars, forks, watchers, open issues, top referrer).
+  GitHub's traffic API only retains 14 days, so we have
+  to roll our own history.
+- **Flags:** `--no-write` fetches and prints without
+  persisting; `--diff` prints the delta against the prior
+  row.
+- Requires `gh` CLI authenticated for traffic endpoints;
+  otherwise read-only and zero new dependencies. Intended
+  for ad-hoc runs or a launchd / cron / GitHub Actions
+  schedule. `metrics/` is gitignored — engagement data is
+  private.
+
+### Added — `docs/WORKFLOWS_REAL_WORLD.md`
+
+- **End-to-end record of a real `audit → fix → exec →
+  execute` run** against an external Django + Celery
+  project (7,928 tracked files, ~919K LOC). Engineer-
+  audience writeup: concrete numbers (`hotpath` top-15
+  74.01 MB → 63.57 MB delta, 16 PNGs untracked, two
+  stacked PRs), the dry-run-first execution discipline,
+  the stacked-PR pattern, and the audit calibration miss
+  (`"docs` false positive from misreading `git ls-files`'s
+  default quoting behavior).
+- **"When not to use this workflow" section** so the doc
+  doesn't read as a universal recommendation. Small repos,
+  one-off scripts, and obvious fixes are explicitly out
+  of scope.
+
+### Changed — `cli/__init__.py.__version__`
+
+- **Constant replaced with `importlib.metadata.version()`
+  lookup.** The hand-maintained `__version__ = "0.3.0"`
+  was 8 minor versions stale. New behavior sources the
+  version from the same place setuptools does — single
+  source of truth, no manual constant to drift.
+
+### Tests
+
+- 546 passing (was 489 before this release window).
+- +5 in `tests/test_audit.py` for the audit prompt + UX
+  improvements (`--write` scaffold idempotency, "appear
+  unfilled" notice, embedded prompt, team-reporting
+  framing).
+- +15 in `tests/test_fix.py` covering validation,
+  full-plan rendering, alternate bullet shape, phase
+  filtering, `--next` empty-phase skipping.
+- +16 in `tests/test_exec.py` covering validation,
+  full-prompt all-six-sections, phase filtering with
+  scaffolding-preserved, `--next` single-step framing,
+  team-reporting in both full and single-step variants.
+- +7 in `tests/test_orient.py` covering the
+  numbered-handoff selection rule (empty, ROADMAP
+  ignored, 4-digit beats 3-digit, mtime tiebreak, higher
+  session beats newer mtime, end-to-end via `run_orient`).
+- Audit + exec test loosening: short-substring assertions
+  instead of long contiguous strings, so reasonable line
+  reflows in the prompt templates don't break tests.
+
+### Process
+
+- **Phase 1 audit cleanup landed first.** Backfill
+  `SESSION_013` covers the v0.10.0 → v0.11.2 release
+  window that shipped without inline session handoffs.
+  `00-START-NEXT-SESSION.md` is now anchored on Session
+  013 instead of the stale Session 012 framing.
+- **Audit calibration log lives in
+  `docs/cleanup/FOLLOWUPS.md`** in the target repo. A
+  `"docs` shell-artifact finding turned out to be a misread
+  of `git ls-files`'s default quoting; lessons captured
+  under `AUDIT-CAL-2026-04-28` so future audits don't
+  repeat it.
+
 ## [0.11.2] — 2026-04-27
 
 **Preserve-context loop closed.** The Agent Launch Prompt now
