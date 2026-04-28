@@ -352,16 +352,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # audit
-    sub.add_parser(
+    audit = sub.add_parser(
         "audit",
         help="Print a structured audit prompt for an AI agent",
         description=(
             "Print a predefined prompt that instructs an AI to perform a "
             "deep audit of this repository: stale docs, duplicated logic, "
             "dead code, risky areas, runtime/doc inconsistencies — with "
-            "P0/P1/P2 prioritization and a phased cleanup plan. Writes to "
-            "stdout only; takes no arguments."
+            "P0/P1/P2 prioritization and a phased cleanup plan. With "
+            "--write, also scaffold docs/audit/AUDIT_V1.md and "
+            "docs/audit/CLEANUP_PLAN.md (never overwriting existing files)."
         ),
+    )
+    audit.add_argument(
+        "--write",
+        action="store_true",
+        help="Scaffold docs/audit/ with empty AUDIT_V1.md + CLEANUP_PLAN.md",
     )
 
     return parser
