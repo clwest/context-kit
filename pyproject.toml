@@ -58,9 +58,11 @@ Changelog = "https://github.com/clwest/context-kit/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 # The CLI entry point lives at the top level as a single-file module, and
-# the subcommand implementations live in the ``cli`` package.
+# the subcommand implementations live in the ``cli`` package. Subpackages
+# of ``cli`` (currently ``cli._refactor``) must be listed explicitly —
+# setuptools does not auto-discover them when ``packages`` is a literal list.
 py-modules = ["context_kit"]
-packages = ["cli"]
+packages = ["cli", "cli._refactor"]
 include-package-data = true
 
 # All starter, pattern, and skill assets live inside the ``cli`` package
