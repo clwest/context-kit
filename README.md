@@ -179,6 +179,7 @@ Commands:
   audit                Print a structured audit prompt for an AI agent
   fix                  Print docs/audit/CLEANUP_PLAN.md as an actionable outline
   exec                 Render docs/audit/CLEANUP_PLAN.md as an AI execution prompt
+  inspect              Print a deterministic system map for any repo
 
 Run `python3 context_kit.py <command> --help` for per-command options.
 ```
@@ -246,6 +247,48 @@ stacked-PR pattern — see [`docs/WORKFLOWS_REAL_WORLD.md`](docs/WORKFLOWS_REAL_
 |---|---|---|
 | `--phase N` | (none) | Render an execution prompt scoped to phase `N` only. Mutually exclusive with `--next` |
 | `--next` | off | Render a single-step execution prompt for the first step of the first non-empty phase. Mutually exclusive with `--phase` |
+
+### `inspect` — deterministic system map (v0.13.0)
+
+Where `audit` outsources inspection to an LLM (the prompt is the
+output), `inspect` reads the code and prints what it found:
+
+```bash
+context-kit inspect [PATH]
+```
+
+One short pass over the tree (~0.3s on a 7,900-file Django repo)
+produces:
+
+- **Primary stack** from root manifests (Python / Django,
+  JavaScript / Next.js, Rust, Go, etc.).
+- **Subsystems** grouped at depth-1, with framework probes run
+  inside each workspace child once. Monorepos with a Django
+  backend and a Next.js frontend get per-child signals attached.
+- **Framework signals** (Django + Next.js in v1): apps, models,
+  URL patterns, task decorators, management commands, view
+  files, Next.js routes, Next.js API routes.
+- **Hot files** (top 5; the full leaderboard lives in `hotpath`).
+- **Risk patterns** with stable IDs: `tracked-venv`,
+  `tracked-env-file`, `multiple-env-templates`,
+  `oversized-static-asset`, `tracked-build-artifacts`.
+- **Possibly stale docs** (header-date grep, hardcoded 30-day
+  threshold).
+- **Recommendations engine** — 1–5 deterministic suggestions with
+  stable IDs, `confidence` labels (low / medium / high), a `why`
+  line grounded in the detected signal, and override-friendly
+  framing. Phrased as suggestions, not bare commands.
+
+Read-only by contract: never modifies files, never invokes an AI,
+never parses code as an AST. Filename / regex probes only.
+
+**`inspect` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| *positional* `PATH` | `.` | Project root to inspect |
+| `--json` | off | Emit machine-readable JSON with locked top-level keys (`repo`, `path`, `head`, `counts`, `primary_stack`, `subsystems`, `entry_points`, `framework_signals`, `hot_files`, `risks`, `stale_docs`, `recommendations`) |
+| `--depth N` | `2` | Directory walk depth for monorepo / workspace detection. v1 uses depth-1 in practice; the flag is wired for future use |
 
 **`init` options**
 

@@ -9,6 +9,164 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-04-29
+
+**System-mapping milestone.** New `context-kit inspect` command turns
+context-kit from "audit prompt + cleanup loop" into a tool that also
+produces a deterministic, code-side map of *what's actually in the
+repo* — primary stack, depth-1 workspaces with per-child framework
+probes, hot files, risk patterns, and a recommendations engine.
+Where `audit` outsources inspection to an LLM (the prompt is the
+output), `inspect` reads the code and prints what it found.
+
+### Added — `context-kit inspect`
+
+- **New top-level command.** `context-kit inspect [PATH]` reads an
+  arbitrary repo and prints a structured system map: primary stack
+  (manifest-driven), depth-1 workspace children with per-child
+  framework probes, framework signals, entry points, hot files,
+  risk patterns, likely-stale docs, and a deterministic
+  "Recommended next moves" list.
+- **Read-only by contract.** Never modifies files, never invokes an
+  AI, never parses code as an AST. Filename / regex probes only.
+- **Designed to seed an audit, not replace one.** The output is
+  "what's here," not "what does it do" — hand the result to an
+  agent, or use it directly to scope a cleanup PR.
+
+### Added — Framework probes (v1: Django + Next.js)
+
+- **Django** fires when `manage.py` is at scope root. Counts
+  management commands (files in `*/management/commands/`),
+  regex-matches `path(` / `re_path(` calls in `**/urls*.py`,
+  `@shared_task`-family decorators in `**/tasks*.py`, view / model
+  files, and sniffs `INSTALLED_APPS` length from `**/settings*.py`.
+- **Next.js** fires when `next.config.{js,ts,mjs,cjs}` exists.
+  Counts `page.{tsx,ts,jsx,js}` files under `app/` / `pages/` and
+  `route.{ts,tsx,js}` for App Router API routes.
+- Other frameworks (Rust, Go, smart contracts, mobile) are detected
+  only as their primary language; specific signal counts are
+  deferred to a future release.
+
+### Added — Monorepo / workspace handling (depth-1 only)
+
+- **Child directories with their own manifest get one framework
+  probe each.** The recognized manifests are the same set the
+  primary-stack classifier uses (`pyproject.toml`, `setup.py`,
+  `package.json`, `next.config.*`, `Cargo.toml`, `go.mod`, etc.).
+- **Each workspace renders as its own subsystem** in the report
+  with framework-specific signals attached. Non-workspace
+  top-level dirs render as bare file-count summaries (top 8 by
+  size).
+- **No deeper recursion in v1.** Workspaces inside workspaces are
+  not probed individually.
+
+### Added — Risk patterns (5 stable IDs in v1)
+
+- `tracked-venv` — virtualenv directories tracked in git
+  (`venv/`, `.venv/`, `venv_ml/`, `env/`, `ENV/`).
+- `tracked-env-file` — `.env` (no template suffix) tracked at
+  root; high severity, treat secrets as compromised.
+- `multiple-env-templates` — three or more `.env.*` template
+  variants at root; medium severity (likely duplication).
+- `oversized-static-asset` — `*.png` / `*.jpg` / `*.svg` /
+  `*.gif` / `*.webp` ≥ 5 MB inside any `*/static/` / `public/` /
+  `assets/` segment.
+- `tracked-build-artifacts` — `__pycache__/` / `node_modules/` /
+  `dist/` / `build/` / `.pytest_cache/` / `.mypy_cache/`
+  directories with tracked files. Probe runs an independent
+  `git ls-files` (or unfiltered `os.walk` fallback) because
+  `cli.hotpath._collect_files` filters those names by design.
+
+### Added — Recommendations engine
+
+- **Six rules in priority order, capped at 5 emitted suggestions.**
+  Each fires only when its triggering signal is present; each
+  emits a `Recommendation` dataclass with `id`, `suggestion`,
+  `why`, and `confidence` (`low` / `medium` / `high`).
+- **Rule IDs (stable for future override storage):**
+  `cleanup-tracked-venv` (high), `rotate-and-untrack-env` (high),
+  `triage-{risk-id}` (high fallback), `scaffold-audit-workspace`
+  (medium, gated on "worth auditing": ≥1 risk OR framework
+  signals OR >100 files), `consolidate-env-templates` (medium),
+  `run-hotpath-leaderboard` (medium, gated on largest file
+  ≥ 1 MB), `review-stale-docs` (low),
+  `consider-per-subsystem-audit` (low, ≥2 framework workspaces).
+- **Override-friendly framing.** Recommendations are phrased as
+  suggestions ("Consider running...", "Review..."), not bare
+  commands. Each rendered line carries a stable `id:` so a
+  future override store can suppress specific recommendations
+  per-repo. v1 has no override store; the schema is the
+  contract for v2.
+
+### Added — Stale-doc heuristic
+
+- **Header-date grep on top-level + `docs/*.md`.** Flags files
+  whose self-reported date (frontmatter `date:` line, or one of
+  `Last Updated:` / `Generated:` / `Updated:` markers) is
+  parseable as ISO `YYYY-MM-DD` and older than 30 days. Threshold
+  is hardcoded in v1; deliberately conservative on what counts
+  as stale.
+
+### Added — JSON output
+
+- **`--json` switches to machine-readable output** with locked
+  top-level keys: `repo`, `path`, `head`, `counts`,
+  `primary_stack`, `subsystems`, `entry_points`,
+  `framework_signals`, `hot_files`, `risks`, `stale_docs`,
+  `recommendations`. Risk and recommendation `id` fields are
+  the load-bearing surface for downstream tools.
+- **`--depth N`** controls workspace-detection depth (default
+  `2`; v1 only uses depth-1 in practice but the flag is wired
+  for future use).
+
+### Fixed — `cli/__init__.py.__version__` survives source-only checkouts
+
+- **CI regression on every push since v0.12.0's release-prep
+  commit.** `cli/__init__.py` called
+  `importlib.metadata.version("contextkit-ai")` at import time;
+  GitHub Actions runs the test suite without `pip install`, so
+  the package metadata isn't present and the lookup raises
+  `PackageNotFoundError`. The exception propagated out of
+  `__init__.py` and every test module's `from cli.X import ...`
+  failed at module-import time.
+- **Wrap the lookup in try/except**, fall back to a sentinel
+  string `"0.0.0+source"` (PEP 440-valid local-version segment).
+  Installed wheels keep returning the real version because the
+  success path runs first. v0.12.0 PyPI wheel is unaffected —
+  the bug only bit source-only invocations (CI, fresh clones
+  running `python3 context_kit.py` without installing).
+- **`tests/test_cli_version.py`** locks the fallback so future
+  refactors can't quietly re-break CI.
+
+### Tests
+
+- 581 passing (was 546 at v0.12.0 release, was 549 after the CI
+  fix landed).
+- +32 in `tests/test_inspect.py` across 8 classes:
+  empty / non-git directories, Django + Next.js probes counting
+  expected signals, monorepo split with per-workspace framework
+  attribution, all five risk-pattern IDs firing on synthetic
+  fixtures, JSON schema lock, stale-doc heuristic (old date
+  flags / recent date doesn't), and 11 recommendation-rule cases
+  (schema, cap, conditional firing, confidence labels, priority
+  ordering, text rendering with `[confidence]` + `id:` +
+  override-friendly framing).
+- +3 in `tests/test_cli_version.py` for the fallback contract.
+
+### Real-world dogfood
+
+- **unified-donkey-betz** (7,904 tracked files, 166 MB tree):
+  runs in ~0.27s; correctly identifies `python + django` at
+  high confidence with 45 apps / 115 models / 2,021 url
+  patterns / 430 task decorators / 186 management commands;
+  surfaces `tracked-venv` / `multiple-env-templates` /
+  `oversized-static-asset` / `tracked-build-artifacts` risks;
+  emits 3 recommendations (1 high, 2 medium).
+- **context-kit (this repo):** emits 1 recommendation
+  (`run-hotpath-leaderboard`, medium); `scaffold-audit-workspace`
+  correctly skipped because `docs/audit/AUDIT_V1.md` already
+  exists.
+
 ## [0.12.0] — 2026-04-28
 
 **Audit-execution loop milestone.** Three new commands —
