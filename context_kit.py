@@ -396,6 +396,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print only the next step (first bullet of the first phase with steps)",
     )
 
+    # inspect
+    inspect = sub.add_parser(
+        "inspect",
+        help="Print a deterministic system map for a repo (stack, subsystems, hot files, risks)",
+        description=(
+            "Read an arbitrary repo and print what's there: primary stack, "
+            "depth-1 subsystems, framework signals (Django + Next.js in v1), "
+            "hot files, risk patterns, likely-stale docs, and recommended "
+            "next moves. Read-only by contract: never modifies files, never "
+            "invokes an AI, never parses code as an AST. Filename / regex "
+            "probes only. Designed to seed an audit, not replace one."
+        ),
+    )
+    inspect.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Project root to inspect (default: current working directory)",
+    )
+    inspect.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON to stdout",
+    )
+    inspect.add_argument(
+        "--depth",
+        type=int,
+        default=2,
+        help="Directory walk depth for monorepo / workspace child detection (default: 2)",
+    )
+
     # exec
     exec_cmd = sub.add_parser(
         "exec",
@@ -493,6 +524,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "exec":
         from cli.exec import run_exec
         return run_exec(args)
+
+    if args.command == "inspect":
+        from cli.inspect import run_inspect
+        return run_inspect(args)
 
     parser.print_help()
     return 1
