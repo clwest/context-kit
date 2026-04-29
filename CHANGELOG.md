@@ -9,6 +9,100 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-04-30
+
+**Refactor progress tracking.** A new `refactor` command group ships
+with its first subcommand, `track`: a read-only, deterministic
+progress reporter for multi-PR module-extraction refactors. Designed
+for the workflow of splitting a monolith file into sibling modules
+across many PRs and watching the percentage tick up over weeks of
+work — without inventing numbers, hand-maintaining counts, or
+re-deriving a baseline from memory each session.
+
+### Added — `context-kit refactor track`
+
+- **New command group `refactor`** registered under the top-level
+  CLI. Anticipates two future subcommands (`extract`, `verify`) but
+  v1 ships only `track`.
+- **`refactor track SOURCE`** — read a monolith Python file plus its
+  sibling destination files, and print a deterministic progress
+  report: total / migrated / remaining item counts, percentage
+  complete, items by destination (current state), top remaining
+  domains (when a Phase-0-style plan is provided), and an estimated
+  PR count from a configurable avg-per-PR.
+- **Three v1 detectors** for "what counts as a migratable item":
+  `function` (every module-level FunctionDef / AsyncFunctionDef),
+  `class` (ClassDef), `celery-task` (FunctionDef decorated with
+  `@shared_task` or `@app.task`, all decorator forms — bare,
+  parens, kwargs, attribute access).
+- **Two output formats:** `text` (human-readable, default) and
+  `json` (sorted keys, byte-identical across runs — verified by
+  determinism test).
+- **Plan auto-discovery** — when `--plan` is omitted, looks for a
+  Phase-0-style markdown file under `docs/refactors/`,
+  `<source>/../docs/refactors/`, or `<source>/.`. Pass `--plan ""`
+  to disable autodiscovery explicitly.
+- **Plan parser is lenient** — accepts any markdown file with a
+  `Total tasks:` / `Total items:` line and a destination-count
+  table. Handles list-bullet prefixes, bold/italic emphasis,
+  backtick-wrapped destination names. Underscores inside
+  identifiers (`tasks_ops.py`) are preserved correctly.
+- **Baseline resolution priority:** `--baseline-count` flag >
+  plan total > computed (current source + current siblings).
+  When the fallback to "computed" fires, the command emits a
+  clear warning in both text and JSON output:
+  > Warning: baseline inferred from current files; progress
+  > may be underreported. Use --baseline-count for accurate
+  > historical progress.
+- **Read-only by contract.** AST + filesystem only. No git, no
+  network, no subprocess. Exits 0 in all normal cases; exits 2
+  only when the source path doesn't exist.
+
+### Added — README + skill integration
+
+- **README** entry alongside `inventory --check` / `hotpath` /
+  `adopt` calling out `refactor track` as the entry point for
+  multi-PR module-extraction work.
+- **Bundled Claude skill** (`.claude/skills/context-kit/SKILL.md`,
+  mirrored to `cli/_skills/context-kit/SKILL.md`) gains an
+  "Optional — run refactor track" section so AI agents working in
+  a context-kit project know to invoke the command when the user
+  is in the middle of a long-running modularization effort.
+
+### Real-world calibration
+
+The feature was extracted from the unified-donkey-betz `core/tasks.py`
+modularization that ran across this session: 5 stacked PRs (#2040
+through #2044) moved 51 of 356 Celery tasks out of a 12,474-line
+monolith into 5 new sibling modules (diagnostics, boardroom,
+experiments, backfill, learning). The hand-maintained progress
+snapshot produced mid-stream became the algorithm; the lessons
+about baseline drift and plan/reality mismatch became the warning
+surface. The v1 design explicitly defers `refactor extract` (the
+AST-based move primitive) and `refactor verify` (the post-extract
+verification battery) so the tracking surface lands first and proves
+its shape on real workloads.
+
+### Tests
+
+- 29 new tests in `tests/test_refactor_track.py` covering: detector
+  unit behavior (5), scan unit behavior (5), plan parser (5),
+  fresh-state fixture (3), mid-refactor fixture (4), plan/reality
+  mismatch (1), edge cases (4) including baseline-flag override and
+  unknown-detector rejection.
+- **Total suite: 620 tests, all passing** (was 591 in v0.14.0).
+- JSON-output determinism tested by running twice and asserting
+  byte-equality.
+
+### Deferred to v0.16+ (per design)
+
+- `markdown` output format
+- `decorated:<NAME>`, `django-view`, `django-url` detectors
+- `--baseline-ref GIT_REF` (compute baseline from git history)
+- `orient` integration ("refactor in progress: X% complete")
+- `refactor extract` (AST-based move primitive)
+- `refactor verify` (post-extract verification battery)
+
 ## [0.14.0] — 2026-04-29
 
 **Audit ↔ inspect bridge + Documentation Intelligence.** Two
