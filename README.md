@@ -287,8 +287,57 @@ never parses code as an AST. Filename / regex probes only.
 | Flag | Default | Purpose |
 |---|---|---|
 | *positional* `PATH` | `.` | Project root to inspect |
-| `--json` | off | Emit machine-readable JSON with locked top-level keys (`repo`, `path`, `head`, `counts`, `primary_stack`, `subsystems`, `entry_points`, `framework_signals`, `hot_files`, `risks`, `stale_docs`, `recommendations`) |
+| `--json` | off | Emit machine-readable JSON with locked top-level keys (`repo`, `path`, `head`, `counts`, `primary_stack`, `subsystems`, `entry_points`, `framework_signals`, `hot_files`, `risks`, `stale_docs`, `documentation_intelligence`, `recommendations`) |
 | `--depth N` | `2` | Directory walk depth for monorepo / workspace detection. v1 uses depth-1 in practice; the flag is wired for future use |
+
+#### Documentation Intelligence (v0.14.0)
+
+Some repos treat `docs/` as active AI memory infrastructure —
+embedded into RAG corpora, retrieved by agents at runtime, or
+injected into prompts as context. Treating that as disposable
+clutter is dangerous. `inspect` detects this pattern and
+surfaces it as a dedicated section.
+
+Signals probed (filename / directory-existence only):
+
+- Markdown file count under `docs/`
+- `SESSION_*.md` handoffs in `docs/handoffs/`
+- Anchor docs at `docs/*_WHAT_IT_IS.md` + `docs/*_INVENTORY.md`
+- Audit / cleanup folders directly under `docs/`
+- Process docs at `docs/docs-pattern/` (or `process/` /
+  `patterns/`)
+- RAG corpus at `.rag/*.{jsonl,json}`
+
+Strength classifier (deterministic):
+
+- `none`   — no `docs/`, or no markdown under it
+- `low`    — docs exist but no active-context signals
+- `medium` — ≥ 2 distinct signal types
+- `high`   — ≥ 2 signals AND scale (≥ 200 markdown files OR ≥ 50 handoffs)
+
+The `## Documentation Intelligence` report section appears at
+`medium` and `high` strength with a standard interpretation +
+caution block. At `high`, the recommendations engine fires
+`review-docs-context-first` (confidence: `high`) ahead of
+risk-driven suggestions so the "don't delete docs" warning
+lands early enough to influence other cleanup PRs.
+
+The JSON output's `documentation_intelligence` field is always
+present and exposes the eight signal counts plus the strength
+label, suitable for piping into downstream tools that decide
+how aggressively to refactor a repo's `docs/`.
+
+#### `audit` ↔ `inspect` bridge (v0.14.0)
+
+`context-kit audit` now nudges the agent to run `inspect` first
+("*Before beginning, consider running `context-kit inspect` to
+build a system map. If inspect output is available, use it to
+ground your audit in real system structure instead of
+assumptions.*") and adds a sixth audit dimension —
+*"system topology and subsystem boundaries (if available)"* —
+so agents stop fabricating system structure when they could
+have read it. Backward-compatible: nothing about the prompt's
+existing five dimensions or P0/P1/P2 framing changes.
 
 **`init` options**
 

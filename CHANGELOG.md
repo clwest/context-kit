@@ -9,6 +9,113 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-04-29
+
+**Audit ↔ inspect bridge + Documentation Intelligence.** Two
+complementary features that make `audit` start smarter and let
+`inspect` recognize when a repo treats `docs/` as active AI
+memory infrastructure rather than passive reference material.
+
+### Added — `audit` encourages inspect-grounded findings
+
+- **New paragraph at the top of `AUDIT_PROMPT`:**
+  *"Before beginning, consider running `context-kit inspect` to
+  build a system map. If inspect output is available, use it to
+  ground your audit in real system structure instead of
+  assumptions."* Lands ahead of the senior-engineer role frame
+  so the agent's first move is to read deterministic system
+  facts when they exist.
+- **New audit dimension** in the existing five-bullet list:
+  *"system topology and subsystem boundaries (if available)"*.
+  The `(if available)` qualifier tells the agent not to
+  fabricate a topology when `inspect` wasn't run.
+- **Backward compatible by design.** No flags, no shape change,
+  no dependency on `inspect` actually being run. Projects that
+  don't have `inspect` available get a slightly longer prompt
+  with one extra `(if available)` bullet — nothing breaks. The
+  same updated prompt rides along inside `audit --write`'s
+  embedded prompt block.
+- 3 new audit-prompt tests + augmented `--write` embed test for
+  end-to-end coverage of the new content.
+
+### Added — `inspect` Documentation Intelligence section
+
+- **Detects whether `docs/` is being used as active AI memory
+  infrastructure** (embedded, retrieved, or injected at runtime)
+  rather than passive reference material. Filename /
+  directory-existence probes only — no parsing.
+- **Signal types probed:**
+  - Markdown files under `docs/` (recursive, ignored-dir-aware)
+  - `SESSION_*.md` session handoffs in `docs/handoffs/`
+  - Anchor docs at `docs/*_WHAT_IT_IS.md` +
+    `docs/*_INVENTORY.md`
+  - Audit / cleanup folders directly under `docs/` (any name
+    containing `audit` or `cleanup`)
+  - Process docs at `docs/docs-pattern/` (plus `process/`,
+    `patterns/` variants)
+  - RAG corpus at `.rag/*.{jsonl,json}` at the project root
+- **Strength classifier (deterministic):** `none` if no markdown
+  found; `low` if docs exist but no active-context signals;
+  `medium` if ≥ 2 distinct active-signal types are present;
+  `high` if ≥ 2 signals AND scale (≥ 200 markdown files OR
+  ≥ 50 session handoffs).
+- **Report section renders at `medium` and `high` strength**
+  with the standard interpretation + caution lines:
+  > This repository appears to use documentation as an active
+  > context/memory layer.
+  > ! Caution: do not treat docs/ as disposable clutter without
+  >   checking whether docs are embedded, retrieved, or injected
+  >   at runtime.
+
+### Added — `review-docs-context-first` recommendation
+
+- **New recommendation rule** that fires only at
+  `documentation_intelligence.strength == "high"`. Confidence:
+  `high`. Suggestion: *"Review the docs context layer before
+  deleting, archiving, or refactoring documentation."* `why`
+  line cites the actual signal counts.
+- **Wired ahead of risk-driven recommendations** so the
+  "don't delete docs" warning lands early enough to influence
+  what other cleanup PRs touch.
+
+### Changed — JSON schema gains `documentation_intelligence`
+
+- **`documentation_intelligence` joins the locked top-level
+  keys** (13 total now). The field is always present
+  regardless of strength.
+- **Inner schema (8 keys, locked):** `markdown_file_count`,
+  `session_handoff_count`, `anchor_docs`, `audit_folders`,
+  `process_docs_present`, `rag_corpus_present`,
+  `rag_corpus_paths`, `strength`.
+- 7 new tests in `TestDocumentationIntelligence` cover no-docs
+  → `none`, small-docs → `low`, medium signal renders section
+  without rec, high signal fires recommendation, anchor doc
+  paths are project-relative, RAG `.jsonl` detection, and the
+  inner-schema lock.
+
+### Real-world calibration
+
+- **unified-donkey-betz** (the dogfood target):
+  `strength=high` (1,901 markdown files, 661 handoffs, 4
+  anchor docs, 4 audit folders, process docs, RAG corpus).
+  `review-docs-context-first` fires as the first
+  recommendation, ahead of `cleanup-tracked-venv`.
+- **context-kit (this repo):** `strength=medium` (21
+  markdown, 12 handoffs, 2 anchors, 1 audit folder, no RAG).
+  Section renders with interpretation + caution; the
+  high-confidence recommendation is correctly skipped because
+  this repo doesn't approach the active-context-layer scale.
+
+### Tests
+
+- 591 passing (was 581 at v0.13.0 release).
+- +3 in `tests/test_audit.py` for the audit-prompt bridge
+  (inspect pre-run guidance, grounding instruction, topology
+  dimension), plus 1 augmented `--write` embed assertion.
+- +7 in `tests/test_inspect.py` for documentation
+  intelligence (the seven scenarios above), plus the locked
+  top-level keys test now includes `documentation_intelligence`.
+
 ## [0.13.0] — 2026-04-29
 
 **System-mapping milestone.** New `context-kit inspect` command turns
