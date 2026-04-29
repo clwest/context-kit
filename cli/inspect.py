@@ -148,6 +148,34 @@ class HotFile:
 
 
 @dataclass
+class DocumentationIntelligence:
+    """Evidence that ``docs/`` is being used as an active AI memory /
+    context layer rather than passive reference material.
+
+    ``strength`` is the load-bearing field for both renderers and the
+    recommendation engine:
+
+    - ``none``  — no ``docs/`` folder, or no markdown under it
+    - ``low``   — docs exist but no active-layer signals
+    - ``medium`` — at least 2 active-layer signals OR significant scale
+    - ``high``   — at least 2 signals AND scale (≥ 200 markdown files
+      OR ≥ 50 session handoffs)
+
+    ``medium`` and above render as a "Documentation Intelligence"
+    section in the report; ``high`` additionally fires the
+    ``review-docs-context-first`` recommendation.
+    """
+    markdown_file_count: int
+    session_handoff_count: int
+    anchor_docs: list[str]
+    audit_folders: list[str]
+    process_docs_present: bool
+    rag_corpus_present: bool
+    rag_corpus_paths: list[str]
+    strength: str  # "none" | "low" | "medium" | "high"
+
+
+@dataclass
 class Recommendation:
     """A deterministic, signal-driven suggestion for what to do next.
 
@@ -176,6 +204,7 @@ class InspectionResult:
     hot_files: list[HotFile]
     risks: list[Risk]
     stale_docs: list[StaleDoc]
+    documentation_intelligence: DocumentationIntelligence
     recommendations: list[Recommendation]
 
 
@@ -223,6 +252,7 @@ def _inspect(project: Path, *, depth: int) -> InspectionResult:
     hot_files = _build_hot_files(sized, project)
     risks = _check_risks(project, sized)
     stale_docs = _check_stale_docs(project)
+    doc_intel = _inspect_documentation_intelligence(project)
     recommendations = _build_recommendations(
         project=project,
         risks=risks,
@@ -231,6 +261,7 @@ def _inspect(project: Path, *, depth: int) -> InspectionResult:
         root_framework=root_framework,
         subsystems=subsystems,
         sized=sized,
+        doc_intel=doc_intel,
     )
 
     return InspectionResult(
@@ -245,6 +276,7 @@ def _inspect(project: Path, *, depth: int) -> InspectionResult:
         hot_files=hot_files,
         risks=risks,
         stale_docs=stale_docs,
+        documentation_intelligence=doc_intel,
         recommendations=recommendations,
     )
 
@@ -857,6 +889,161 @@ def _check_stale_docs(project: Path) -> list[StaleDoc]:
 
 
 # ---------------------------------------------------------------------------
+# Documentation intelligence
+# ---------------------------------------------------------------------------
+
+
+# Folder name patterns under docs/ that suggest active audit / cleanup
+# infrastructure (vs. passive reference docs).
+_AUDIT_FOLDER_PATTERNS = ("audit", "cleanup")
+
+# RAG corpus filenames worth flagging by name (the directory itself is
+# also a signal regardless of contents).
+_RAG_CORPUS_FILENAMES = ("corpus.jsonl", "corpus.json", "index.json", "index.jsonl")
+
+# Scale thresholds used in the strength classifier.
+_DOC_INTEL_SCALE_HIGH_MARKDOWN = 200
+_DOC_INTEL_SCALE_HIGH_HANDOFFS = 50
+_DOC_INTEL_HANDOFF_SIGNAL_MIN = 5
+
+
+def _inspect_documentation_intelligence(project: Path) -> DocumentationIntelligence:
+    """Probe ``docs/`` and ``.rag/`` for evidence that the repo treats
+    documentation as active context / memory infrastructure (embedded,
+    retrieved, or injected at runtime) rather than passive reference
+    material.
+
+    All probes are filename / directory-existence based — no parsing.
+    """
+    docs_dir = project / "docs"
+
+    markdown_count = 0
+    if docs_dir.is_dir():
+        for _, dirs, files in os.walk(docs_dir):
+            # Skip ignored dirs (mostly belt-and-suspenders for vendored
+            # docs that drag a node_modules/ along).
+            dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
+            markdown_count += sum(1 for n in files if n.endswith(".md"))
+
+    handoffs_dir = docs_dir / "handoffs"
+    handoff_count = 0
+    if handoffs_dir.is_dir():
+        try:
+            handoff_count = sum(
+                1 for p in handoffs_dir.glob("SESSION_*.md") if p.is_file()
+            )
+        except OSError:
+            handoff_count = 0
+
+    # Anchor docs: any *_WHAT_IT_IS.md or *_INVENTORY.md in docs/ root.
+    anchor_docs: list[str] = []
+    if docs_dir.is_dir():
+        try:
+            for path in sorted(docs_dir.glob("*_WHAT_IT_IS.md")):
+                if path.is_file():
+                    anchor_docs.append(str(path.relative_to(project)))
+            for path in sorted(docs_dir.glob("*_INVENTORY.md")):
+                if path.is_file():
+                    anchor_docs.append(str(path.relative_to(project)))
+        except OSError:
+            pass
+
+    # Audit / cleanup folders directly under docs/.
+    audit_folders: list[str] = []
+    if docs_dir.is_dir():
+        try:
+            for child in sorted(docs_dir.iterdir()):
+                if not child.is_dir():
+                    continue
+                if any(pat in child.name.lower() for pat in _AUDIT_FOLDER_PATTERNS):
+                    audit_folders.append(str(child.relative_to(project)))
+        except OSError:
+            pass
+
+    # Process docs (the canonical context-kit name + a couple variants).
+    process_docs_present = (
+        (docs_dir / "docs-pattern").is_dir()
+        or (docs_dir / "process").is_dir()
+        or (docs_dir / "patterns").is_dir()
+    )
+
+    # RAG corpus: a top-level .rag/ directory with content.
+    rag_dir = project / ".rag"
+    rag_corpus_present = False
+    rag_corpus_paths: list[str] = []
+    if rag_dir.is_dir():
+        try:
+            for child in sorted(rag_dir.iterdir()):
+                if child.is_file() and (
+                    child.name in _RAG_CORPUS_FILENAMES
+                    or child.suffix in (".jsonl", ".json")
+                ):
+                    rag_corpus_paths.append(str(child.relative_to(project)))
+            rag_corpus_present = bool(rag_corpus_paths)
+        except OSError:
+            pass
+
+    strength = _classify_doc_intel(
+        markdown_count=markdown_count,
+        handoff_count=handoff_count,
+        anchor_docs=anchor_docs,
+        audit_folders=audit_folders,
+        process_docs_present=process_docs_present,
+        rag_corpus_present=rag_corpus_present,
+    )
+
+    return DocumentationIntelligence(
+        markdown_file_count=markdown_count,
+        session_handoff_count=handoff_count,
+        anchor_docs=anchor_docs,
+        audit_folders=audit_folders,
+        process_docs_present=process_docs_present,
+        rag_corpus_present=rag_corpus_present,
+        rag_corpus_paths=rag_corpus_paths,
+        strength=strength,
+    )
+
+
+def _classify_doc_intel(
+    *,
+    markdown_count: int,
+    handoff_count: int,
+    anchor_docs: list[str],
+    audit_folders: list[str],
+    process_docs_present: bool,
+    rag_corpus_present: bool,
+) -> str:
+    """Strength classifier (deterministic).
+
+    Counts distinct *types* of active-context signal (5 categories), then
+    combines with scale (markdown count / handoff count) to produce one
+    of ``none`` / ``low`` / ``medium`` / ``high``."""
+    if markdown_count == 0:
+        return "none"
+
+    signal_count = sum([
+        handoff_count >= _DOC_INTEL_HANDOFF_SIGNAL_MIN,
+        bool(anchor_docs),
+        bool(audit_folders),
+        rag_corpus_present,
+        process_docs_present,
+    ])
+
+    scale_high = (
+        markdown_count >= _DOC_INTEL_SCALE_HIGH_MARKDOWN
+        or handoff_count >= _DOC_INTEL_SCALE_HIGH_HANDOFFS
+    )
+
+    if signal_count == 0:
+        return "low"
+    if signal_count >= 2 and scale_high:
+        return "high"
+    if signal_count >= 2:
+        return "medium"
+    return "low"
+
+
+# ---------------------------------------------------------------------------
 # Recommendations
 # ---------------------------------------------------------------------------
 
@@ -873,6 +1060,7 @@ def _build_recommendations(
     root_framework: FrameworkSignals,
     subsystems: list[Subsystem],
     sized: list[tuple[Path, int]],
+    doc_intel: DocumentationIntelligence,
 ) -> list[Recommendation]:
     """Deterministic recommendation rules. Each rule fires only when its
     triggering signal is present; a rule that fires emits exactly one
@@ -884,6 +1072,28 @@ def _build_recommendations(
     future override store can target it.
     """
     out: list[Recommendation] = []
+
+    # 0. Documentation intelligence — fires before risk recs because a
+    #    "do not delete docs without checking" warning has to land
+    #    early enough to influence what other cleanup PRs touch.
+    if doc_intel.strength == "high":
+        out.append(Recommendation(
+            id="review-docs-context-first",
+            suggestion=(
+                "Review the docs context layer before deleting, "
+                "archiving, or refactoring documentation."
+            ),
+            why=(
+                "Large structured docs systems may be embedded / "
+                "retrieved by AI runtime workflows. Detected: "
+                f"{doc_intel.markdown_file_count} markdown files under "
+                f"docs/, {doc_intel.session_handoff_count} session "
+                f"handoffs"
+                + (", RAG corpus present" if doc_intel.rag_corpus_present else "")
+                + "."
+            ),
+            confidence="high",
+        ))
 
     # 1. High-severity risks dominate. Each gets its own targeted rec
     #    with a stable id derived from the risk id.
@@ -1107,6 +1317,41 @@ def _render_text(r: InspectionResult) -> str:
             lines.append(f"  {sd.path:<48} {sd.evidence}")
         lines.append("")
 
+    if r.documentation_intelligence.strength in ("medium", "high"):
+        di = r.documentation_intelligence
+        lines.append("## Documentation Intelligence")
+        lines.append(f"  Markdown files in docs/:    {di.markdown_file_count:,}")
+        lines.append(f"  Session handoffs:           {di.session_handoff_count:,}")
+        if di.anchor_docs:
+            lines.append(
+                f"  Anchor docs:                {', '.join(p.split('/')[-1] for p in di.anchor_docs)}"
+            )
+        if di.audit_folders:
+            lines.append(
+                f"  Audit/cleanup folders:      {', '.join(p.split('/')[-1] + '/' for p in di.audit_folders)}"
+            )
+        if di.process_docs_present:
+            lines.append("  Process docs:               docs/docs-pattern/ (or similar)")
+        if di.rag_corpus_present:
+            lines.append(
+                f"  RAG corpus:                 {', '.join(di.rag_corpus_paths) or '.rag/'}"
+            )
+        lines.append(f"  Strength:                   {di.strength}")
+        lines.append("")
+        lines.append(
+            "  This repository appears to use documentation as an "
+            "active context/memory layer."
+        )
+        lines.append("")
+        lines.append(
+            "  ! Caution: do not treat docs/ as disposable clutter "
+            "without checking whether"
+        )
+        lines.append(
+            "    docs are embedded, retrieved, or injected at runtime."
+        )
+        lines.append("")
+
     if r.recommendations:
         lines.append("## Recommended next moves")
         lines.append(
@@ -1166,5 +1411,6 @@ def _to_json(r: InspectionResult) -> dict:
         "hot_files": [asdict(hf) for hf in r.hot_files],
         "risks": [asdict(rk) for rk in r.risks],
         "stale_docs": [asdict(sd) for sd in r.stale_docs],
+        "documentation_intelligence": asdict(r.documentation_intelligence),
         "recommendations": [asdict(rc) for rc in r.recommendations],
     }

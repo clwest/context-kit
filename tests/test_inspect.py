@@ -344,9 +344,26 @@ class TestJsonOutputShape(_CwdSandbox):
             "hot_files",
             "risks",
             "stale_docs",
+            "documentation_intelligence",
             "recommendations",
         }
         self.assertEqual(set(data.keys()), expected)
+
+    def test_documentation_intelligence_field_shape(self):
+        _, out = _run_capture(self.tmpdir, json_out=True)
+        data = json.loads(out)
+        di = data["documentation_intelligence"]
+        self.assertEqual(set(di.keys()), {
+            "markdown_file_count",
+            "session_handoff_count",
+            "anchor_docs",
+            "audit_folders",
+            "process_docs_present",
+            "rag_corpus_present",
+            "rag_corpus_paths",
+            "strength",
+        })
+        self.assertIn(di["strength"], {"none", "low", "medium", "high"})
 
     def test_risks_use_stable_ids(self):
         # Re-seed with a known risk so we can assert on `id`.
@@ -389,6 +406,128 @@ class TestStaleDocs(_CwdSandbox):
         )
         _, out = _run_capture(self.tmpdir)
         self.assertNotIn("Possibly stale docs", out)
+
+
+class TestDocumentationIntelligence(_CwdSandbox):
+    """Detection of `docs/` as active AI memory infrastructure vs.
+    passive reference docs. Section appears for `medium`+ strength;
+    recommendation fires only at `high`."""
+
+    def _di_from_json(self) -> dict:
+        _, out = _run_capture(self.tmpdir, json_out=True)
+        return json.loads(out)["documentation_intelligence"]
+
+    def test_no_docs_folder_yields_strength_none(self):
+        di = self._di_from_json()
+        self.assertEqual(di["strength"], "none")
+        self.assertEqual(di["markdown_file_count"], 0)
+        self.assertEqual(di["session_handoff_count"], 0)
+        # Section must NOT render at strength=none.
+        _, text = _run_capture(self.tmpdir)
+        self.assertNotIn("## Documentation Intelligence", text)
+
+    def test_small_unstructured_docs_folder_is_low(self):
+        # A handful of READMEs, no handoffs, no anchors, no rag.
+        docs = self.tmpdir / "docs"
+        docs.mkdir()
+        (docs / "README.md").write_text("# r\n", encoding="utf-8")
+        (docs / "CONTRIBUTING.md").write_text("# c\n", encoding="utf-8")
+
+        di = self._di_from_json()
+        self.assertEqual(di["strength"], "low")
+        self.assertEqual(di["markdown_file_count"], 2)
+        # Section still suppressed at low strength.
+        _, text = _run_capture(self.tmpdir)
+        self.assertNotIn("## Documentation Intelligence", text)
+
+    def test_medium_signal_renders_section_without_recommendation(self):
+        # Two distinct active-context signals (handoffs + anchor),
+        # but no scale (markdown < 200, handoffs < 50).
+        docs = self.tmpdir / "docs"
+        docs.mkdir()
+        (docs / "PLATFORM_WHAT_IT_IS.md").write_text("# anchor\n", encoding="utf-8")
+        (docs / "PLATFORM_INVENTORY.md").write_text("# anchor\n", encoding="utf-8")
+        handoffs = docs / "handoffs"
+        handoffs.mkdir()
+        for i in range(1, 11):
+            (handoffs / f"SESSION_{i:03d}_X.md").write_text("# h\n", encoding="utf-8")
+
+        di = self._di_from_json()
+        self.assertEqual(di["strength"], "medium")
+        self.assertGreaterEqual(di["session_handoff_count"], 5)
+        self.assertTrue(di["anchor_docs"])
+
+        # Section renders.
+        _, text = _run_capture(self.tmpdir)
+        self.assertIn("## Documentation Intelligence", text)
+        self.assertIn("active context/memory layer", text)
+        self.assertIn("Caution", text)
+        # But the recommendation does NOT fire at medium.
+        ids = [r["id"] for r in json.loads(_run_capture(self.tmpdir, json_out=True)[1])["recommendations"]]
+        self.assertNotIn("review-docs-context-first", ids)
+
+    def test_high_signal_fires_recommendation(self):
+        # Multiple distinct signals + scale.
+        docs = self.tmpdir / "docs"
+        docs.mkdir()
+        (docs / "PLATFORM_WHAT_IT_IS.md").write_text("# anchor\n", encoding="utf-8")
+        (docs / "PLATFORM_INVENTORY.md").write_text("# anchor\n", encoding="utf-8")
+        # >= 50 session handoffs to trip the scale_high path.
+        handoffs = docs / "handoffs"
+        handoffs.mkdir()
+        for i in range(1, 56):
+            (handoffs / f"SESSION_{i:04d}_X.md").write_text("# h\n", encoding="utf-8")
+        # Audit folder under docs/.
+        (docs / "audit").mkdir()
+        (docs / "audit" / "AUDIT_V1.md").write_text("# a\n", encoding="utf-8")
+        # RAG corpus at root.
+        rag = self.tmpdir / ".rag"
+        rag.mkdir()
+        (rag / "corpus.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+
+        di = self._di_from_json()
+        self.assertEqual(di["strength"], "high")
+        self.assertGreaterEqual(di["session_handoff_count"], 50)
+        self.assertTrue(di["anchor_docs"])
+        self.assertTrue(di["audit_folders"])
+        self.assertTrue(di["rag_corpus_present"])
+
+        # Section renders + recommendation fires.
+        _, text = _run_capture(self.tmpdir)
+        self.assertIn("## Documentation Intelligence", text)
+        self.assertIn("[high]", text)
+
+        recs = json.loads(_run_capture(self.tmpdir, json_out=True)[1])["recommendations"]
+        ids = [r["id"] for r in recs]
+        self.assertIn("review-docs-context-first", ids)
+        rec = next(r for r in recs if r["id"] == "review-docs-context-first")
+        self.assertEqual(rec["confidence"], "high")
+        self.assertIn("docs context layer", rec["suggestion"])
+
+    def test_anchor_doc_paths_are_relative(self):
+        docs = self.tmpdir / "docs"
+        docs.mkdir()
+        (docs / "FOO_WHAT_IT_IS.md").write_text("# x\n", encoding="utf-8")
+        (docs / "FOO_INVENTORY.md").write_text("# x\n", encoding="utf-8")
+        di = self._di_from_json()
+        self.assertEqual(set(di["anchor_docs"]), {
+            "docs/FOO_WHAT_IT_IS.md",
+            "docs/FOO_INVENTORY.md",
+        })
+
+    def test_rag_corpus_detected_with_jsonl(self):
+        rag = self.tmpdir / ".rag"
+        rag.mkdir()
+        (rag / "corpus.jsonl").write_text('{"a":1}\n', encoding="utf-8")
+        # Need at least one doc to avoid strength=none short-circuit
+        # (we want to confirm rag_corpus_present is set independently).
+        docs = self.tmpdir / "docs"
+        docs.mkdir()
+        (docs / "x.md").write_text("# x\n", encoding="utf-8")
+
+        di = self._di_from_json()
+        self.assertTrue(di["rag_corpus_present"])
+        self.assertEqual(di["rag_corpus_paths"], [".rag/corpus.jsonl"])
 
 
 class TestRecommendations(_CwdSandbox):
