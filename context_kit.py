@@ -455,6 +455,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print prompt for the next single step only",
     )
 
+    # refactor (group)
+    from cli.refactor import add_subparser as _add_refactor_subparser
+    _add_refactor_subparser(sub)
+
     return parser
 
 
@@ -528,6 +532,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "inspect":
         from cli.inspect import run_inspect
         return run_inspect(args)
+
+    if args.command == "refactor":
+        from cli.refactor import run_refactor
+        return run_refactor(args)
 
     parser.print_help()
     return 1

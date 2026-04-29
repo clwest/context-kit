@@ -27,11 +27,13 @@ init  →  recommend-stack  →  seed  →  doctor  →  orient
 | **`context-kit orient`** | Loads the current context for the next AI session *(the bundled Claude Code skill calls this automatically)* |
 
 Plus `inventory --check` for CI drift detection, `hotpath` for
-file-size budget warnings, and **`adopt`** for retrofitting
+file-size budget warnings, **`adopt`** for retrofitting
 context-kit onto an *existing* project (the five-command loop above
 assumes you're starting fresh; `adopt` is the entry point when you
-already have code). All read-only by default. All exit cleanly for
-an agent to parse.
+already have code), and **`refactor track`** for reporting progress
+on multi-PR module-extraction work (split a monolith file into
+sibling modules across many PRs and watch the percentage tick up).
+All read-only by default. All exit cleanly for an agent to parse.
 
 Think `create-next-app`, but for the memory layer around your code.
 

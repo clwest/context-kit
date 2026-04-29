@@ -135,6 +135,21 @@ is advisory — when it warns, the right move is usually to narrow focus
 to one file at a time, or stop and start a fresh session before
 tackling the hot region.
 
+## Optional — run refactor track when working a multi-PR extraction
+
+If the user is in the middle of splitting a monolith file (e.g.
+`core/tasks.py`) into sibling modules across many PRs, run:
+
+```bash
+context-kit refactor track core/tasks.py --detector celery-task
+```
+
+It prints total / migrated / remaining item counts, percentage
+complete, the largest remaining domains (when a Phase-0-style plan
+file is provided via `--plan` or auto-discovered under
+`docs/refactors/`), and an estimated PRs-remaining number. Detectors
+in v1: `function`, `class`, `celery-task`. Read-only.
+
 ## When the orient command does not exist
 
 If `context-kit orient` and `python3 context_kit.py orient` both fail, the
