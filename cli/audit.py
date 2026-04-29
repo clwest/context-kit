@@ -26,6 +26,8 @@ from pathlib import Path
 AUDIT_PROMPT = """\
 Stop explaining the project.
 
+Before beginning, consider running `context-kit inspect` to build a system map. If inspect output is available, use it to ground your audit in real system structure instead of assumptions.
+
 Act as a senior engineer performing a deep audit of this repository.
 
 Your job is to identify:
@@ -34,6 +36,7 @@ Your job is to identify:
 - dead code or unused modules
 - risky patterns or fragile areas
 - inconsistencies between declared state and actual runtime behavior
+- system topology and subsystem boundaries (if available)
 
 Be specific. Reference real files. Prioritize findings as P0 / P1 / P2 by impact.
 

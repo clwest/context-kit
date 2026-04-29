@@ -78,6 +78,33 @@ class TestAuditPromptOutput(unittest.TestCase):
         self.assertIn("what remains open", lower)
         self.assertIn("from the team next", lower)
 
+    def test_includes_inspect_pre_run_guidance(self):
+        # New in v0.14: prompt nudges the agent to run `inspect` first.
+        _, out = _run_audit_capture()
+        lower = out.lower()
+        self.assertIn("before beginning", lower)
+        self.assertIn("context-kit inspect", out)
+        self.assertIn("system map", lower)
+
+    def test_includes_inspect_grounding_instruction(self):
+        # When inspect output IS available, the agent should ground its
+        # findings in real system structure rather than guessing.
+        _, out = _run_audit_capture()
+        lower = out.lower()
+        self.assertIn("inspect output is available", lower)
+        self.assertIn("real system structure", lower)
+        self.assertIn("instead of assumptions", lower)
+
+    def test_lists_topology_audit_dimension(self):
+        # New audit dimension joins the existing five.
+        _, out = _run_audit_capture()
+        lower = out.lower()
+        self.assertIn("system topology", lower)
+        self.assertIn("subsystem boundaries", lower)
+        # And the parenthetical "(if available)" makes it clear the
+        # agent shouldn't fabricate a topology when inspect wasn't run.
+        self.assertIn("(if available)", lower)
+
 
 class TestAuditWriteScaffolding(unittest.TestCase):
     def setUp(self):
@@ -177,6 +204,9 @@ class TestAuditWriteUX(unittest.TestCase):
         # Team-reporting framing rides along with the embedded prompt.
         self.assertIn("Report back", out)
         self.assertIn("project team", out)
+        # Inspect guidance + topology dimension also ride along.
+        self.assertIn("context-kit inspect", out)
+        self.assertIn("system topology", out)
 
     def test_skipped_scaffold_files_report_appear_unfilled(self):
         audit_dir = self.tmpdir / "docs" / "audit"
