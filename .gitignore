@@ -52,3 +52,5 @@ tmp/
 
 # Engagement telemetry (private)
 metrics/
+
+.env

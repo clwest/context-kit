@@ -8,7 +8,12 @@ state: scaffold
 > + `docs/{{APP_UPPER}}_INVENTORY.md` (runtime-derived, regenerable).
 > **Source of truth for runtime flow:** `docs/{{APP_UPPER}}_PIPELINE.md`
 > (entry points, guard coverage, retrieval paths, post-processing order).
-> When any doc disagrees with INVENTORY (counts) or PIPELINE (flow), those win.
+> **Source of truth for behavior:** `docs/{{APP_UPPER}}_BEHAVIOR_LAYER.md`
+> (voice / tone, UI source-of-truth contract, constraint preservation across
+> turns, decision-authority boundary). Read it before changing any
+> persona, prompt template, or user-facing copy.
+> When any doc disagrees with INVENTORY (counts) or PIPELINE (flow) or
+> BEHAVIOR_LAYER (presentation), those win.
 > Live drift report: `python manage.py verify_doc_claims --only-drift` (once wired up).
 >
 > **Frontmatter `state:`** above is consumed by `context-kit seed`.

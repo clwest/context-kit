@@ -52,6 +52,7 @@ def run_orient(args: argparse.Namespace) -> int:
     sections.append(_section_start_here(project))
     sections.append(_section_anchors(project))
     sections.append(_section_pipeline(project))
+    sections.append(_section_behavior_layer(project))
     sections.append(_section_do_nots(project))
     sections.append(_section_latest_handoff(project))
     sections.append(_section_pattern_pointer(project))
@@ -88,14 +89,16 @@ def _section_source_of_truth(project: Path) -> str:
     """The authoritative path: which docs the agent must trust, in order.
 
     Ordering — concept first, runtime state last:
-        1. WHAT_IT_IS    (narrative)
-        2. INVENTORY     (runtime, regenerable)
-        3. PIPELINE      (runtime flow map; optional)
-        4. DO_NOTS       (project-specific anti-patterns; optional)
-        5. handoff + 00-START-NEXT-SESSION (current state / next priority)
+        1. WHAT_IT_IS       (narrative)
+        2. INVENTORY        (runtime, regenerable)
+        3. PIPELINE         (runtime flow map; optional)
+        4. BEHAVIOR_LAYER   (voice, presentation, constraint preservation; optional)
+        5. DO_NOTS          (project-specific anti-patterns; optional)
+        6. handoff + 00-START-NEXT-SESSION (current state / next priority)
     """
     what, inventory = _find_anchor_docs(project)
     pipeline = _find_pipeline_doc(project)
+    behavior = _find_behavior_layer_doc(project)
     do_nots = _find_do_nots_doc(project)
     lines = ["## SOURCE OF TRUTH (read in this order)"]
     if what:
@@ -110,12 +113,16 @@ def _section_source_of_truth(project: Path) -> str:
         lines.append(f"  3. {pipeline.relative_to(project)}    — runtime flow map (entry points, guards, retrieval, scrubs)")
     else:
         lines.append("  3. docs/<APP>_PIPELINE.md    — runtime flow map (optional; recommended for LLM/agent/task projects)")
-    if do_nots:
-        lines.append(f"  4. {do_nots.relative_to(project)}    — project-specific anti-patterns / dos and don'ts")
+    if behavior:
+        lines.append(f"  4. {behavior.relative_to(project)}    — behavior layer (voice, UI/source-of-truth, constraint preservation)")
     else:
-        lines.append("  4. docs/<APP>_DO_NOTS.md    — project-specific anti-patterns (optional)")
+        lines.append("  4. docs/<APP>_BEHAVIOR_LAYER.md    — behavior layer (optional; recommended for chat/voice/persona surfaces)")
+    if do_nots:
+        lines.append(f"  5. {do_nots.relative_to(project)}    — project-specific anti-patterns / dos and don'ts")
+    else:
+        lines.append("  5. docs/<APP>_DO_NOTS.md    — project-specific anti-patterns (optional)")
     lines.append(
-        f"  5. docs/handoffs/SESSION_<latest>_*.md + {START_DOC}    — what last session shipped + this session's priorities"
+        f"  6. docs/handoffs/SESSION_<latest>_*.md + {START_DOC}    — what last session shipped + this session's priorities"
     )
     lines.append("")
     lines.append("If any other doc disagrees with the inventory, the inventory is right.")
@@ -149,6 +156,16 @@ def _section_pipeline(project: Path) -> str:
         return ""
     rel = pipeline.relative_to(project)
     return f"## PIPELINE — {rel}\n\n" + _preview(pipeline)
+
+
+def _section_behavior_layer(project: Path) -> str:
+    """Optional behavior layer (voice, presentation, constraint preservation).
+    Silently omitted if absent so older projects keep working."""
+    behavior = _find_behavior_layer_doc(project)
+    if behavior is None:
+        return ""
+    rel = behavior.relative_to(project)
+    return f"## BEHAVIOR LAYER — {rel}\n\n" + _preview(behavior)
 
 
 def _section_do_nots(project: Path) -> str:
@@ -268,6 +285,36 @@ def _find_pipeline_doc(project: Path) -> Path | None:
         if plain.is_file():
             return plain
     root_plain = project / "PIPELINE.md"
+    if root_plain.is_file():
+        return root_plain
+    return None
+
+
+def _find_behavior_layer_doc(project: Path) -> Path | None:
+    """Discover the behavior layer doc (voice / presentation / constraint
+    preservation rules).
+
+    Search order — first hit wins:
+    1. ``docs/<APP>_BEHAVIOR_LAYER.md`` (matches the anchor naming)
+    2. ``docs/BEHAVIOR_LAYER.md`` (plain)
+    3. ``BEHAVIOR_LAYER.md`` at the repo root
+
+    Absent → returns None and orient silently omits the BEHAVIOR LAYER
+    section. Older projects keep working unchanged.
+
+    To avoid colliding with the pipeline glob (``*_PIPELINE.md``), the
+    suffix used here is ``_BEHAVIOR_LAYER.md``. Both anchor docs can
+    coexist in the same project.
+    """
+    docs = project / DOCS_DIR
+    if docs.is_dir():
+        suffixed = _first_match(docs.glob("*_BEHAVIOR_LAYER.md"))
+        if suffixed is not None:
+            return suffixed
+        plain = docs / "BEHAVIOR_LAYER.md"
+        if plain.is_file():
+            return plain
+    root_plain = project / "BEHAVIOR_LAYER.md"
     if root_plain.is_file():
         return root_plain
     return None

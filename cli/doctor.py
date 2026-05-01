@@ -90,6 +90,7 @@ def run_all_checks(project: Path) -> list[CheckResult]:
         check_file_watcher(project),
         check_inventory(project),
         check_pipeline_doc(project),
+        check_behavior_layer_doc(project),
     ]
 
 
@@ -722,6 +723,179 @@ def check_pipeline_doc(project: Path) -> CheckResult:
         fix=[
             "Create docs/<APP>_PIPELINE.md (template ships with `context-kit init`)",
             "Document every entry point, guard, retrieval path, and post-processing step",
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Behavior-layer doc check (chat / voice / persona / UI surfaces)
+# ---------------------------------------------------------------------------
+
+# Behavior surfaces are a superset of pipeline surfaces: anything LLM /
+# agent / task-related, plus chat / voice / persona / dialog / prompt
+# surfaces, plus interactive-UI deps that imply user-facing language.
+_BEHAVIOR_INDICATOR_FILENAMES = _PIPELINE_INDICATOR_FILENAMES + (
+    "chat", "conversation", "conversations",
+    "dialog", "dialogue",
+    "persona", "personas",
+    "voice",
+    "prompt", "prompts",
+    "completion", "completions",
+)
+
+# UI dep tokens are intentionally additive — the warning fires only
+# when an LLM/agent indicator AND a UI surface coexist, OR when a
+# chat/voice/persona filename is present. A plain CRUD UI without
+# any AI doesn't trigger this warning (handled in
+# ``_project_has_behavior_indicators``).
+_UI_INDICATOR_DEPS = (
+    "react", "react-dom", "react-native",
+    "vue",
+    "svelte",
+    "next",
+    "expo", "@expo/",
+    "solid-js",
+    "preact",
+)
+
+
+def _project_has_behavior_indicators(project: Path) -> bool:
+    """Heuristic: does this project have LLM / agent / chat / voice /
+    persona / interactive-UI surfaces where a behavior-layer contract
+    is meaningful?
+
+    Trigger logic — any of these is sufficient:
+    1. The project has pipeline indicators (LLM/agent/task deps or
+       filename tokens). Pipeline projects almost always benefit from
+       a behavior layer too.
+    2. A chat / conversation / dialog / persona / voice / prompt
+       filename appears anywhere outside skip dirs.
+    3. A UI dep coexists with an LLM dep in the same dependency
+       manifest. (UI alone is not enough — most plain CRUD UIs don't
+       need a behavior layer; pairing with LLM signals intent to
+       generate user-facing language.)
+    """
+    if _project_has_pipeline_indicators(project):
+        return True
+    if _scan_filenames_for_behavior_tokens(project):
+        return True
+    if _ui_paired_with_llm(project):
+        return True
+    return False
+
+
+def _scan_filenames_for_behavior_tokens(project: Path) -> bool:
+    skip_dirs = {
+        ".git", "node_modules", "__pycache__", ".venv", "venv",
+        ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+        "docs",  # BEHAVIOR_LAYER.md itself lives here
+    }
+    if not project.is_dir():
+        return False
+    stack = [project]
+    visited = 0
+    while stack and visited < 2000:
+        current = stack.pop()
+        try:
+            children = list(current.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            visited += 1
+            if visited >= 2000:
+                break
+            if child.is_dir():
+                if child.name in skip_dirs or child.name.startswith("."):
+                    continue
+                stack.append(child)
+                continue
+            if not child.is_file():
+                continue
+            stem = child.stem.lower()
+            if not stem:
+                continue
+            for token in _BEHAVIOR_INDICATOR_FILENAMES:
+                if token in stem:
+                    return True
+    return False
+
+
+def _ui_paired_with_llm(project: Path) -> bool:
+    """Return True only if a single manifest mentions both a UI dep
+    and an LLM dep — the case where a behavior layer is meaningful
+    even without explicit chat/persona filenames."""
+    manifest_names = (
+        "package.json", "pyproject.toml", "requirements.txt",
+        "requirements-dev.txt", "Pipfile", "poetry.lock",
+    )
+    for name in manifest_names:
+        path = project / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace").lower()
+        except OSError:
+            continue
+        has_ui = any(t.lower() in text for t in _UI_INDICATOR_DEPS)
+        has_llm = any(t.lower() in text for t in _PIPELINE_INDICATOR_DEPS)
+        if has_ui and has_llm:
+            return True
+    return False
+
+
+def _has_behavior_layer_doc(project: Path) -> bool:
+    """Mirror of ``cli.orient._find_behavior_layer_doc``'s discovery rules."""
+    docs = project / "docs"
+    if docs.is_dir():
+        for path in sorted(docs.glob("*_BEHAVIOR_LAYER.md")):
+            if path.is_file():
+                return True
+        if (docs / "BEHAVIOR_LAYER.md").is_file():
+            return True
+    return (project / "BEHAVIOR_LAYER.md").is_file()
+
+
+def check_behavior_layer_doc(project: Path) -> CheckResult:
+    """Soft warning when a project has LLM / chat / voice / persona /
+    UI behavior-surface indicators but no BEHAVIOR_LAYER.md.
+
+    Status taxonomy:
+    - ok       — BEHAVIOR_LAYER.md present
+    - skipped  — no behavior-surface indicators
+    - warning  — indicators present, doc missing
+
+    Never blocking.
+    """
+    if _has_behavior_layer_doc(project):
+        return CheckResult(
+            id="behavior_layer_doc",
+            label="Behavior layer (voice, presentation, constraints)",
+            status="ok",
+            detail="BEHAVIOR_LAYER.md present",
+        )
+
+    if not _project_has_behavior_indicators(project):
+        return CheckResult(
+            id="behavior_layer_doc",
+            label="Behavior layer (voice, presentation, constraints)",
+            status="skipped",
+            detail="No LLM / chat / voice / persona / UI behavior-surface indicators detected; BEHAVIOR_LAYER.md not required",
+        )
+
+    return CheckResult(
+        id="behavior_layer_doc",
+        label="Behavior layer (voice, presentation, constraints)",
+        status="warning",
+        detail=(
+            "BEHAVIOR_LAYER.md missing. Projects with chat, voice, "
+            "persona-bearing UI, or any LLM-generated user-facing "
+            "language should document voice, source-of-truth display "
+            "rules, and constraint preservation across turns to "
+            "prevent tone drift and rendered-data restatement bugs."
+        ),
+        fix=[
+            "Create docs/<APP>_BEHAVIOR_LAYER.md (template ships with `context-kit init`)",
+            "Document voice / tone, UI source-of-truth contract, constraint preservation, GOOD/BAD examples, and post-generation checks",
         ],
     )
 

@@ -128,34 +128,46 @@ This lets you stop chasing drift in 100 docs. The canonical pair is maintained; 
 
 ---
 
-## A complementary doc, not a third anchor: `PIPELINE.md`
+## Complementary docs, not replacements: `PIPELINE.md` and `BEHAVIOR_LAYER.md`
 
-For projects with LLM, agent, task-runner, or queue-driven flows, the
-two-doc anchor pair is necessary but not sufficient. The anchor pair
-holds **what exists** and **what it is** — counts and concepts.
-**`PIPELINE.md` holds *how requests actually move through the
-system*** — entry points, guard coverage, state surfaces, retrieval
-paths, post-processing order, and operational hazards.
+For projects with LLM, agent, task-runner, or queue-driven flows —
+or any product that *speaks* in a defined voice — the two-doc anchor
+pair is necessary but not sufficient. The anchor pair holds **what
+exists** and **what it is**. Two complementary docs handle the rest:
 
-Why it isn't a third quantitative anchor:
+- **`PIPELINE.md`** holds **how requests actually move through the
+  system** — entry points, guard coverage, state surfaces, retrieval
+  paths, post-processing order, and operational hazards.
+- **`BEHAVIOR_LAYER.md`** holds **how responses sound, look, and
+  respect prior turns** — voice / tone contract, UI source-of-truth
+  rules ("don't restate rendered data in prose"), constraint
+  preservation across follow-ups, decision-authority boundary
+  between deterministic services and LLM phrasing, and small-model
+  guard guidance.
 
-- It doesn't carry counts. INVENTORY still wins for numbers.
-- It carries *flow asymmetry* — which entry point has which guards,
-  which retrieval path supports which filter, which scrub step must
-  run before which other step. None of that lives naturally in either
-  anchor.
-- It's optional. Single-script projects, static sites, and simple
-  CRUD apps don't need it.
+Neither doc replaces the anchor pair:
 
-If your project has more than one URL / signal / consumer that ends
-up calling a model, or any post-processing pipeline whose ordering
-matters, this doc earns its keep on the first bypass-drift bug it
-prevents.
+- They don't carry counts. INVENTORY still wins for numbers.
+- They don't redefine the system. WHAT_IT_IS still owns the concept.
+- They carry the *operational asymmetries* and *behavioral
+  contracts* that don't live naturally in either anchor.
 
-`context-kit init` scaffolds `docs/<APP>_PIPELINE.md` alongside the
-two-doc anchor. `context-kit doctor` warns when a project has LLM /
-agent / task indicators but no PIPELINE.md.
+Both docs are optional. Pick what you need:
+
+| Project shape | What you probably need |
+|---|---|
+| Static site / single-script tool | WHAT_IT_IS + INVENTORY only |
+| LLM-using API or agent system | + PIPELINE.md |
+| Chat surface, voice agent, or persona-bearing UI | + BEHAVIOR_LAYER.md |
+| All of the above | all four |
+
+`context-kit init` scaffolds `docs/<APP>_PIPELINE.md` and
+`docs/<APP>_BEHAVIOR_LAYER.md` alongside the two-doc anchor.
+`context-kit doctor` warns when project indicators suggest you'd
+benefit from each but the file is missing. Both warnings are soft —
+never blocking — and silently skipped on projects where they don't
+apply.
 
 ---
 
-*See [`templates/PLATFORM_WHAT_IT_IS.template.md`](templates/PLATFORM_WHAT_IT_IS.template.md) + [`templates/PLATFORM_INVENTORY.template.md`](templates/PLATFORM_INVENTORY.template.md) + [`templates/PLATFORM_PIPELINE.template.md`](templates/PLATFORM_PIPELINE.template.md) to start.*
+*See [`templates/PLATFORM_WHAT_IT_IS.template.md`](templates/PLATFORM_WHAT_IT_IS.template.md) + [`templates/PLATFORM_INVENTORY.template.md`](templates/PLATFORM_INVENTORY.template.md) + [`templates/PLATFORM_PIPELINE.template.md`](templates/PLATFORM_PIPELINE.template.md) + [`templates/PLATFORM_BEHAVIOR_LAYER.template.md`](templates/PLATFORM_BEHAVIOR_LAYER.template.md) to start.*

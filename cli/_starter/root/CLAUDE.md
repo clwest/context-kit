@@ -49,6 +49,11 @@ conventions it ships. Load-bearing rules:
   operational hazards. When adding a new endpoint, signal handler, or task
   consumer that touches LLM / agent / business logic, update PIPELINE.md
   *first* so the next session sees the asymmetry.
+- **`docs/{{APP_UPPER}}_BEHAVIOR_LAYER.md`** is the behavior contract: voice
+  and tone, UI / source-of-truth presentation rules ("don't restate rendered
+  data in prose"), constraint preservation across follow-up turns, and the
+  decision-authority boundary between deterministic services and LLM phrasing.
+  Update it whenever persona, prompt template, or display contract changes.
 
 ---
 
