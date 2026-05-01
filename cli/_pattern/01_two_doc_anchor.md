@@ -122,10 +122,40 @@ This lets you stop chasing drift in 100 docs. The canonical pair is maintained; 
 
 ## Failure modes to watch
 
-- **Multiple "source of truth" docs** — if you find yourself writing a 3rd anchor doc, stop. The anchor pair is two docs, not three.
+- **Multiple "source of truth" docs for *the same kind of claim*** — if you find yourself writing a 3rd doc that holds quantitative facts, stop. The quantitative anchor pair is two docs, not three.
 - **Inventory that hand-edits** — the moment you open `INVENTORY.md` in an editor, the pattern is dead. Regenerate only.
 - **`WHAT_IT_IS.md` with exact counts** — if someone greps for a number, they find it in two places, and one is wrong. Use `~` or "live counter" annotations in the narrative doc.
 
 ---
 
-*See [`templates/PLATFORM_WHAT_IT_IS.template.md`](templates/PLATFORM_WHAT_IT_IS.template.md) + [`templates/PLATFORM_INVENTORY.template.md`](templates/PLATFORM_INVENTORY.template.md) to start.*
+## A complementary doc, not a third anchor: `PIPELINE.md`
+
+For projects with LLM, agent, task-runner, or queue-driven flows, the
+two-doc anchor pair is necessary but not sufficient. The anchor pair
+holds **what exists** and **what it is** — counts and concepts.
+**`PIPELINE.md` holds *how requests actually move through the
+system*** — entry points, guard coverage, state surfaces, retrieval
+paths, post-processing order, and operational hazards.
+
+Why it isn't a third quantitative anchor:
+
+- It doesn't carry counts. INVENTORY still wins for numbers.
+- It carries *flow asymmetry* — which entry point has which guards,
+  which retrieval path supports which filter, which scrub step must
+  run before which other step. None of that lives naturally in either
+  anchor.
+- It's optional. Single-script projects, static sites, and simple
+  CRUD apps don't need it.
+
+If your project has more than one URL / signal / consumer that ends
+up calling a model, or any post-processing pipeline whose ordering
+matters, this doc earns its keep on the first bypass-drift bug it
+prevents.
+
+`context-kit init` scaffolds `docs/<APP>_PIPELINE.md` alongside the
+two-doc anchor. `context-kit doctor` warns when a project has LLM /
+agent / task indicators but no PIPELINE.md.
+
+---
+
+*See [`templates/PLATFORM_WHAT_IT_IS.template.md`](templates/PLATFORM_WHAT_IT_IS.template.md) + [`templates/PLATFORM_INVENTORY.template.md`](templates/PLATFORM_INVENTORY.template.md) + [`templates/PLATFORM_PIPELINE.template.md`](templates/PLATFORM_PIPELINE.template.md) to start.*

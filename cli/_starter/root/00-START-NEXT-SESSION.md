@@ -6,7 +6,9 @@ state: scaffold
 
 > **Source of truth for numbers:** `docs/{{APP_UPPER}}_WHAT_IT_IS.md` (narrative)
 > + `docs/{{APP_UPPER}}_INVENTORY.md` (runtime-derived, regenerable).
-> When any doc disagrees with either of these, INVENTORY wins.
+> **Source of truth for runtime flow:** `docs/{{APP_UPPER}}_PIPELINE.md`
+> (entry points, guard coverage, retrieval paths, post-processing order).
+> When any doc disagrees with INVENTORY (counts) or PIPELINE (flow), those win.
 > Live drift report: `python manage.py verify_doc_claims --only-drift` (once wired up).
 >
 > **Frontmatter `state:`** above is consumed by `context-kit seed`.

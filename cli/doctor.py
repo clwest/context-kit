@@ -89,6 +89,7 @@ def run_all_checks(project: Path) -> list[CheckResult]:
         check_expo(project),
         check_file_watcher(project),
         check_inventory(project),
+        check_pipeline_doc(project),
     ]
 
 
@@ -560,6 +561,168 @@ def check_inventory(project: Path) -> CheckResult:
         status="warning",
         detail=reason,
         fix="context-kit inventory --write",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pipeline doc check (LLM/agent/task projects)
+# ---------------------------------------------------------------------------
+
+# File-name and content signals that suggest the project has LLM, agent,
+# task-runner, or queue-driven flows worth mapping in PIPELINE.md.
+_PIPELINE_INDICATOR_FILENAMES = (
+    "agent", "agents",
+    "pipeline", "pipelines",
+    "chain", "chains",
+    "llm", "openai", "anthropic",
+    "tasks",
+    "celery", "rq_worker", "sidekiq",
+)
+
+# Dependency tokens that imply LLM / agent / queue infrastructure.
+# Matched as case-insensitive substrings against pyproject.toml,
+# requirements*.txt, package.json, Pipfile, poetry.lock — kept tight to
+# avoid false positives.
+_PIPELINE_INDICATOR_DEPS = (
+    "openai", "anthropic", "langchain", "llama-index", "llama_index",
+    "haystack", "litellm", "instructor",
+    "celery", "dramatiq", "rq ", "huey", "sidekiq",
+    "@anthropic-ai/sdk", "@langchain/",
+)
+
+
+def _project_has_pipeline_indicators(project: Path) -> bool:
+    """Heuristic: does this project look like it runs an LLM / agent /
+    task pipeline? Used to decide whether a missing PIPELINE.md is a
+    warning or a non-event.
+
+    Two signals — either is sufficient:
+    1. A filename anywhere under the project root contains an LLM /
+       agent / task token (excluding common throwaway dirs).
+    2. A dependency manifest mentions an LLM / agent / queue library.
+
+    Skips ``.git/``, ``node_modules/``, ``__pycache__/``, ``.venv/``
+    and the project's own ``cli/`` and ``docs/`` to avoid recursing
+    into context-kit's own scaffold.
+    """
+    if _scan_dependency_manifests(project):
+        return True
+    return _scan_filenames_for_pipeline_tokens(project)
+
+
+def _scan_dependency_manifests(project: Path) -> bool:
+    manifest_names = (
+        "pyproject.toml", "requirements.txt", "requirements-dev.txt",
+        "Pipfile", "poetry.lock", "package.json",
+    )
+    for name in manifest_names:
+        path = project / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace").lower()
+        except OSError:
+            continue
+        for token in _PIPELINE_INDICATOR_DEPS:
+            if token.lower() in text:
+                return True
+    return False
+
+
+def _scan_filenames_for_pipeline_tokens(project: Path) -> bool:
+    skip_dirs = {
+        ".git", "node_modules", "__pycache__", ".venv", "venv",
+        ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+        "docs",  # PIPELINE.md itself lives here; don't trigger off it
+    }
+    if not project.is_dir():
+        return False
+    stack = [project]
+    visited = 0
+    while stack and visited < 2000:
+        current = stack.pop()
+        try:
+            children = list(current.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            visited += 1
+            if visited >= 2000:
+                break
+            if child.is_dir():
+                if child.name in skip_dirs or child.name.startswith("."):
+                    continue
+                stack.append(child)
+                continue
+            if not child.is_file():
+                continue
+            stem = child.stem.lower()
+            if not stem:
+                continue
+            for token in _PIPELINE_INDICATOR_FILENAMES:
+                if token in stem:
+                    return True
+    return False
+
+
+def _has_pipeline_doc(project: Path) -> bool:
+    """Mirror of ``cli.orient._find_pipeline_doc``'s discovery rules.
+
+    Kept inline so doctor doesn't import orient (avoids circular
+    import risk if either file grows).
+    """
+    docs = project / "docs"
+    if docs.is_dir():
+        for path in sorted(docs.glob("*_PIPELINE.md")):
+            if path.is_file():
+                return True
+        if (docs / "PIPELINE.md").is_file():
+            return True
+    return (project / "PIPELINE.md").is_file()
+
+
+def check_pipeline_doc(project: Path) -> CheckResult:
+    """Soft warning when a project has LLM / agent / task indicators
+    but no PIPELINE.md.
+
+    Status taxonomy:
+    - ok       — PIPELINE.md present
+    - skipped  — no LLM / agent / task indicators detected
+    - warning  — indicators present, doc missing
+
+    Never blocking. Older projects without LLM flows pass silently
+    via skipped status.
+    """
+    has_doc = _has_pipeline_doc(project)
+    if has_doc:
+        return CheckResult(
+            id="pipeline_doc",
+            label="Pipeline / runtime flow map",
+            status="ok",
+            detail="PIPELINE.md present",
+        )
+
+    if not _project_has_pipeline_indicators(project):
+        return CheckResult(
+            id="pipeline_doc",
+            label="Pipeline / runtime flow map",
+            status="skipped",
+            detail="No LLM / agent / task indicators detected; PIPELINE.md not required",
+        )
+
+    return CheckResult(
+        id="pipeline_doc",
+        label="Pipeline / runtime flow map",
+        status="warning",
+        detail=(
+            "PIPELINE.md missing. Projects with LLM, agent, queue, or "
+            "automation flows should document request paths and guard "
+            "coverage to prevent bypass drift."
+        ),
+        fix=[
+            "Create docs/<APP>_PIPELINE.md (template ships with `context-kit init`)",
+            "Document every entry point, guard, retrieval path, and post-processing step",
+        ],
     )
 
 

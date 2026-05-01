@@ -44,6 +44,11 @@ conventions it ships. Load-bearing rules:
   `docs/{{APP_UPPER}}_INVENTORY.md`) is the source of truth for counts and claims.
 - **Runtime wins.** When asked about current platform state, prefer the
   INVENTORY doc or the verifier over anything narrative.
+- **`docs/{{APP_UPPER}}_PIPELINE.md`** is the runtime flow map: entry points,
+  guard coverage, state surfaces, retrieval paths, post-processing order, and
+  operational hazards. When adding a new endpoint, signal handler, or task
+  consumer that touches LLM / agent / business logic, update PIPELINE.md
+  *first* so the next session sees the asymmetry.
 
 ---
 

@@ -51,6 +51,8 @@ def run_orient(args: argparse.Namespace) -> int:
     sections.append(_section_source_of_truth(project))
     sections.append(_section_start_here(project))
     sections.append(_section_anchors(project))
+    sections.append(_section_pipeline(project))
+    sections.append(_section_do_nots(project))
     sections.append(_section_latest_handoff(project))
     sections.append(_section_pattern_pointer(project))
     sections.append(_section_what_to_do_now())
@@ -83,19 +85,38 @@ def _section_header(project: Path) -> str:
 
 
 def _section_source_of_truth(project: Path) -> str:
-    """The authoritative path: which docs the agent must trust, in order."""
+    """The authoritative path: which docs the agent must trust, in order.
+
+    Ordering — concept first, runtime state last:
+        1. WHAT_IT_IS    (narrative)
+        2. INVENTORY     (runtime, regenerable)
+        3. PIPELINE      (runtime flow map; optional)
+        4. DO_NOTS       (project-specific anti-patterns; optional)
+        5. handoff + 00-START-NEXT-SESSION (current state / next priority)
+    """
     what, inventory = _find_anchor_docs(project)
+    pipeline = _find_pipeline_doc(project)
+    do_nots = _find_do_nots_doc(project)
     lines = ["## SOURCE OF TRUTH (read in this order)"]
-    lines.append(f"  1. {START_DOC}    — this session's priorities")
     if what:
-        lines.append(f"  2. {what.relative_to(project)}    — narrative anchor")
+        lines.append(f"  1. {what.relative_to(project)}    — narrative anchor")
     else:
-        lines.append("  2. docs/<APP>_WHAT_IT_IS.md    — narrative anchor (NOT FOUND)")
+        lines.append("  1. docs/<APP>_WHAT_IT_IS.md    — narrative anchor (NOT FOUND)")
     if inventory:
-        lines.append(f"  3. {inventory.relative_to(project)}    — runtime anchor (regenerable; wins on conflict)")
+        lines.append(f"  2. {inventory.relative_to(project)}    — runtime anchor (regenerable; wins on conflict)")
     else:
-        lines.append("  3. docs/<APP>_INVENTORY.md    — runtime anchor (NOT FOUND)")
-    lines.append("  4. docs/handoffs/SESSION_<latest>_*.md    — what last session shipped")
+        lines.append("  2. docs/<APP>_INVENTORY.md    — runtime anchor (NOT FOUND)")
+    if pipeline:
+        lines.append(f"  3. {pipeline.relative_to(project)}    — runtime flow map (entry points, guards, retrieval, scrubs)")
+    else:
+        lines.append("  3. docs/<APP>_PIPELINE.md    — runtime flow map (optional; recommended for LLM/agent/task projects)")
+    if do_nots:
+        lines.append(f"  4. {do_nots.relative_to(project)}    — project-specific anti-patterns / dos and don'ts")
+    else:
+        lines.append("  4. docs/<APP>_DO_NOTS.md    — project-specific anti-patterns (optional)")
+    lines.append(
+        f"  5. docs/handoffs/SESSION_<latest>_*.md + {START_DOC}    — what last session shipped + this session's priorities"
+    )
     lines.append("")
     lines.append("If any other doc disagrees with the inventory, the inventory is right.")
     return "\n".join(lines)
@@ -118,6 +139,25 @@ def _section_anchors(project: Path) -> str:
     if len(blocks) == 1:
         blocks.append("  (no anchor docs found under docs/)")
     return "\n\n".join(blocks)
+
+
+def _section_pipeline(project: Path) -> str:
+    """Optional runtime flow map. Silently omitted if absent so older
+    projects (pre-PIPELINE.md) keep printing the same orient report."""
+    pipeline = _find_pipeline_doc(project)
+    if pipeline is None:
+        return ""
+    rel = pipeline.relative_to(project)
+    return f"## PIPELINE — {rel}\n\n" + _preview(pipeline)
+
+
+def _section_do_nots(project: Path) -> str:
+    """Optional project-level dos-and-don'ts doc. Silently omitted if absent."""
+    do_nots = _find_do_nots_doc(project)
+    if do_nots is None:
+        return ""
+    rel = do_nots.relative_to(project)
+    return f"## DO NOTS — {rel}\n\n" + _preview(do_nots)
 
 
 def _section_latest_handoff(project: Path) -> str:
@@ -205,6 +245,58 @@ def _find_anchor_docs(project: Path) -> tuple[Path | None, Path | None]:
     what = _first_match(docs.glob("*_WHAT_IT_IS.md"))
     inventory = _first_match(docs.glob("*_INVENTORY.md"))
     return what, inventory
+
+
+def _find_pipeline_doc(project: Path) -> Path | None:
+    """Discover the runtime flow map.
+
+    Search order — first hit wins:
+    1. ``docs/<APP>_PIPELINE.md`` (matches the two-doc anchor naming)
+    2. ``docs/PIPELINE.md`` (plain, no app prefix)
+    3. ``PIPELINE.md`` at the repo root (compatibility with projects
+       that keep flow docs at the top level)
+
+    Absent → returns None and orient silently omits the PIPELINE
+    section, so older projects (pre-PIPELINE.md) keep working.
+    """
+    docs = project / DOCS_DIR
+    if docs.is_dir():
+        suffixed = _first_match(docs.glob("*_PIPELINE.md"))
+        if suffixed is not None:
+            return suffixed
+        plain = docs / "PIPELINE.md"
+        if plain.is_file():
+            return plain
+    root_plain = project / "PIPELINE.md"
+    if root_plain.is_file():
+        return root_plain
+    return None
+
+
+def _find_do_nots_doc(project: Path) -> Path | None:
+    """Discover an optional project-level DO_NOTS doc.
+
+    Search order — first hit wins:
+    1. ``docs/<APP>_DO_NOTS.md``
+    2. ``docs/DO_NOTS.md``
+    3. ``DO_NOTS.md`` at the repo root
+
+    Absent → returns None. Pattern teaching docs at
+    ``docs/docs-pattern/06_dos_and_donts.md`` are NOT considered an
+    anchor; this discovery looks for project-specific lessons.
+    """
+    docs = project / DOCS_DIR
+    if docs.is_dir():
+        suffixed = _first_match(docs.glob("*_DO_NOTS.md"))
+        if suffixed is not None:
+            return suffixed
+        plain = docs / "DO_NOTS.md"
+        if plain.is_file():
+            return plain
+    root_plain = project / "DO_NOTS.md"
+    if root_plain.is_file():
+        return root_plain
+    return None
 
 
 def _first_match(it: Iterable[Path]) -> Path | None:
