@@ -546,5 +546,161 @@ class TestDoctorAndOrientAgreeOnDiscovery(unittest.TestCase):
         self.assertFalse(_has_translation_layer_doc(self.project))
 
 
+# ---------------------------------------------------------------------------
+# `context-kit translation-init` static-prompt command
+# ---------------------------------------------------------------------------
+
+
+from cli.translation_init import (  # noqa: E402
+    TRANSLATION_INIT_PROMPT,
+    run_translation_init,
+)
+
+
+class TestTranslationInitCommand(unittest.TestCase):
+    """`translation-init` is a static-prompt printer (same shape as
+    ``audit``). It must:
+    - exit 0
+    - print a non-empty prompt to stdout
+    - never mutate files
+    - cover the five steps the AI is supposed to follow
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmpdir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run_command(self) -> tuple[int, str]:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_translation_init(argparse.Namespace(command="translation-init"))
+        return rc, buf.getvalue()
+
+    def test_returns_zero(self):
+        rc, _ = self._run_command()
+        self.assertEqual(rc, 0)
+
+    def test_prints_non_empty_prompt(self):
+        _, out = self._run_command()
+        self.assertGreater(len(out.strip()), 200)
+
+    def test_prompt_module_constant_matches_output(self):
+        _, out = self._run_command()
+        # The module exports the prompt as a constant for re-use by
+        # downstream tools / docs. The CLI must print it verbatim.
+        self.assertIn(TRANSLATION_INIT_PROMPT.strip(), out)
+
+    def test_prompt_includes_all_five_steps(self):
+        _, out = self._run_command()
+        self.assertIn("Step 1 — Read source-of-truth", out)
+        self.assertIn("Step 2 — Interview the user", out)
+        self.assertIn("Step 3 — Write the populated doc", out)
+        self.assertIn("Step 4 — Verify zero invention", out)
+        self.assertIn("Step 5 — Confirm and switch persona", out)
+
+    def test_prompt_carries_load_bearing_rules(self):
+        _, out = self._run_command()
+        # Core rule must appear so the AI can't lose it across the
+        # five-step recipe.
+        self.assertIn("same truth \u2192 different explanation", out.lower())
+        # The refusal clause must appear (added in the safety pass).
+        self.assertIn("refuse or fall back to a neutral", out.lower())
+        # The "do not overwrite hand-edited" guard must appear.
+        self.assertIn("do **not** overwrite", out)
+
+    def test_prompt_lists_required_headings_to_preserve(self):
+        _, out = self._run_command()
+        # The doc has 8 required headings; the recipe must name each
+        # so the AI doesn't drop any when populating.
+        for heading in (
+            "## Purpose",
+            "## Source of Truth Inputs",
+            "## Personas / Audiences",
+            "## Translation Modes",
+            "## Truth Preservation Rules",
+            "## Example: Same Truth, Different Explanation",
+            "## What Each Person Needs Next",
+            "## Last Verified",
+        ):
+            self.assertIn(heading, out)
+
+    def test_prompt_names_concrete_invention_categories(self):
+        _, out = self._run_command()
+        # The "watch for these" list — verifies Step 4 is specific
+        # enough to be actionable.
+        for category in (
+            "Invented progress",
+            "Invented business impact",
+            "Invented customer value",
+            "Invented decisions",
+        ):
+            self.assertIn(category, out)
+
+    def test_prompt_instructs_persona_switch_at_end(self):
+        _, out = self._run_command()
+        self.assertIn(
+            "Which persona should I operate as for the rest of this",
+            out,
+        )
+
+    def test_command_does_not_mutate_files(self):
+        # Drop a fake project tree and confirm no files appear / change.
+        project = self.tmpdir / "p"
+        project.mkdir()
+        (project / "00-START-NEXT-SESSION.md").write_text("# Start\n")
+        before = {
+            p.relative_to(project): p.stat().st_mtime_ns
+            for p in project.rglob("*") if p.is_file()
+        }
+        # Run from inside the project dir; command is read-only.
+        cwd = Path.cwd()
+        try:
+            import os
+            os.chdir(project)
+            self._run_command()
+        finally:
+            os.chdir(cwd)
+        after = {
+            p.relative_to(project): p.stat().st_mtime_ns
+            for p in project.rglob("*") if p.is_file()
+        }
+        self.assertEqual(before, after)
+
+
+class TestTranslationInitInParser(unittest.TestCase):
+    """The command must be registered on the top-level parser so
+    ``python3 context_kit.py translation-init`` dispatches correctly."""
+
+    def test_parser_registers_command(self):
+        from context_kit import build_parser  # noqa: E402
+        parser = build_parser()
+        # Walk the subparsers to confirm registration.
+        subparsers_action = next(
+            (a for a in parser._actions
+             if isinstance(a, argparse._SubParsersAction)),
+            None,
+        )
+        self.assertIsNotNone(subparsers_action)
+        self.assertIn("translation-init", subparsers_action.choices)
+
+    def test_help_describes_population_workflow(self):
+        from context_kit import build_parser  # noqa: E402
+        parser = build_parser()
+        subparsers_action = next(
+            a for a in parser._actions
+            if isinstance(a, argparse._SubParsersAction)
+        )
+        sub = subparsers_action.choices["translation-init"]
+        # Description must convey "populate the doc / interview the
+        # user / read-only" so users find it from --help.
+        desc = (sub.description or "").lower()
+        self.assertIn("populated", desc)
+        self.assertIn("interview", desc)
+        self.assertIn("read-only", desc)
+
+
 if __name__ == "__main__":
     unittest.main()

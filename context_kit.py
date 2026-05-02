@@ -466,6 +466,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print prompt for the next single step only",
     )
 
+    # translation-init
+    translation_init = sub.add_parser(
+        "translation-init",
+        help="Print a structured prompt for an AI to populate the project's TRANSLATION_LAYER doc",
+        description=(
+            "Print a predefined prompt that instructs an AI agent to read "
+            "the project's source-of-truth (WHAT_IT_IS / INVENTORY / "
+            "PIPELINE / BEHAVIOR_LAYER / latest handoff), interview the "
+            "user about real audiences, write a populated "
+            "docs/<APP>_TRANSLATION_LAYER.md, verify nothing was invented, "
+            "and switch into the named persona's mode for the rest of the "
+            "session. Read-only by contract: never modifies files, never "
+            "invokes an AI, never overwrites a hand-edited translation "
+            "layer doc."
+        ),
+    )
+    del translation_init  # parser registration is the side effect
+
     # refactor (group)
     from cli.refactor import add_subparser as _add_refactor_subparser
     _add_refactor_subparser(sub)
@@ -547,6 +565,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "refactor":
         from cli.refactor import run_refactor
         return run_refactor(args)
+
+    if args.command == "translation-init":
+        from cli.translation_init import run_translation_init
+        return run_translation_init(args)
 
     parser.print_help()
     return 1

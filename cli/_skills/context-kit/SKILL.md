@@ -102,6 +102,41 @@ If the user runs `seed` next and their idea file has no `## Tech stack`
 section, `seed` calls this same engine automatically and bakes the
 recommendation into `docs/BUILD_PLAN.md`.
 
+## Optional — run translation-init to populate the audience contract
+
+If the user asks you to "explain this to <person>", "translate this
+for <stakeholder>", "operate as <persona>", or "populate the
+translation layer", and the project has
+`docs/<APP>_TRANSLATION_LAYER.md` still on default scaffold values
+(generic Builder / Operator / Executive / Tester personas, the
+`/api/admin/*` example), run:
+
+```bash
+context-kit translation-init
+```
+
+It prints a structured five-step recipe that tells you exactly how
+to:
+
+1. Read source-of-truth (anchors + latest handoff).
+2. Interview the user about real audiences, decision authority, and
+   one concrete fact to translate.
+3. Write a populated `docs/<APP>_TRANSLATION_LAYER.md` with real
+   personas, real translation modes, and a real worked example
+   drawn from source-of-truth.
+4. Verify zero invention — every claim traces back.
+5. Confirm with the user, then switch into the named persona's
+   mode for the rest of the session.
+
+The CLI does not call an LLM. It hands you the recipe; you execute
+it. After the doc is populated, it auto-loads via `orient` on every
+future session — switching into a persona's mode becomes one
+sentence at session start.
+
+If the existing translation layer doc has already been hand-edited
+away from defaults, do **not** overwrite it. Propose specific
+amendments instead.
+
 ## Optional — run doctor when something feels off in the environment
 
 If the user is hitting build/run errors that look like environment
