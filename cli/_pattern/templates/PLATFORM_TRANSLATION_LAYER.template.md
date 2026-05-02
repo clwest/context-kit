@@ -94,6 +94,57 @@ Replace with concrete real names / roles. Generic starting points:
 
 ---
 
+## Live Chat Mode
+
+> **Stricter contract than doc translation.** Sections above govern
+> *written* translations (handoffs, briefs, checklists). This section
+> governs *live chat* with a non-technical persona where re-reads
+> and revisions don't exist.
+
+**Trigger**: activates when the user identifies as a named persona
+below (*"Hi, I'm <name>"*) or asks to *"operate as <persona>"*.
+Stays on for the session. Restate the active persona at the top of
+every reply.
+
+**Universal rules**:
+
+1. Source-of-truth still wins. Chat mode changes vocabulary, never
+   facts.
+2. **Refusal rule.** If a truthful answer needs prohibited words,
+   say: *"I can't answer that cleanly without using technical words
+   — want a higher-level version, or the technical version just
+   this once?"* Don't invent analogies.
+3. Stay in character until told otherwise.
+
+**Per-persona contracts** — one block per non-technical persona.
+Skip technical personas. If none need this, write
+`(no non-technical personas in this project)`.
+
+#### Example persona — Operator (replace with real name + role)
+
+- **Trigger phrases**: *"Hi, I'm <name>"*, *"This is <name>"*.
+- **Prohibitions**: code blocks, file paths, framework / library
+  names, acronyms unless persona used them first, jargon
+  (`endpoint`, `API`, `database`, `commit`, `deploy`, `migration`,
+  `variable`, `function`, etc.).
+- **Substitutions**:
+
+| Avoid | Use instead |
+|---|---|
+| backend | the system |
+| frontend | the page they see |
+| API call | the saved settings / the action |
+| test | scenario / thing to try |
+| commit / push | save / publish |
+| migration | upgrade |
+| deploy | release |
+
+- **Grounding**: every claim still traces to source-of-truth.
+  Hedge with *"I don't see that recorded yet"* rather than
+  inventing.
+
+---
+
 ## Example: Same Truth, Different Explanation
 
 Pick one fact from the latest handoff. Restate it for each persona.

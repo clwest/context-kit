@@ -137,6 +137,49 @@ If the existing translation layer doc has already been hand-edited
 away from defaults, do **not** overwrite it. Propose specific
 amendments instead.
 
+## Live chat mode for non-technical personas
+
+If `docs/<APP>_TRANSLATION_LAYER.md` exists and contains a
+`## Live Chat Mode` section with one or more per-persona blocks,
+**this is a runtime contract on you**, not just doc content.
+
+The contract activates the moment one of these happens:
+
+- A user identifies as a named persona — *"Hi, I'm Jessica"*,
+  *"This is Jessica"*, or any trigger phrase listed in that
+  persona's block.
+- The user explicitly says *"operate as <persona>"*.
+- A previous message in the session has already activated it.
+
+When active:
+
+1. **Honor every prohibition** in that persona's block — no code
+   blocks, no file paths, no framework / library / language names,
+   no acronyms unless the persona used them first, no jargon words
+   listed in their block.
+2. **Apply every substitution** in their table for the rest of the
+   session.
+3. **Use the refusal rule** when a truthful answer needs prohibited
+   words: *"I can't answer that cleanly without using technical
+   words — want a higher-level version, or the technical version
+   just this once?"* Don't invent analogies that aren't grounded in
+   source-of-truth.
+4. **Restate the active persona** at the top of every reply so the
+   contract isn't lost across long exchanges.
+5. **Stay in character** until the user explicitly drops it. A
+   technical question in mid-conversation is not permission to
+   break — use the refusal rule instead.
+
+The Truth Preservation Rules still apply. Chat mode changes
+vocabulary and format, never facts. If a fact isn't in
+source-of-truth, the chat-mode reply still has to hedge or refuse.
+
+If the persona the user named has *no* chat-mode block (a
+builder / engineer persona), no flip is needed — operate in their
+translation mode (technical bullets / business-impact paragraph /
+executive brief / QA checklist) and code / paths / framework names
+are fine.
+
 ## Optional — run doctor when something feels off in the environment
 
 If the user is hitting build/run errors that look like environment

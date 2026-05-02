@@ -104,6 +104,7 @@ class TestBootstrapCreatesTranslationLayerDoc(unittest.TestCase):
             "## Personas / Audiences",
             "## Translation Modes",
             "## Truth Preservation Rules",
+            "## Live Chat Mode",
             "## Example: Same Truth, Different Explanation",
             "## What Each Person Needs Next",
             "## Last Verified",
@@ -613,14 +614,16 @@ class TestTranslationInitCommand(unittest.TestCase):
 
     def test_prompt_lists_required_headings_to_preserve(self):
         _, out = self._run_command()
-        # The doc has 8 required headings; the recipe must name each
-        # so the AI doesn't drop any when populating.
+        # The doc has 9 required headings (Live Chat Mode added in
+        # the chat-mode pass); the recipe must name each so the AI
+        # doesn't drop any when populating.
         for heading in (
             "## Purpose",
             "## Source of Truth Inputs",
             "## Personas / Audiences",
             "## Translation Modes",
             "## Truth Preservation Rules",
+            "## Live Chat Mode",
             "## Example: Same Truth, Different Explanation",
             "## What Each Person Needs Next",
             "## Last Verified",
@@ -700,6 +703,225 @@ class TestTranslationInitInParser(unittest.TestCase):
         self.assertIn("populated", desc)
         self.assertIn("interview", desc)
         self.assertIn("read-only", desc)
+
+
+# ---------------------------------------------------------------------------
+# Live Chat Mode — the runtime contract for non-technical personas
+# ---------------------------------------------------------------------------
+
+
+class TestScaffoldHasLiveChatMode(unittest.TestCase):
+    """The scaffolded TRANSLATION_LAYER doc must include a Live Chat
+    Mode section so non-technical personas (Jessica, an executive,
+    etc.) get a real runtime contract — not just artifact-translation
+    rules. Without this, the assistant might still slip into jargon
+    mid-conversation because the doc only governs written output."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmp.name) / "chat-app"
+        run_init(_init_args("Chat App", self.project))
+        self.doc_path = self.project / "docs" / "CHAT_APP_TRANSLATION_LAYER.md"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_scaffold_has_live_chat_mode_heading(self):
+        text = self.doc_path.read_text(encoding="utf-8")
+        self.assertIn("## Live Chat Mode", text)
+
+    def test_scaffold_explains_chat_vs_doc_distinction(self):
+        text = self.doc_path.read_text(encoding="utf-8")
+        # Anchor: the section must explicitly position itself as
+        # *stricter than* the artifact-translation rules above.
+        self.assertIn("Stricter contract", text) if False else self.assertRegex(
+            text.lower(), r"stricter contract|stricter contract than doc translation",
+        )
+
+    def test_scaffold_has_trigger_section(self):
+        text = self.doc_path.read_text(encoding="utf-8")
+        self.assertIn("### Trigger", text)
+        # Default trigger phrase must be present so users see the
+        # convention.
+        self.assertIn('"Hi, I\'m', text)
+
+    def test_scaffold_has_universal_rules(self):
+        text = self.doc_path.read_text(encoding="utf-8")
+        self.assertIn("### Universal rules", text)
+        self.assertIn("Refusal rule", text)
+        # Refusal example phrasing — the literal sentence the
+        # assistant should fall back to. Must appear so the AI can
+        # cite it verbatim instead of paraphrasing.
+        self.assertIn(
+            "I can't answer that cleanly without using technical words",
+            text,
+        )
+
+    def test_scaffold_has_per_persona_contracts_section(self):
+        text = self.doc_path.read_text(encoding="utf-8")
+        self.assertIn("### Per-persona contracts", text)
+        # Skippable for technical personas — the section must
+        # explicitly say so so populators don't write empty blocks.
+        self.assertIn("Skip silently for technical", text)
+
+    def test_scaffold_has_substitutions_table(self):
+        text = self.doc_path.read_text(encoding="utf-8")
+        # The substitutions table is the load-bearing example —
+        # without it, an AI populating real personas has nothing
+        # to model the Markdown shape on.
+        self.assertIn("| Avoid | Use instead |", text)
+        # Minimum coverage of the most common jargon words.
+        for token in ("backend", "frontend", "commit", "deploy", "migration"):
+            self.assertIn(token, text.lower())
+
+    def test_scaffold_has_grounding_rule(self):
+        text = self.doc_path.read_text(encoding="utf-8")
+        # Chat mode changes vocabulary; it must NOT change facts.
+        # The section must restate this rule so a populator doesn't
+        # accidentally drop the truth-preservation contract when
+        # writing chat-mode blocks.
+        self.assertIn("**Grounding**", text)
+        self.assertIn("trace to source-of-truth", text)
+
+
+class TestPatternTemplateHasLiveChatMode(unittest.TestCase):
+    """The compact pattern template under cli/_pattern/templates/
+    must mirror the scaffold so adopters who copy the template
+    instead of running init still get the chat-mode contract."""
+
+    def test_template_has_live_chat_mode_heading(self):
+        template = REPO_ROOT / "cli" / "_pattern" / "templates" / "PLATFORM_TRANSLATION_LAYER.template.md"
+        text = template.read_text(encoding="utf-8")
+        self.assertIn("## Live Chat Mode", text)
+
+    def test_template_has_refusal_rule(self):
+        template = REPO_ROOT / "cli" / "_pattern" / "templates" / "PLATFORM_TRANSLATION_LAYER.template.md"
+        text = template.read_text(encoding="utf-8")
+        self.assertIn(
+            "I can't answer that cleanly without using technical words",
+            text,
+        )
+
+    def test_template_has_substitutions_table(self):
+        template = REPO_ROOT / "cli" / "_pattern" / "templates" / "PLATFORM_TRANSLATION_LAYER.template.md"
+        text = template.read_text(encoding="utf-8")
+        self.assertIn("| Avoid | Use instead |", text)
+
+
+class TestTranslationInitRecipeCoversChatMode(unittest.TestCase):
+    """The translation-init recipe must teach the AI to interview
+    the user about non-technical personas, write a chat-mode block
+    for each, and flip into chat mode when the user picks one."""
+
+    def _run_command(self) -> str:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_translation_init(argparse.Namespace(command="translation-init"))
+        return buf.getvalue()
+
+    def test_recipe_asks_about_non_technical_personas(self):
+        out = self._run_command()
+        # Step 2 Q6 must exist and explicitly call out non-technical
+        # personas. "Live chat mode" is the section title; "non-
+        # technical" is the threshold.
+        self.assertIn("Live chat mode", out)
+        self.assertIn("non-technical", out.lower())
+
+    def test_recipe_asks_for_substitutions(self):
+        out = self._run_command()
+        # The interview must collect both prohibited words and their
+        # substitutions, otherwise the populator can't write a real
+        # Avoid/Use-instead table.
+        self.assertIn("never say", out.lower())
+        # Substitution example pattern: 'backend → "the system"'
+        self.assertIn("'the system'", out)
+
+    def test_recipe_asks_for_trigger_phrase(self):
+        out = self._run_command()
+        # Trigger phrase question — must mention the default.
+        self.assertIn("trigger phrase", out.lower())
+        self.assertIn("Hi, I'm", out)
+
+    def test_recipe_instructs_writing_chat_mode_section(self):
+        out = self._run_command()
+        # Step 3 must point at the Live Chat Mode body and tell the
+        # AI to write per-persona blocks for non-technical personas
+        # and skip technical ones silently. The skip-technical
+        # phrase may wrap across lines or carry markdown bold —
+        # match across whitespace.
+        self.assertIn("`## Live Chat Mode`", out)
+        import re as _re
+        self.assertRegex(
+            out, _re.compile(r"Skip technical personas\s+silently", _re.IGNORECASE),
+        )
+
+    def test_recipe_instructs_flipping_into_chat_mode_on_persona_pick(self):
+        out = self._run_command()
+        # Step 5 must teach the AI to flip into chat mode when the
+        # chosen persona has a chat-mode block, vs. just operating
+        # in their translation mode otherwise.
+        self.assertIn("flip into live chat mode", out)
+        self.assertIn("If the chosen persona has no chat-mode block", out)
+
+    def test_recipe_preserves_universal_rules(self):
+        out = self._run_command()
+        # The recipe must not let the AI re-write the universal
+        # rules; they're load-bearing and must come through verbatim.
+        self.assertIn("Preserve the universal rules", out)
+
+
+class TestSkillTeachesChatModeFlip(unittest.TestCase):
+    """The bundled skill is what Claude reads on session start.
+    Without an explicit chat-mode flip rule there, an AI loaded
+    from the skill won't know to honor the contract when a persona
+    is named — the doc-level contract is meaningless if the agent
+    never reads it as a runtime instruction."""
+
+    def setUp(self):
+        self.skill = REPO_ROOT / "cli" / "_skills" / "context-kit" / "SKILL.md"
+        self.text = self.skill.read_text(encoding="utf-8")
+
+    def test_skill_has_live_chat_mode_section(self):
+        self.assertIn("## Live chat mode for non-technical personas", self.text)
+
+    def test_skill_explains_activation_triggers(self):
+        # The agent must know how to recognize activation:
+        # "Hi, I'm <persona>" or "operate as <persona>".
+        self.assertIn('"Hi, I\'m Jessica"', self.text)
+        self.assertIn('"operate as <persona>"', self.text)
+
+    def test_skill_lists_runtime_obligations(self):
+        # When active, the agent has 5 obligations (prohibitions,
+        # substitutions, refusal rule, restate persona, stay in
+        # character). All must be named so a fresh agent can't miss
+        # one.
+        for obligation in (
+            "Honor every prohibition",
+            "Apply every substitution",
+            "Use the refusal rule",
+            "Restate the active persona",
+            "Stay in character",
+        ):
+            self.assertIn(obligation, self.text)
+
+    def test_skill_preserves_truth_rule_in_chat_mode(self):
+        # Chat mode changes vocabulary, never facts. Must be
+        # explicit in the skill so an agent doesn't think
+        # "plain language" gives them license to soften / invent.
+        self.assertIn("Truth Preservation Rules still apply", self.text)
+        self.assertIn("Chat mode changes\nvocabulary and format, never facts", self.text)
+
+    def test_skill_handles_technical_personas(self):
+        # Builders / engineers don't need the flip — the skill
+        # must say so explicitly so the agent doesn't refuse to
+        # use code blocks when Chris asks a code question. The
+        # "no chat-mode block" phrase appears with markdown italics
+        # around "no" and may wrap across lines.
+        import re as _re
+        self.assertRegex(
+            self.text,
+            _re.compile(r"no\*?\s+chat-mode block", _re.IGNORECASE),
+        )
 
 
 if __name__ == "__main__":

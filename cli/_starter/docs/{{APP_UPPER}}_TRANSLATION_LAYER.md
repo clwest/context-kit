@@ -140,6 +140,101 @@ nowhere.
 
 ---
 
+## Live Chat Mode
+
+> **Live chat is a stricter contract than doc translation.** The
+> sections above describe how to *write* translated artifacts
+> (handoff summaries, executive briefs, QA checklists). This section
+> describes how to *talk* with a non-technical persona in a live
+> back-and-forth where re-reads and revisions don't exist. When the
+> contract activates, every reply for the rest of the session honors
+> these rules.
+
+### Trigger
+
+Activate live chat mode when any of these happens:
+
+- The user's first message identifies them as a named persona below
+  (e.g. *"Hi, I'm Jessica"*).
+- The user explicitly asks the assistant to *"operate as <persona>"*.
+- A previous message in the session has already activated it.
+
+Once active, the contract stays on for the rest of the session
+unless the user says otherwise. Restate the active persona at the
+top of every reply so the contract isn't lost across long
+exchanges.
+
+### Universal rules (apply to every chat-mode persona)
+
+1. **Source-of-truth still wins.** Chat mode changes vocabulary and
+   format, never facts. Truth Preservation Rules above still apply.
+2. **Refusal rule.** If a truthful answer cannot be given without
+   prohibited words, do not paraphrase wildly or invent analogies.
+   Say: *"I can't answer that cleanly without using technical words
+   — want a higher-level version, or do you want me to use the
+   technical words just this once?"*
+3. **No invented analogies.** Plain-language substitutions must
+   point at something real in the system. Don't compare the
+   project to "a kitchen" or "a factory" unless the user used that
+   framing first.
+4. **Stay in character until told otherwise.** Don't drop chat mode
+   the moment a question gets technical. Use the refusal rule
+   instead.
+
+### Per-persona contracts
+
+_Populate one block per non-technical persona named in the
+**Personas / Audiences** table above. Skip silently for technical
+personas (a builder / engineer doesn't need this block). If no
+persona needs live chat mode, leave a single line:
+`(no non-technical personas in this project)` and move on. The
+example block below is illustrative — replace with real personas
+when you populate this doc._
+
+#### Example persona — Operator (replace with real name + role)
+
+**Trigger phrases**: *"Hi, I'm <name>"*, *"This is <name>"*,
+*"<name> here"*. Any of these flips chat mode on for the session.
+
+**Prohibitions** — never say these in chat:
+
+- Code blocks of any kind (even one-liners or paths in backticks).
+- File paths, repo paths, directory names.
+- Framework / library / language names (React, Django, Postgres,
+  Python, etc.).
+- Acronyms unless the persona used them first.
+- Words like: *endpoint*, *API*, *database*, *DB*, *scrub*,
+  *guard*, *model*, *variable*, *function*, *class*, *commit*,
+  *push*, *deploy*, *migration*, *config*.
+
+**Substitutions** — say these instead:
+
+| Avoid | Use instead |
+|---|---|
+| backend | the system |
+| frontend | the page they see |
+| API call / endpoint | the saved settings / the action |
+| test / test case | scenario / thing to try |
+| scrub / guard / filter | guardrail |
+| commit / push | save / publish |
+| migration / schema change | upgrade |
+| deploy / release | release / go-live |
+| variable / field | setting / piece of information |
+| log line / error trace | message / what the system reported |
+
+**Refusal example**: User asks *"Why does the page sometimes show
+yesterday's number?"* If the truthful answer requires saying
+*"caching"* or *"stale query"*, fall back to: *"The system is
+showing you a saved-from-earlier version instead of refreshing.
+Want the technical version of why, or just how to force a refresh?"*
+
+**Grounding**: Every claim must still trace to source-of-truth
+(latest handoff, inventory, what-it-is doc). If you find yourself
+saying *"the system can do X"* and X isn't documented yet, hedge:
+*"I don't see X recorded yet — want me to check directly?"*
+
+---
+
 ## Example: Same Truth, Different Explanation
 
 The example below demonstrates a single fact rewritten for four
