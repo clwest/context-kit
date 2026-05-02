@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -91,6 +92,10 @@ def run_all_checks(project: Path) -> list[CheckResult]:
         check_inventory(project),
         check_pipeline_doc(project),
         check_behavior_layer_doc(project),
+        check_next_task_consistency(project),
+        check_handoff_numbering(project),
+        check_adopt_placeholders(project),
+        check_stale_generic_actions(project),
     ]
 
 
@@ -896,6 +901,494 @@ def check_behavior_layer_doc(project: Path) -> CheckResult:
         fix=[
             "Create docs/<APP>_BEHAVIOR_LAYER.md (template ships with `context-kit init`)",
             "Document voice / tone, UI source-of-truth contract, constraint preservation, GOOD/BAD examples, and post-generation checks",
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Orientation-drift checks
+#
+# These checks catch the classes of failure that mature repos accumulate
+# inside their own context-kit orientation layer:
+#
+#   1. Conflicting "next task" pointers between the adopt-managed block
+#      and a handwritten "Next session priority / Next task" section.
+#   2. Handoff numbering gaps — start-here doc references SESSION_008
+#      but handoffs/ only goes up to SESSION_003.
+#   3. Lingering ``[adopt: please describe]`` placeholders.
+#   4. Adopt-emitted "Next actions" that have gone stale (the user
+#      already answered "Confirm backend/frontend boundaries" but adopt
+#      keeps re-emitting it on every run).
+#
+# All four are warnings, never blocking. The point is to surface drift,
+# not to gate work on it. Older projects that pre-date these checks
+# should pass silently when no drift is present.
+# ---------------------------------------------------------------------------
+
+
+# Marker constants intentionally duplicated here (rather than imported
+# from cli.adopt) so doctor stays a leaf module — adopt is large and
+# pulls in dataclasses we don't need.
+_ADOPT_START_MARKER = "<!-- context-kit:adopt:start -->"
+_ADOPT_END_MARKER = "<!-- context-kit:adopt:end -->"
+
+# The placeholder string adopt writes when the user hasn't supplied a
+# project description / next-task. Worth surfacing once any have been
+# left in long enough to drift.
+_ADOPT_PLACEHOLDER_RE = re.compile(r"\[adopt:\s*please describe[^\]]*\]")
+
+# Files we're willing to scan for placeholders. Every file adopt knows
+# how to write into. Anything else is out of scope — keeps false
+# positives down (and protects user notes that quote the placeholder).
+_PLACEHOLDER_SCAN_PATHS = (
+    "00-START-NEXT-SESSION.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "BUILD_PLAN.md",
+    "docs/BUILD_PLAN.md",
+)
+
+# Doc-glob patterns for placeholder scans (PROJECT_WHAT_IT_IS.md and
+# any *_WHAT_IT_IS.md adopt may have generated).
+_PLACEHOLDER_SCAN_GLOBS = (
+    "docs/*_WHAT_IT_IS.md",
+    "docs/PROJECT_WHAT_IT_IS.md",
+)
+
+# Section headers handwritten authors use to override / supplement the
+# adopt-managed "What's next". Match generously but case-sensitively
+# on the leading "## " so we don't catch quoted prose.
+_HANDWRITTEN_NEXT_SECTION_RES = (
+    re.compile(r"^##\s+Next session priorit", re.IGNORECASE),
+    re.compile(r"^##\s+Next session priority", re.IGNORECASE),
+    re.compile(r"^##\s+Next task\b", re.IGNORECASE),
+    re.compile(r"^##\s+Next priority\b", re.IGNORECASE),
+    re.compile(r"^##\s+Next step\b", re.IGNORECASE),
+    re.compile(r"^##\s+What's next\b", re.IGNORECASE),
+    re.compile(r"^##\s+This session's priorities\b", re.IGNORECASE),
+    re.compile(r"^##\s+Priorit", re.IGNORECASE),
+)
+
+# Adopt-emitted "Next actions" titles that go stale fastest in real
+# repos. Conservative list — these are the ones the Freedom Ford
+# audit specifically called out, plus a couple of close cousins from
+# the adopt source. Each entry is the suggested-action title that
+# adopt renders as a bullet/heading inside the managed block.
+_STALE_ACTION_TITLES = (
+    "Confirm backend/frontend boundaries",
+    "Classify unrecognized directories",
+    "Confirm mobile app structure",
+    "Clarify project shape before coding",
+    "Review workspace children",
+)
+
+# How many handoff jumps we tolerate between latest handoff and the
+# session number the start-here doc references. One off-by-one is
+# normal (next session N+1 hasn't been written yet). Two or more is
+# the sign of a real gap.
+_HANDOFF_GAP_TOLERANCE = 1
+
+# Regex for SESSION_NNN tokens inside any markdown reference / heading.
+# Matches both "SESSION_008" bare and inside path-like strings.
+_SESSION_NUMBER_RE = re.compile(r"SESSION_(\d+)\b")
+
+
+def _read_text(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _strip_managed_block(text: str) -> str:
+    """Return ``text`` with every adopt-managed block removed.
+
+    Used to isolate handwritten content. Multiple managed blocks (rare
+    but legal) are all stripped. If a start marker has no matching end
+    marker, the rest of the document is treated as managed — better to
+    over-strip than to misread the user's content as adopt's.
+    """
+    out: list[str] = []
+    cursor = 0
+    while True:
+        start = text.find(_ADOPT_START_MARKER, cursor)
+        if start == -1:
+            out.append(text[cursor:])
+            return "".join(out)
+        out.append(text[cursor:start])
+        end = text.find(_ADOPT_END_MARKER, start + len(_ADOPT_START_MARKER))
+        if end == -1:
+            return "".join(out)
+        cursor = end + len(_ADOPT_END_MARKER)
+
+
+def _extract_managed_block(text: str) -> Optional[str]:
+    """Return the *body* of the first adopt-managed block, or None.
+
+    Body excludes the marker lines themselves so callers can grep
+    headers without false matches on the markers.
+    """
+    start = text.find(_ADOPT_START_MARKER)
+    if start == -1:
+        return None
+    end = text.find(_ADOPT_END_MARKER, start + len(_ADOPT_START_MARKER))
+    if end == -1:
+        return text[start + len(_ADOPT_START_MARKER):]
+    return text[start + len(_ADOPT_START_MARKER):end]
+
+
+def _section_body(text: str, header_res: tuple[re.Pattern[str], ...]) -> Optional[str]:
+    """Return the body of the first section whose header matches any
+    pattern in ``header_res``, or None.
+
+    Body runs from the line after the header to the next ``##`` heading
+    or end of text. Trailing whitespace is stripped; leading/internal
+    whitespace is preserved so the caller can compare meaningfully.
+    """
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        for pat in header_res:
+            if pat.search(line):
+                body_lines: list[str] = []
+                for follow in lines[idx + 1:]:
+                    if follow.startswith("## "):
+                        break
+                    body_lines.append(follow)
+                return "\n".join(body_lines).strip()
+    return None
+
+
+def _normalize_for_compare(s: str) -> str:
+    """Whitespace-collapse a markdown body for equality comparison."""
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def check_next_task_consistency(project: Path) -> CheckResult:
+    """Warn when 00-START-NEXT-SESSION.md has two disagreeing next-task pointers.
+
+    Mature repos accumulate this: ``adopt`` keeps re-emitting its
+    ``## What's next`` line inside the managed block, while a human
+    rewrites priorities in a handwritten ``## Next session priorities``
+    section. The two slowly diverge. Agents reading orient see one
+    answer but the file claims another section is canonical.
+
+    Detection rules:
+    * The file must have an adopt-managed block with a ``## What's next``
+      section inside it.
+    * The handwritten content (managed blocks stripped) must contain a
+      section whose header looks like a "next task" override (``Next
+      session priorit*``, ``Next task``, ``Priorit*``, ``This session's
+      priorities``, ``What's next``).
+    * The two bodies, after whitespace-normalization, must differ
+      meaningfully.
+
+    Warning, never blocking — the file is still readable.
+    """
+    start_doc = project / "00-START-NEXT-SESSION.md"
+    if not start_doc.is_file():
+        return CheckResult(
+            id="next_task_consistency",
+            label="Next-task pointer consistency",
+            status="skipped",
+            detail="00-START-NEXT-SESSION.md not present",
+        )
+
+    text = _read_text(start_doc)
+    if text is None:
+        return CheckResult(
+            id="next_task_consistency",
+            label="Next-task pointer consistency",
+            status="skipped",
+            detail="Could not read 00-START-NEXT-SESSION.md",
+        )
+
+    managed = _extract_managed_block(text)
+    if managed is None:
+        return CheckResult(
+            id="next_task_consistency",
+            label="Next-task pointer consistency",
+            status="skipped",
+            detail="No adopt-managed block in 00-START-NEXT-SESSION.md",
+        )
+
+    managed_next = _section_body(managed, (re.compile(r"^##\s+What's next\b", re.IGNORECASE),))
+    if not managed_next:
+        return CheckResult(
+            id="next_task_consistency",
+            label="Next-task pointer consistency",
+            status="skipped",
+            detail='Adopt block has no "What\'s next" section to compare',
+        )
+
+    handwritten = _strip_managed_block(text)
+    handwritten_next = _section_body(handwritten, _HANDWRITTEN_NEXT_SECTION_RES)
+    if not handwritten_next:
+        return CheckResult(
+            id="next_task_consistency",
+            label="Next-task pointer consistency",
+            status="ok",
+            detail='Single source for "next task" — adopt block only',
+        )
+
+    if _normalize_for_compare(managed_next) == _normalize_for_compare(handwritten_next):
+        return CheckResult(
+            id="next_task_consistency",
+            label="Next-task pointer consistency",
+            status="ok",
+            detail="Adopt-managed and handwritten next-task pointers agree",
+        )
+
+    return CheckResult(
+        id="next_task_consistency",
+        label="Next-task pointer consistency",
+        status="warning",
+        detail=(
+            "00-START-NEXT-SESSION.md has two disagreeing next-task pointers: "
+            'the adopt-managed "## What\'s next" inside the block and a '
+            'handwritten "Next session priorities" / "Next task" section '
+            "outside it. Agents reading orient confidently surface one "
+            "while the file claims another section is canonical."
+        ),
+        fix=[
+            "Pick one as canonical. Either:",
+            '  - delete the handwritten section and let adopt own "What\'s next", or',
+            "  - delete the adopt-managed block (or update its --next-task on the next adopt run) so the handwritten section is the only pointer.",
+        ],
+    )
+
+
+def _next_session_number_from_start_doc(project: Path) -> Optional[int]:
+    """Best-effort extraction of the SESSION_NNN the start-here doc points at.
+
+    Heuristic: read 00-START-NEXT-SESSION.md, find every ``SESSION_NNN``
+    token, and return the *highest* number — the assumption is that
+    when the file references multiple session IDs, the one farthest in
+    the future is the "next" pointer (which is the one that needs to
+    line up with the latest handoff). False positives are tolerable;
+    this only feeds a warning.
+    """
+    start_doc = project / "00-START-NEXT-SESSION.md"
+    text = _read_text(start_doc)
+    if text is None:
+        return None
+    matches = _SESSION_NUMBER_RE.findall(text)
+    if not matches:
+        return None
+    try:
+        return max(int(m) for m in matches)
+    except ValueError:
+        return None
+
+
+def _latest_handoff_number(project: Path) -> Optional[int]:
+    """Return the highest numbered ``SESSION_NNN_*.md`` in ``docs/handoffs/``."""
+    handoffs = project / "docs" / "handoffs"
+    if not handoffs.is_dir():
+        return None
+    pat = re.compile(r"^SESSION_(\d+)_.+\.md$")
+    nums: list[int] = []
+    for p in handoffs.glob("SESSION_*.md"):
+        if not p.is_file():
+            continue
+        m = pat.match(p.name)
+        if m is None:
+            continue
+        try:
+            nums.append(int(m.group(1)))
+        except ValueError:
+            continue
+    return max(nums) if nums else None
+
+
+def check_handoff_numbering(project: Path) -> CheckResult:
+    """Warn if the start-here doc names a SESSION_NNN that's far ahead of the
+    latest handoff on disk.
+
+    Real-world failure: ``00-START-NEXT-SESSION.md`` says SESSION_008,
+    but ``docs/handoffs/`` only goes up to SESSION_003. Either four
+    handoffs are missing (drift) or the next-pointer is stale. Either
+    way, the latest-handoff continuity rule is broken and an agent
+    that reads orient will form the wrong picture of state-of-system.
+
+    Skipped unless we can read both numbers. Warning when the gap is
+    greater than ``_HANDOFF_GAP_TOLERANCE``. Never blocking.
+    """
+    next_num = _next_session_number_from_start_doc(project)
+    latest_num = _latest_handoff_number(project)
+    if next_num is None or latest_num is None:
+        return CheckResult(
+            id="handoff_numbering",
+            label="Handoff numbering continuity",
+            status="skipped",
+            detail="Could not derive SESSION numbers from start-here / handoffs/",
+        )
+
+    gap = next_num - latest_num
+    if gap <= _HANDOFF_GAP_TOLERANCE:
+        return CheckResult(
+            id="handoff_numbering",
+            label="Handoff numbering continuity",
+            status="ok",
+            detail=(
+                f"Start-here references SESSION_{next_num:03d}; "
+                f"latest handoff is SESSION_{latest_num:03d} (gap {gap})"
+            ),
+        )
+
+    return CheckResult(
+        id="handoff_numbering",
+        label="Handoff numbering continuity",
+        status="warning",
+        detail=(
+            f"Handoff numbering gap: 00-START-NEXT-SESSION.md references "
+            f"SESSION_{next_num:03d}, but the latest on-disk handoff is "
+            f"SESSION_{latest_num:03d} ({gap} sessions missing). "
+            "The latest handoff is supposed to represent state-of-system "
+            "continuity — that contract is broken when intermediate "
+            "handoffs go missing."
+        ),
+        fix=[
+            "Backfill the missing handoffs from CHANGELOG.md / git log, or",
+            f"Renumber the next-session pointer to SESSION_{latest_num + 1:03d}.",
+        ],
+    )
+
+
+def _scan_files_for_placeholders(project: Path) -> list[str]:
+    """Return relative paths of files that contain at least one
+    ``[adopt: please describe...]`` placeholder.
+
+    Scans only the small set of files adopt knows how to write into.
+    De-duplicated, sorted for stable output.
+    """
+    found: set[str] = set()
+    for rel in _PLACEHOLDER_SCAN_PATHS:
+        path = project / rel
+        if not path.is_file():
+            continue
+        text = _read_text(path)
+        if text is None:
+            continue
+        if _ADOPT_PLACEHOLDER_RE.search(text):
+            found.add(rel)
+    for pattern in _PLACEHOLDER_SCAN_GLOBS:
+        for path in project.glob(pattern):
+            if not path.is_file():
+                continue
+            text = _read_text(path)
+            if text is None:
+                continue
+            if _ADOPT_PLACEHOLDER_RE.search(text):
+                try:
+                    rel = str(path.relative_to(project))
+                except ValueError:
+                    rel = path.name
+                found.add(rel)
+    return sorted(found)
+
+
+def check_adopt_placeholders(project: Path) -> CheckResult:
+    """Warn if any ``[adopt: please describe ...]`` placeholders remain.
+
+    Adopt writes these when the user hasn't supplied a project-summary
+    or next-task on a `--write` run. They're meant to be filled in
+    immediately. In practice they tend to linger, which silently
+    erodes trust in the generated anchors — an agent reads the file
+    and finds an unfilled placeholder where it expected real context.
+
+    Warning, never blocking.
+    """
+    files = _scan_files_for_placeholders(project)
+    if not files:
+        return CheckResult(
+            id="adopt_placeholders",
+            label="Unresolved adopt placeholders",
+            status="ok",
+            detail="No `[adopt: please describe]` placeholders found",
+        )
+
+    return CheckResult(
+        id="adopt_placeholders",
+        label="Unresolved adopt placeholders",
+        status="warning",
+        detail=(
+            f"`[adopt: please describe]` placeholder(s) remain in: "
+            f"{', '.join(files)}. Adopt writes these when --project-summary "
+            "or --next-task wasn't supplied; they're meant to be filled in, "
+            "not left in. Lingering placeholders reduce trust in the "
+            "generated anchors."
+        ),
+        fix=[
+            "Edit each file and replace the placeholder with the real value.",
+            "Or re-run adopt with --project-summary / --next-task / --notes "
+            "to regenerate the managed blocks with real content.",
+        ],
+    )
+
+
+def _stale_action_hits(project: Path) -> list[str]:
+    """Return the stale-prone action titles that appear inside any
+    adopt-managed block in the start-here doc or CLAUDE.md.
+
+    Conservative — only checks the small set of files adopt manages.
+    De-duplicated, sorted for stable output.
+    """
+    found: set[str] = set()
+    for rel in ("00-START-NEXT-SESSION.md", "CLAUDE.md", "BUILD_PLAN.md", "docs/BUILD_PLAN.md"):
+        path = project / rel
+        if not path.is_file():
+            continue
+        text = _read_text(path)
+        if text is None:
+            continue
+        managed = _extract_managed_block(text)
+        if managed is None:
+            continue
+        for title in _STALE_ACTION_TITLES:
+            if title in managed:
+                found.add(title)
+    return sorted(found)
+
+
+def check_stale_generic_actions(project: Path) -> CheckResult:
+    """Warn when adopt's "Next actions" still emit generic titles that
+    have likely been answered.
+
+    Adopt picks actions like "Confirm backend/frontend boundaries" or
+    "Classify unrecognized directories" the *first* time it runs. They
+    are useful immediately but become noise once the user has
+    answered them — and adopt has no way to know they're answered, so
+    every re-run keeps re-emitting them.
+
+    Conservative warning. The user has to decide whether the action is
+    still relevant or whether to clear it (by editing the managed
+    block, or by passing the answer back into adopt via --notes /
+    --project-summary).
+    """
+    titles = _stale_action_hits(project)
+    if not titles:
+        return CheckResult(
+            id="stale_generic_actions",
+            label="Stale adopt-emitted next actions",
+            status="ok",
+            detail="No generic adopt actions detected (or adopt block absent)",
+        )
+
+    return CheckResult(
+        id="stale_generic_actions",
+        label="Stale adopt-emitted next actions",
+        status="warning",
+        detail=(
+            "Adopt-managed block still shows generic next-action title(s): "
+            f"{', '.join(titles)}. These are useful on first init but "
+            "become noise once answered — review whether they still apply."
+        ),
+        fix=[
+            "If they're answered: edit the managed block to remove or "
+            "replace them, or re-run adopt with --notes / --project-summary "
+            "so subsequent runs reflect the answers.",
+            "If they're still open: leave them but treat them as actionable, "
+            "not informational.",
         ],
     )
 

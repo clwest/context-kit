@@ -107,6 +107,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Project root (default: current working directory)",
     )
+    orient.add_argument(
+        "--short",
+        action="store_true",
+        help=(
+            "Print a compact summary instead of the full report. "
+            "Useful for repeated re-orientation mid-session: source-of-truth "
+            "order, session-start doc (if present), latest handoff, "
+            "next-task pointer, and a doctor warning summary — no anchor "
+            "previews."
+        ),
+    )
 
     # hotpath
     hotpath = sub.add_parser(

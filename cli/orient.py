@@ -22,6 +22,14 @@ HANDOFFS_DIR = Path("docs/handoffs")
 DOCS_DIR = Path("docs")
 PATTERN_DIR = Path("docs/docs-pattern")
 
+# Token embedded by `cli.inventory.render_block_body` when the
+# context-kit-shape detectors don't match the project. When orient
+# sees this marker inside the inventory file, it softens the
+# "wins on conflict" framing: those rows are zero by detector design,
+# not by repo absence, and using them as the runtime-truth anchor
+# would mislead an agent.
+_INVENTORY_LOW_SIGNAL_MARKER = "<!-- context-kit:inventory:low-signal -->"
+
 # Numbered session handoff: ``SESSION_<digits>_<anything>.md``. Files
 # that don't match this shape (e.g. ``SESSION_ROADMAP_*.md``,
 # ``SESSION_NOTES.md``) are not handoffs and must not be picked as
@@ -46,10 +54,17 @@ def run_orient(args: argparse.Namespace) -> int:
         )
         return 2
 
+    # --short is opt-in via argparse; tolerate absence (e.g. when
+    # callers construct Namespace by hand for tests / scripts).
+    if getattr(args, "short", False):
+        print(_render_short(project).rstrip() + "\n")
+        return 0
+
     sections: list[str] = []
     sections.append(_section_header(project))
     sections.append(_section_source_of_truth(project))
     sections.append(_section_start_here(project))
+    sections.append(_section_session_start(project))
     sections.append(_section_anchors(project))
     sections.append(_section_pipeline(project))
     sections.append(_section_behavior_layer(project))
@@ -60,6 +75,203 @@ def run_orient(args: argparse.Namespace) -> int:
 
     print("\n\n".join(s for s in sections if s).rstrip() + "\n")
     return 0
+
+
+def _render_short(project: Path) -> str:
+    """Compact orient: source-of-truth order, session-start doc,
+    latest handoff, next-task pointer, doctor warning summary.
+
+    Designed for repeated re-orientation mid-session, where the full
+    report (with anchor previews) would burn context for nothing.
+    """
+    lines: list[str] = []
+    lines.append(f"# context-kit orient (short)")
+    lines.append(f"Project: {project.name}")
+    lines.append(f"Path:    {project}")
+    lines.append("")
+
+    # Source-of-truth order — same logic as the full report, just
+    # without the long preamble.
+    lines.append(_section_source_of_truth(project))
+    lines.append("")
+
+    # Session-start index — filename only, no preview.
+    session_start = _find_session_start_doc(project)
+    if session_start is not None:
+        rel = session_start.relative_to(project)
+        lines.append(f"## SESSION START INDEX")
+        lines.append(f"  {rel}    (open and read first)")
+        lines.append("")
+
+    # Latest numbered handoff — filename only.
+    handoffs_dir = project / HANDOFFS_DIR
+    if handoffs_dir.is_dir():
+        latest = _latest_numbered_handoff(handoffs_dir)
+        if latest is not None:
+            rel = latest.relative_to(project)
+            lines.append("## LATEST HANDOFF")
+            lines.append(f"  {rel}")
+            lines.append("")
+
+    # Next-task pointer extracted from 00-START-NEXT-SESSION.md.
+    next_pointer = _short_next_task_pointer(project)
+    if next_pointer:
+        lines.append("## NEXT TASK")
+        lines.append(next_pointer)
+        lines.append("")
+
+    # Doctor warning summary — counts only, no per-check details.
+    doctor_summary = _short_doctor_summary(project)
+    if doctor_summary:
+        lines.append("## DOCTOR")
+        lines.append(doctor_summary)
+        lines.append("")
+
+    lines.append(
+        "Run `context-kit orient` (no --short) to print full anchor previews."
+    )
+    return "\n".join(lines)
+
+
+def _short_next_task_pointer(project: Path) -> str:
+    """Return a 1–3 line excerpt of the start-here doc's next-task section.
+
+    Tries each of these section headers in order, returning the first
+    non-empty body (truncated to ~3 lines so --short stays compact):
+
+    1. handwritten ``## Next session priorities`` / ``## Next task``
+    2. handwritten ``## What's next`` (when not inside the adopt block)
+    3. adopt-managed ``## What's next``
+
+    Falls back to "  (see 00-START-NEXT-SESSION.md)" when nothing matches.
+    """
+    start_doc = project / START_DOC
+    try:
+        text = start_doc.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+    # Look for handwritten next-task section first (outside any
+    # adopt-managed block). If absent, fall through to the adopt
+    # block's "What's next".
+    handwritten = _strip_adopt_managed(text)
+    handwritten_body = _first_section_body(
+        handwritten,
+        (
+            r"^##\s+Next session priorit",
+            r"^##\s+Next task\b",
+            r"^##\s+Next priority\b",
+            r"^##\s+Next step\b",
+            r"^##\s+This session's priorities\b",
+            r"^##\s+What's next\b",
+            r"^##\s+Priorit",
+        ),
+    )
+    if handwritten_body:
+        return _short_excerpt(handwritten_body)
+
+    managed_body = _adopt_managed_next(text)
+    if managed_body:
+        return _short_excerpt(managed_body)
+
+    return f"  (see {START_DOC} — no recognized next-task section found)"
+
+
+_ADOPT_START = "<!-- context-kit:adopt:start -->"
+_ADOPT_END = "<!-- context-kit:adopt:end -->"
+
+
+def _strip_adopt_managed(text: str) -> str:
+    """Return ``text`` with adopt-managed blocks removed (outside-only view)."""
+    out: list[str] = []
+    cursor = 0
+    while True:
+        s = text.find(_ADOPT_START, cursor)
+        if s == -1:
+            out.append(text[cursor:])
+            return "".join(out)
+        out.append(text[cursor:s])
+        e = text.find(_ADOPT_END, s + len(_ADOPT_START))
+        if e == -1:
+            return "".join(out)
+        cursor = e + len(_ADOPT_END)
+
+
+def _adopt_managed_next(text: str) -> str:
+    """Return the body of ``## What's next`` from inside an adopt-managed block."""
+    s = text.find(_ADOPT_START)
+    if s == -1:
+        return ""
+    e = text.find(_ADOPT_END, s + len(_ADOPT_START))
+    block = text[s + len(_ADOPT_START):] if e == -1 else text[s + len(_ADOPT_START):e]
+    return _first_section_body(block, (r"^##\s+What's next\b",))
+
+
+def _first_section_body(text: str, header_patterns: tuple[str, ...]) -> str:
+    """Return the body of the first section whose header matches any
+    pattern in ``header_patterns`` (case-insensitive). Body runs from
+    the line after the header to the next ``##`` or end of text.
+    Returns "" when no header matches.
+    """
+    compiled = [re.compile(p, re.IGNORECASE) for p in header_patterns]
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        if any(p.search(line) for p in compiled):
+            body_lines: list[str] = []
+            for follow in lines[idx + 1:]:
+                if follow.startswith("## "):
+                    break
+                body_lines.append(follow)
+            return "\n".join(body_lines).strip()
+    return ""
+
+
+def _short_excerpt(body: str, max_lines: int = 6) -> str:
+    """Indent ``body`` to two spaces, truncate to ``max_lines`` non-blank
+    lines plus a trailing ellipsis when more remain. Keeps --short tight."""
+    raw_lines = body.splitlines()
+    kept: list[str] = []
+    skipped_more = False
+    for line in raw_lines:
+        if len(kept) >= max_lines:
+            skipped_more = True
+            break
+        kept.append(line)
+    indented = ["  " + ln if ln else "" for ln in kept]
+    if skipped_more:
+        indented.append("  ...")
+    return "\n".join(indented)
+
+
+def _short_doctor_summary(project: Path) -> str:
+    """Run doctor in-process and summarize counts only.
+
+    Lazy import — keeps the cold-start cost off the regular orient
+    path. Failures degrade to ``"  (doctor unavailable)"`` rather
+    than crashing orient.
+    """
+    try:
+        from .doctor import run_all_checks  # type: ignore
+    except ImportError:
+        return "  (doctor unavailable)"
+    try:
+        results = run_all_checks(project)
+    except Exception:
+        return "  (doctor failed; run `context-kit doctor` for details)"
+    blocking = sum(1 for r in results if r.status == "blocking")
+    warnings = sum(1 for r in results if r.status == "warning")
+    ok = sum(1 for r in results if r.status == "ok")
+    skipped = sum(1 for r in results if r.status == "skipped")
+    summary = f"  {blocking} blocking, {warnings} warnings, {ok} ok, {skipped} skipped"
+    if blocking == 0 and warnings == 0:
+        return summary + " — clean."
+    if warnings > 0 and blocking == 0:
+        # Name the warning labels so --short is actionable without a
+        # second invocation. Cap at 5 to keep the summary short.
+        names = [r.label for r in results if r.status == "warning"][:5]
+        more = "" if len(names) >= sum(1 for r in results if r.status == "warning") else " ..."
+        return summary + "\n  warnings: " + ", ".join(names) + more
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -95,18 +307,41 @@ def _section_source_of_truth(project: Path) -> str:
         4. BEHAVIOR_LAYER   (voice, presentation, constraint preservation; optional)
         5. DO_NOTS          (project-specific anti-patterns; optional)
         6. handoff + 00-START-NEXT-SESSION (current state / next priority)
+
+    When the inventory carries the LOW-SIGNAL marker, the line for
+    that anchor is reworded so the agent doesn't treat detector-zero
+    rows as authoritative — they're zero by detector design, not by
+    repo absence.
     """
     what, inventory = _find_anchor_docs(project)
     pipeline = _find_pipeline_doc(project)
     behavior = _find_behavior_layer_doc(project)
     do_nots = _find_do_nots_doc(project)
+    session_start = _find_session_start_doc(project)
+    inventory_low_signal = inventory is not None and _is_low_signal_inventory(inventory)
     lines = ["## SOURCE OF TRUTH (read in this order)"]
+    if session_start:
+        # Project-owned short-form index — call out as the entry
+        # point above the detected anchors. Mature repos write this
+        # file specifically so a returning agent has a 30-second
+        # answer before the long anchor docs.
+        lines.append(
+            f"  0. {session_start.relative_to(project)}    "
+            "— project-owned session-start index (read this first)"
+        )
     if what:
         lines.append(f"  1. {what.relative_to(project)}    — narrative anchor")
     else:
         lines.append("  1. docs/<APP>_WHAT_IT_IS.md    — narrative anchor (NOT FOUND)")
     if inventory:
-        lines.append(f"  2. {inventory.relative_to(project)}    — runtime anchor (regenerable; wins on conflict)")
+        if inventory_low_signal:
+            lines.append(
+                f"  2. {inventory.relative_to(project)}    — runtime anchor "
+                "(LOW-SIGNAL: context-kit-shape detectors didn't match this repo; "
+                "treat counts as informational, not authoritative)"
+            )
+        else:
+            lines.append(f"  2. {inventory.relative_to(project)}    — runtime anchor (regenerable; wins on conflict)")
     else:
         lines.append("  2. docs/<APP>_INVENTORY.md    — runtime anchor (NOT FOUND)")
     if pipeline:
@@ -125,8 +360,28 @@ def _section_source_of_truth(project: Path) -> str:
         f"  6. docs/handoffs/SESSION_<latest>_*.md + {START_DOC}    — what last session shipped + this session's priorities"
     )
     lines.append("")
-    lines.append("If any other doc disagrees with the inventory, the inventory is right.")
+    if inventory_low_signal:
+        lines.append(
+            "Inventory is LOW-SIGNAL for this repo — detectors didn't match. "
+            "Verify counts directly (ls / git ls-files / your test runner) "
+            "before relying on them; do not present zero counts as facts."
+        )
+    else:
+        lines.append("If any other doc disagrees with the inventory, the inventory is right.")
     return "\n".join(lines)
+
+
+def _is_low_signal_inventory(inventory_path: Path) -> bool:
+    """Return True if the inventory file carries the LOW-SIGNAL marker.
+
+    Read failures fall back to False — a failure to detect is the
+    safer default than incorrectly downgrading a real inventory.
+    """
+    try:
+        text = inventory_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return _INVENTORY_LOW_SIGNAL_MARKER in text
 
 
 def _section_start_here(project: Path) -> str:
@@ -134,6 +389,28 @@ def _section_start_here(project: Path) -> str:
     if not path.is_file():
         return f"## START HERE\n  (missing) {START_DOC}"
     return f"## START HERE — {START_DOC}\n\n" + _preview(path)
+
+
+def _section_session_start(project: Path) -> str:
+    """Optional project-owned session-start index.
+
+    Mature repos accumulate 250+ lines across the two-doc anchor pair
+    plus the latest handoff plus 00-START-NEXT-SESSION; that's too
+    much to re-read on every session. ``docs/<APP>_SESSION_START.md``
+    (or ``docs/SESSION_START.md``) is the project's *handwritten*
+    short-form index — read order, canonical next-task location,
+    current baseline, smoke checks, what to skip. ``orient`` shows it
+    above the anchor previews so a returning agent has the 30-second
+    answer before the long anchors.
+
+    Silently omitted when absent. Older projects keep printing the
+    same orient report unchanged.
+    """
+    session_start = _find_session_start_doc(project)
+    if session_start is None:
+        return ""
+    rel = session_start.relative_to(project)
+    return f"## SESSION START INDEX — {rel}\n\n" + _preview(session_start)
 
 
 def _section_anchors(project: Path) -> str:
@@ -315,6 +592,36 @@ def _find_behavior_layer_doc(project: Path) -> Path | None:
         if plain.is_file():
             return plain
     root_plain = project / "BEHAVIOR_LAYER.md"
+    if root_plain.is_file():
+        return root_plain
+    return None
+
+
+def _find_session_start_doc(project: Path) -> Path | None:
+    """Discover the project-owned session-start index (handwritten).
+
+    Search order — first hit wins:
+    1. ``docs/<APP>_SESSION_START.md`` (matches anchor naming)
+    2. ``docs/SESSION_START.md`` (plain)
+    3. ``SESSION_START.md`` at the repo root
+
+    Absent → returns None and orient silently omits the SESSION
+    START INDEX section so older projects (pre-template) keep working.
+
+    Note: this is *project-owned*. ``adopt`` / ``seed`` /
+    ``inventory --write`` must not touch it. The starter template at
+    ``cli/_starter/docs/<APP_UPPER>_SESSION_START.md`` is materialized
+    once on ``init``; further runs leave it alone.
+    """
+    docs = project / DOCS_DIR
+    if docs.is_dir():
+        suffixed = _first_match(docs.glob("*_SESSION_START.md"))
+        if suffixed is not None:
+            return suffixed
+        plain = docs / "SESSION_START.md"
+        if plain.is_file():
+            return plain
+    root_plain = project / "SESSION_START.md"
     if root_plain.is_file():
         return root_plain
     return None

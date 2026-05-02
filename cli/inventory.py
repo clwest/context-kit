@@ -35,6 +35,18 @@ END_MARKER = "<!-- context-kit:inventory:end -->"
 DEFAULT_INVENTORY_REL = Path("docs/CONTEXT_KIT_INVENTORY.md")
 SCHEMA_VERSION = 1
 
+# Marker we embed inside the managed block when none of the
+# context-kit-shape detectors (CLI subcommands, guide docs, templates,
+# tests, scaffold, starter) match the project. Other tools (orient)
+# look for this token to decide whether the auto-block should be
+# treated as authoritative ("wins on conflict") or as informational
+# ("most rows are zero by detector design, not by repo absence").
+LOW_SIGNAL_MARKER = "<!-- context-kit:inventory:low-signal -->"
+
+# Note appended to misleading rows when the inventory is low-signal.
+# Kept short so the table stays readable.
+_LOW_SIGNAL_ROW_SUFFIX = " (context-kit-shape only)"
+
 # When --check compares blocks, the "Last generated:" line is normalized
 # on both sides so a fresh timestamp doesn't count as drift.
 _TIMESTAMP_LINE_RE = re.compile(r"<!-- Last generated:[^>]*-->")
@@ -383,10 +395,56 @@ def _relpath(p: Path, project: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+def is_low_signal(inventory: dict) -> bool:
+    """True when none of the context-kit-shape detectors match the project.
+
+    A repo can be a perfectly real project with hundreds of tests and
+    rich CLI surfaces and still trip every "0" row in this inventory
+    if its tests don't live in ``tests/``, its CLI isn't built from
+    ``cli/`` modules, and it never adopted the guide-doc / template /
+    scaffold layout. The inventory is honest in that case but
+    *misleading* — a skimmer reading "Tests collected: 0" thinks the
+    project has no tests, when it just doesn't have ones the
+    context-kit-shape detector knows how to find.
+
+    Definition: every *on-disk* count that's specific to context-kit
+    shape is zero.
+
+    * ``cli_modules`` — empty (no ``cli/*.py`` modules)
+    * ``guide_docs`` — empty (no ``01_*.md``..``08_*.md``)
+    * ``template_files`` — empty
+    * ``starter_files`` AND ``scaffold_files`` — both empty
+    * ``test_files`` — empty (the directory layout, not test count)
+    * ``skill_files`` — empty (no SKILL.md anywhere)
+
+    Note: ``cli_subcommands`` is intentionally excluded — it's
+    derived from ``context_kit.build_parser()`` in the *invoking*
+    process, not from the project on disk, so it's always populated
+    when the generator runs. Including it would mask the very case
+    this heuristic exists to flag.
+
+    ``handoff_files`` and ``docs_files`` are also not part of this
+    check because they're load-bearing pieces a real adopter project
+    might still have. Same for ``tracked_file_count`` — a project
+    with thousands of tracked files but none of the above is exactly
+    the case we want to flag.
+    """
+    return (
+        not inventory.get("cli_modules")
+        and not inventory.get("guide_docs")
+        and not inventory.get("template_files")
+        and not inventory.get("starter_files")
+        and not inventory.get("scaffold_files")
+        and not inventory.get("test_files")
+        and not inventory.get("skill_files")
+    )
+
+
 def render_block_body(inventory: dict) -> str:
     """Render the markdown body that lives between the start/end markers."""
     pkg = inventory.get("package") or {}
     hp = inventory.get("hotpath") or {}
+    low_signal = is_low_signal(inventory)
 
     lines: list[str] = []
     lines.append(
@@ -394,34 +452,67 @@ def render_block_body(inventory: dict) -> str:
     )
     lines.append(f"<!-- Last generated: {inventory['generated_at']} -->")
     lines.append(f"<!-- Schema version: {inventory['schema_version']} -->")
+    if low_signal:
+        # Embed a stable token (LOW_SIGNAL_MARKER) other tools can
+        # detect plus a human-readable banner inside the rendered
+        # body. The banner is what a reader sees; the comment is
+        # what orient (and any future tooling) keys off.
+        lines.append(LOW_SIGNAL_MARKER)
     lines.append("")
+    if low_signal:
+        lines.append(
+            "> **Low-signal inventory.** None of the context-kit-shape "
+            "detectors (CLI subcommands, guide docs, templates, tests in "
+            "`tests/test_*.py`, skill files) matched this repo. Most rows "
+            "below are `0` *by detector design, not by repo absence* — do "
+            "not conclude this project has no tests, no docs, etc. just "
+            "because the counts are zero. Treat this block as informational "
+            "until a project-specific inventory generator replaces it."
+        )
+        lines.append("")
     lines.append("## Auto-generated counts")
     lines.append("")
     lines.append("| Item | Count | Notes |")
     lines.append("|---|---|---|")
 
-    def row(label: str, count, note: str) -> None:
-        lines.append(f"| {label} | {count} | {note} |")
+    def _annotate(note: str, *, ck_only: bool) -> str:
+        """Append the (context-kit-shape only) suffix when low_signal AND the
+        row is one whose detector is known to be context-kit-shaped."""
+        if low_signal and ck_only:
+            return note + _LOW_SIGNAL_ROW_SUFFIX
+        return note
+
+    def row(label: str, count, note: str, *, ck_only: bool = False) -> None:
+        lines.append(f"| {label} | {count} | {_annotate(note, ck_only=ck_only)} |")
 
     row("CLI subcommands", len(inventory["cli_subcommands"]),
-        ", ".join(inventory["cli_subcommands"]) or "—")
+        ", ".join(inventory["cli_subcommands"]) or "—",
+        ck_only=True)
     row("Python modules in `cli/`", len(inventory["cli_modules"]),
-        ", ".join(inventory["cli_modules"]) or "—")
+        ", ".join(inventory["cli_modules"]) or "—",
+        ck_only=True)
     row("Top-level guide docs", len(inventory["guide_docs"]),
-        "matches `0[1-8]_*.md`")
+        "matches `0[1-8]_*.md`",
+        ck_only=True)
     row("`docs/` files (top-level)", len(inventory["docs_files"]),
         "excludes handoffs")
     row("Session handoffs", len(inventory["handoff_files"]),
         "`docs/handoffs/`")
-    row("Templates", len(inventory["template_files"]), "`templates/`")
+    row("Templates", len(inventory["template_files"]), "`templates/`",
+        ck_only=True)
     row("Starter files (excl. scaffold)", len(inventory["starter_files"]),
-        "`starter/`")
+        "`starter/`",
+        ck_only=True)
     row("Scaffold files", len(inventory["scaffold_files"]),
-        "`starter/scaffold/`")
-    row("Test files", len(inventory["test_files"]), "`tests/test_*.py`")
+        "`starter/scaffold/`",
+        ck_only=True)
+    row("Test files", len(inventory["test_files"]), "`tests/test_*.py`",
+        ck_only=True)
     row("Tests collected", inventory["test_count"],
-        "from `def test_` parse")
-    row("Skill files", len(inventory["skill_files"]), "`skills/**/SKILL.md`")
+        "from `def test_` parse",
+        ck_only=True)
+    row("Skill files", len(inventory["skill_files"]), "`skills/**/SKILL.md`",
+        ck_only=True)
     tracked = inventory["tracked_file_count"]
     row("Tracked files",
         "(not a git repo)" if tracked is None else tracked,

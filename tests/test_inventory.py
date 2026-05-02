@@ -339,6 +339,77 @@ class TestCollectAndRender(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Low-signal detection
+# ---------------------------------------------------------------------------
+
+
+from cli.inventory import (  # noqa: E402
+    LOW_SIGNAL_MARKER,
+    is_low_signal,
+    render_block_body,
+)
+
+
+class TestLowSignalDetection(unittest.TestCase):
+    """When a project has no on-disk context-kit-shape signals (no
+    cli/ modules, no guide docs, no tests/test_*.py, no skills, no
+    starter/scaffold), the inventory's count rows are all zero
+    *because the detectors don't apply*, not because the project has
+    no tests / docs / etc. The generator must say so out loud — both
+    in a banner inside the rendered block and via a marker tools can
+    detect."""
+
+    def test_empty_project_is_low_signal(self):
+        with tempfile.TemporaryDirectory() as td:
+            inv = collect_inventory(Path(td))
+            self.assertTrue(is_low_signal(inv))
+
+    def test_scaffolded_project_is_not_low_signal(self):
+        # Init scaffolds guide_docs, starter files, and skill
+        # files — at least one detector fires, so the inventory
+        # is not low-signal.
+        with tempfile.TemporaryDirectory() as td:
+            project = _scaffold(Path(td))
+            inv = collect_inventory(project)
+            self.assertFalse(is_low_signal(inv))
+
+    def test_low_signal_inventory_includes_marker_and_banner(self):
+        with tempfile.TemporaryDirectory() as td:
+            inv = collect_inventory(Path(td))
+            body = render_block_body(inv)
+            self.assertIn(LOW_SIGNAL_MARKER, body)
+            self.assertIn("Low-signal inventory", body)
+
+    def test_low_signal_rows_are_annotated(self):
+        with tempfile.TemporaryDirectory() as td:
+            inv = collect_inventory(Path(td))
+            body = render_block_body(inv)
+            # Annotation must appear in the table.
+            self.assertIn("(context-kit-shape only)", body)
+
+    def test_normal_inventory_has_no_marker_or_banner(self):
+        with tempfile.TemporaryDirectory() as td:
+            project = _scaffold(Path(td))
+            inv = collect_inventory(project)
+            body = render_block_body(inv)
+            self.assertNotIn(LOW_SIGNAL_MARKER, body)
+            self.assertNotIn("Low-signal inventory", body)
+            self.assertNotIn("(context-kit-shape only)", body)
+
+    def test_repo_with_only_handoffs_is_still_low_signal(self):
+        # A repo that has handoff docs but no other CK shape (no
+        # cli/, no guide docs, no tests/, no skills) is still
+        # low-signal — handoffs are not part of the heuristic
+        # because they're load-bearing for adopters.
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p / "docs" / "handoffs").mkdir(parents=True)
+            (p / "docs" / "handoffs" / "SESSION_001_FOO.md").write_text("# foo\n")
+            inv = collect_inventory(p)
+            self.assertTrue(is_low_signal(inv))
+
+
 class TestInventoryNoMode(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

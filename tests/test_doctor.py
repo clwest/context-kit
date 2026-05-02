@@ -541,5 +541,280 @@ class TestCheckResultDataclass(unittest.TestCase):
         self.assertIsNone(r.fix)
 
 
+# ---------------------------------------------------------------------------
+# Orientation-drift checks
+# ---------------------------------------------------------------------------
+
+
+from cli.doctor import (  # noqa: E402
+    check_adopt_placeholders,
+    check_handoff_numbering,
+    check_next_task_consistency,
+    check_stale_generic_actions,
+)
+
+
+_ADOPT_START = "<!-- context-kit:adopt:start -->"
+_ADOPT_END = "<!-- context-kit:adopt:end -->"
+
+
+def _adopt_block(*, whats_next: str = "Ship the bug fix") -> str:
+    return (
+        f"{_ADOPT_START}\n"
+        "## What this project is\n\nDemo.\n\n"
+        f"## What's next\n\n{whats_next}\n\n"
+        f"{_ADOPT_END}\n"
+    )
+
+
+class TestNextTaskConsistencyCheck(unittest.TestCase):
+    """Catches the Freedom Ford-style failure: adopt block points at one
+    next-task while a handwritten ``## Next session priorities`` points
+    somewhere else, and orient confidently surfaces only one of them."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmpdir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _start_doc(self, content: str) -> Path:
+        path = self.tmpdir / "00-START-NEXT-SESSION.md"
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_skips_when_start_doc_missing(self):
+        result = check_next_task_consistency(self.tmpdir)
+        self.assertEqual(result.status, "skipped")
+        self.assertIn("not present", result.detail)
+
+    def test_skips_when_no_adopt_block(self):
+        self._start_doc("# Next Session\n\n## Next session priorities\n\nDo X\n")
+        result = check_next_task_consistency(self.tmpdir)
+        self.assertEqual(result.status, "skipped")
+        self.assertIn("No adopt-managed block", result.detail)
+
+    def test_ok_when_only_adopt_block_owns_next_task(self):
+        self._start_doc("# Title\n\n" + _adopt_block(whats_next="Ship feature A"))
+        result = check_next_task_consistency(self.tmpdir)
+        self.assertEqual(result.status, "ok")
+
+    def test_ok_when_handwritten_and_managed_agree(self):
+        body = (
+            "# Title\n\n"
+            + _adopt_block(whats_next="Ship feature A")
+            + "\n## Next session priorities\n\nShip feature A\n"
+        )
+        self._start_doc(body)
+        result = check_next_task_consistency(self.tmpdir)
+        self.assertEqual(result.status, "ok")
+
+    def test_warns_when_managed_and_handwritten_disagree(self):
+        # Mirrors the audit finding: managed adopt block points at
+        # SESSION_008, handwritten section points at a demo-polish task.
+        body = (
+            "# Title\n\n"
+            + _adopt_block(whats_next="Continue SESSION_008 backfill")
+            + "\n## Next session priorities\n\nPolish the demo flow\n"
+        )
+        self._start_doc(body)
+        result = check_next_task_consistency(self.tmpdir)
+        self.assertEqual(result.status, "warning")
+        self.assertIn("disagreeing next-task pointers", result.detail)
+        # Warnings ship a fix list — must not be empty.
+        self.assertTrue(result.fix)
+
+    def test_warning_is_never_blocking(self):
+        # All four new checks are advisory-only; the global doctor
+        # exit code must stay 0 in this scenario.
+        from cli.doctor import _exit_code, run_all_checks  # noqa: E402
+        body = (
+            "# Title\n\n"
+            + _adopt_block(whats_next="A")
+            + "\n## Next session priorities\n\nB\n"
+        )
+        self._start_doc(body)
+        # Need other doctor checks to pass cleanly; not running on a
+        # full project here, but the exit code is the test.
+        results = run_all_checks(self.tmpdir)
+        # Warnings only → exit 0.
+        self.assertEqual(_exit_code(results), 0)
+
+
+class TestHandoffNumberingCheck(unittest.TestCase):
+    """SESSION_NNN gap detection: start-here references SESSION_008 but
+    handoffs/ only goes up to SESSION_003 means four backfills are
+    missing."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmpdir = Path(self._tmp.name)
+        (self.tmpdir / "docs" / "handoffs").mkdir(parents=True)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_start(self, *session_refs: str) -> None:
+        body = "# Next Session\n\nReferences: " + ", ".join(session_refs) + "\n"
+        (self.tmpdir / "00-START-NEXT-SESSION.md").write_text(body)
+
+    def _add_handoff(self, name: str) -> None:
+        (self.tmpdir / "docs" / "handoffs" / name).write_text(f"# {name}\n")
+
+    def test_skipped_without_start_doc(self):
+        self._add_handoff("SESSION_001_BOOTSTRAP.md")
+        result = check_handoff_numbering(self.tmpdir)
+        self.assertEqual(result.status, "skipped")
+
+    def test_skipped_without_handoffs(self):
+        self._write_start("SESSION_005")
+        result = check_handoff_numbering(self.tmpdir)
+        self.assertEqual(result.status, "skipped")
+
+    def test_ok_when_next_is_one_ahead(self):
+        # Normal case: latest is SESSION_003, start-here points at SESSION_004.
+        self._add_handoff("SESSION_001_BOOTSTRAP.md")
+        self._add_handoff("SESSION_002_FOO.md")
+        self._add_handoff("SESSION_003_BAR.md")
+        self._write_start("SESSION_004")
+        result = check_handoff_numbering(self.tmpdir)
+        self.assertEqual(result.status, "ok")
+        self.assertIn("SESSION_004", result.detail)
+
+    def test_ok_when_aligned(self):
+        # Equally common: start-here points at the same SESSION the
+        # latest handoff already documents (gap 0).
+        self._add_handoff("SESSION_003_BAR.md")
+        self._write_start("SESSION_003")
+        result = check_handoff_numbering(self.tmpdir)
+        self.assertEqual(result.status, "ok")
+
+    def test_warns_on_two_session_gap(self):
+        # The audit finding: latest is 003, next pointer says 008.
+        self._add_handoff("SESSION_001_BOOTSTRAP.md")
+        self._add_handoff("SESSION_002_FOO.md")
+        self._add_handoff("SESSION_003_BAR.md")
+        self._write_start("SESSION_008")
+        result = check_handoff_numbering(self.tmpdir)
+        self.assertEqual(result.status, "warning")
+        self.assertIn("SESSION_008", result.detail)
+        self.assertIn("SESSION_003", result.detail)
+        self.assertTrue(result.fix)
+
+    def test_session_roadmap_not_counted_as_handoff(self):
+        # Same selection rule as orient: only SESSION_<digits>_*.md
+        # counts. A bare SESSION_ROADMAP_*.md must not be picked as
+        # the latest handoff.
+        self._add_handoff("SESSION_ROADMAP_PLAN.md")
+        self._add_handoff("SESSION_001_BOOTSTRAP.md")
+        self._write_start("SESSION_010")
+        result = check_handoff_numbering(self.tmpdir)
+        self.assertEqual(result.status, "warning")
+        self.assertIn("SESSION_001", result.detail)
+
+
+class TestAdoptPlaceholderCheck(unittest.TestCase):
+    """Lingering ``[adopt: please describe ...]`` placeholders silently
+    erode trust in the generated anchors."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmpdir = Path(self._tmp.name)
+        (self.tmpdir / "docs").mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_ok_when_no_placeholders(self):
+        (self.tmpdir / "00-START-NEXT-SESSION.md").write_text(
+            "# Next Session\n\nReal content here.\n"
+        )
+        (self.tmpdir / "CLAUDE.md").write_text("# CLAUDE\n\nReal content.\n")
+        result = check_adopt_placeholders(self.tmpdir)
+        self.assertEqual(result.status, "ok")
+
+    def test_warns_on_start_doc_placeholder(self):
+        (self.tmpdir / "00-START-NEXT-SESSION.md").write_text(
+            "# Title\n\nWhat's next: [adopt: please describe]\n"
+        )
+        result = check_adopt_placeholders(self.tmpdir)
+        self.assertEqual(result.status, "warning")
+        self.assertIn("00-START-NEXT-SESSION.md", result.detail)
+
+    def test_warns_on_what_it_is_doc(self):
+        (self.tmpdir / "docs" / "PROJECT_WHAT_IT_IS.md").write_text(
+            "# Project\n\nMotivation: [adopt: please describe — adopt cannot infer]\n"
+        )
+        result = check_adopt_placeholders(self.tmpdir)
+        self.assertEqual(result.status, "warning")
+        # File is named in the warning detail.
+        self.assertIn("PROJECT_WHAT_IT_IS.md", result.detail)
+
+    def test_lists_multiple_offending_files(self):
+        (self.tmpdir / "00-START-NEXT-SESSION.md").write_text("[adopt: please describe]")
+        (self.tmpdir / "CLAUDE.md").write_text("[adopt: please describe]")
+        (self.tmpdir / "docs" / "FOO_WHAT_IT_IS.md").write_text("[adopt: please describe]")
+        result = check_adopt_placeholders(self.tmpdir)
+        self.assertEqual(result.status, "warning")
+        for needle in ("00-START-NEXT-SESSION.md", "CLAUDE.md", "FOO_WHAT_IT_IS.md"):
+            self.assertIn(needle, result.detail)
+
+
+class TestStaleGenericActionsCheck(unittest.TestCase):
+    """Adopt's "Next actions" go stale once the user has answered them
+    but adopt keeps re-emitting them. Conservative warning — only
+    fires when known stale-prone titles appear inside a managed
+    block."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmpdir = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_ok_when_no_managed_block(self):
+        (self.tmpdir / "00-START-NEXT-SESSION.md").write_text(
+            "# Title\n\nClassify unrecognized directories\n"
+            "Confirm backend/frontend boundaries\n"
+        )
+        # No managed block → titles outside the block don't count.
+        result = check_stale_generic_actions(self.tmpdir)
+        self.assertEqual(result.status, "ok")
+
+    def test_ok_when_managed_block_has_no_stale_actions(self):
+        body = (
+            f"# Title\n\n{_ADOPT_START}\n"
+            "## Next actions\n- Ship feature A\n- Land bug fix B\n"
+            f"{_ADOPT_END}\n"
+        )
+        (self.tmpdir / "00-START-NEXT-SESSION.md").write_text(body)
+        result = check_stale_generic_actions(self.tmpdir)
+        self.assertEqual(result.status, "ok")
+
+    def test_warns_on_known_stale_title_in_managed_block(self):
+        body = (
+            f"# Title\n\n{_ADOPT_START}\n"
+            "## Next actions\n- Confirm backend/frontend boundaries\n"
+            f"{_ADOPT_END}\n"
+        )
+        (self.tmpdir / "00-START-NEXT-SESSION.md").write_text(body)
+        result = check_stale_generic_actions(self.tmpdir)
+        self.assertEqual(result.status, "warning")
+        self.assertIn("Confirm backend/frontend boundaries", result.detail)
+
+    def test_warns_on_classify_dirs(self):
+        body = (
+            f"# CLAUDE\n\n{_ADOPT_START}\n"
+            "Suggested next: Classify unrecognized directories\n"
+            f"{_ADOPT_END}\n"
+        )
+        (self.tmpdir / "CLAUDE.md").write_text(body)
+        result = check_stale_generic_actions(self.tmpdir)
+        self.assertEqual(result.status, "warning")
+        self.assertIn("Classify unrecognized directories", result.detail)
+
+
 if __name__ == "__main__":
     unittest.main()
