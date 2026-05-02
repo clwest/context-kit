@@ -12,6 +12,11 @@ state: scaffold
 > (voice / tone, UI source-of-truth contract, constraint preservation across
 > turns, decision-authority boundary). Read it before changing any
 > persona, prompt template, or user-facing copy.
+> **Source for audience-specific framing:** `docs/{{APP_UPPER}}_TRANSLATION_LAYER.md`
+> — same truth → different explanation, zero invention. Use it before
+> writing stakeholder summaries, executive briefs, handoff narratives, or
+> "what should this person do next?" prose. It reframes facts already in
+> the anchors above; it does not introduce new ones.
 > When any doc disagrees with INVENTORY (counts) or PIPELINE (flow) or
 > BEHAVIOR_LAYER (presentation), those win.
 > Live drift report: `python manage.py verify_doc_claims --only-drift` (once wired up).

@@ -54,6 +54,14 @@ conventions it ships. Load-bearing rules:
   data in prose"), constraint preservation across follow-up turns, and the
   decision-authority boundary between deterministic services and LLM phrasing.
   Update it whenever persona, prompt template, or display contract changes.
+- **`docs/{{APP_UPPER}}_TRANSLATION_LAYER.md`** is the audience contract:
+  *same truth → different explanation, zero invention*. Read it before
+  writing any audience-specific summary, stakeholder update, executive
+  brief, handoff narrative, or "what should this person do next?" framing.
+  The translation layer reframes facts for builders / operators / executives
+  / testers; it does not introduce new facts. If a claim isn't already
+  in WHAT_IT_IS / INVENTORY / PIPELINE / BEHAVIOR_LAYER / the latest
+  handoff, the translation layer **must not** assert it.
 
 ---
 

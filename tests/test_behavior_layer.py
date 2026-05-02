@@ -206,17 +206,19 @@ class TestOrientIncludesBehaviorLayerWhenPresent(unittest.TestCase):
         sot = out.split("## SOURCE OF TRUTH", 1)[1].split("##", 1)[0]
         self.assertIn("WITH_BEHAVIOR_BEHAVIOR_LAYER.md", sot)
         self.assertIn("behavior layer", sot.lower())
-        # The 6-item ordering must place BEHAVIOR_LAYER between PIPELINE
-        # and DO_NOTS. Lines parsed and indexed by leading number.
+        # The 7-item ordering places BEHAVIOR_LAYER between PIPELINE
+        # and the new TRANSLATION_LAYER row (5), with DO_NOTS at 6
+        # and the handoff/start line at 7. Lines parsed and indexed
+        # by leading number.
         ordered = [
             line.strip() for line in sot.splitlines()
-            if line.strip().startswith(("1.", "2.", "3.", "4.", "5.", "6."))
+            if line.strip().startswith(("1.", "2.", "3.", "4.", "5.", "6.", "7."))
         ]
-        # Position 3 → PIPELINE, 4 → BEHAVIOR_LAYER, 5 → DO_NOTS.
         self.assertIn("PIPELINE", ordered[2])
         self.assertIn("BEHAVIOR_LAYER", ordered[3])
-        self.assertIn("DO_NOTS", ordered[4])
-        self.assertIn("handoff", ordered[5].lower())
+        self.assertIn("TRANSLATION_LAYER", ordered[4])
+        self.assertIn("DO_NOTS", ordered[5])
+        self.assertIn("handoff", ordered[6].lower())
 
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ docs:
 - `PLATFORM_INVENTORY.template.md` — runtime anchor template
 - `PLATFORM_PIPELINE.template.md` — runtime flow map (entry points, guards, retrieval, scrubs) — recommended for LLM / agent / task projects
 - `PLATFORM_BEHAVIOR_LAYER.template.md` — behavior layer (voice / tone, UI source-of-truth, constraint preservation, decision authority) — recommended for chat / voice / persona surfaces
+- `PLATFORM_TRANSLATION_LAYER.template.md` — audience contract (same truth → different explanation, zero invention) — recommended for projects with multiple stakeholders / personas / audiences
 - `SESSION_HANDOFF.template.md` — handoff template
 - `verify_doc_claims.skeleton.py` — drift verifier skeleton (Python)
 

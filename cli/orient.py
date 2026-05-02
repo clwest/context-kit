@@ -68,6 +68,7 @@ def run_orient(args: argparse.Namespace) -> int:
     sections.append(_section_anchors(project))
     sections.append(_section_pipeline(project))
     sections.append(_section_behavior_layer(project))
+    sections.append(_section_translation_layer(project))
     sections.append(_section_do_nots(project))
     sections.append(_section_latest_handoff(project))
     sections.append(_section_pattern_pointer(project))
@@ -101,6 +102,15 @@ def _render_short(project: Path) -> str:
         rel = session_start.relative_to(project)
         lines.append(f"## SESSION START INDEX")
         lines.append(f"  {rel}    (open and read first)")
+        lines.append("")
+
+    # Translation layer — filename only, never the body, so --short
+    # stays compact. The audience contract is too large to inline.
+    translation = _find_translation_layer_doc(project)
+    if translation is not None:
+        rel = translation.relative_to(project)
+        lines.append("## TRANSLATION LAYER")
+        lines.append(f"  {rel}    (audience contract; same truth → different explanation)")
         lines.append("")
 
     # Latest numbered handoff — filename only.
@@ -301,12 +311,13 @@ def _section_source_of_truth(project: Path) -> str:
     """The authoritative path: which docs the agent must trust, in order.
 
     Ordering — concept first, runtime state last:
-        1. WHAT_IT_IS       (narrative)
-        2. INVENTORY        (runtime, regenerable)
-        3. PIPELINE         (runtime flow map; optional)
-        4. BEHAVIOR_LAYER   (voice, presentation, constraint preservation; optional)
-        5. DO_NOTS          (project-specific anti-patterns; optional)
-        6. handoff + 00-START-NEXT-SESSION (current state / next priority)
+        1. WHAT_IT_IS         (narrative)
+        2. INVENTORY          (runtime, regenerable)
+        3. PIPELINE           (runtime flow map; optional)
+        4. BEHAVIOR_LAYER     (voice, presentation, constraint preservation; optional)
+        5. TRANSLATION_LAYER  (audience contract; optional, project-owned)
+        6. DO_NOTS            (project-specific anti-patterns; optional)
+        7. handoff + 00-START-NEXT-SESSION (current state / next priority)
 
     When the inventory carries the LOW-SIGNAL marker, the line for
     that anchor is reworded so the agent doesn't treat detector-zero
@@ -316,6 +327,7 @@ def _section_source_of_truth(project: Path) -> str:
     what, inventory = _find_anchor_docs(project)
     pipeline = _find_pipeline_doc(project)
     behavior = _find_behavior_layer_doc(project)
+    translation = _find_translation_layer_doc(project)
     do_nots = _find_do_nots_doc(project)
     session_start = _find_session_start_doc(project)
     inventory_low_signal = inventory is not None and _is_low_signal_inventory(inventory)
@@ -352,12 +364,22 @@ def _section_source_of_truth(project: Path) -> str:
         lines.append(f"  4. {behavior.relative_to(project)}    — behavior layer (voice, UI/source-of-truth, constraint preservation)")
     else:
         lines.append("  4. docs/<APP>_BEHAVIOR_LAYER.md    — behavior layer (optional; recommended for chat/voice/persona surfaces)")
-    if do_nots:
-        lines.append(f"  5. {do_nots.relative_to(project)}    — project-specific anti-patterns / dos and don'ts")
+    if translation:
+        lines.append(
+            f"  5. {translation.relative_to(project)}    "
+            "— translation layer (audience contract: same truth → different explanation, zero invention)"
+        )
     else:
-        lines.append("  5. docs/<APP>_DO_NOTS.md    — project-specific anti-patterns (optional)")
+        lines.append(
+            "  5. docs/<APP>_TRANSLATION_LAYER.md    "
+            "— translation layer (optional; recommended for multi-audience / stakeholder projects)"
+        )
+    if do_nots:
+        lines.append(f"  6. {do_nots.relative_to(project)}    — project-specific anti-patterns / dos and don'ts")
+    else:
+        lines.append("  6. docs/<APP>_DO_NOTS.md    — project-specific anti-patterns (optional)")
     lines.append(
-        f"  6. docs/handoffs/SESSION_<latest>_*.md + {START_DOC}    — what last session shipped + this session's priorities"
+        f"  7. docs/handoffs/SESSION_<latest>_*.md + {START_DOC}    — what last session shipped + this session's priorities"
     )
     lines.append("")
     if inventory_low_signal:
@@ -443,6 +465,23 @@ def _section_behavior_layer(project: Path) -> str:
         return ""
     rel = behavior.relative_to(project)
     return f"## BEHAVIOR LAYER — {rel}\n\n" + _preview(behavior)
+
+
+def _section_translation_layer(project: Path) -> str:
+    """Optional translation-layer contract.
+
+    Lives between the behavior layer (how it sounds) and project-specific
+    do-nots (what to never do). The translation layer says **how to
+    explain the same source-of-truth to different audiences without
+    inventing facts** — same truth, different framing, zero distortion.
+
+    Silently omitted if absent so older projects keep working unchanged.
+    """
+    translation = _find_translation_layer_doc(project)
+    if translation is None:
+        return ""
+    rel = translation.relative_to(project)
+    return f"## TRANSLATION LAYER — {rel}\n\n" + _preview(translation)
 
 
 def _section_do_nots(project: Path) -> str:
@@ -592,6 +631,37 @@ def _find_behavior_layer_doc(project: Path) -> Path | None:
         if plain.is_file():
             return plain
     root_plain = project / "BEHAVIOR_LAYER.md"
+    if root_plain.is_file():
+        return root_plain
+    return None
+
+
+def _find_translation_layer_doc(project: Path) -> Path | None:
+    """Discover the translation-layer doc (audience contract).
+
+    Search order — first hit wins:
+    1. ``docs/<APP>_TRANSLATION_LAYER.md`` (matches anchor naming)
+    2. ``docs/TRANSLATION_LAYER.md`` (plain)
+    3. ``TRANSLATION_LAYER.md`` at the repo root
+
+    Absent → returns None and orient silently omits the
+    TRANSLATION LAYER section. Older projects keep working unchanged.
+
+    To avoid colliding with the pipeline / behavior-layer globs
+    (``*_PIPELINE.md`` / ``*_BEHAVIOR_LAYER.md``), the suffix used
+    here is ``_TRANSLATION_LAYER.md`` — distinct enough that
+    ``glob("*_TRANSLATION_LAYER.md")`` cannot accidentally match
+    a pipeline or behavior-layer doc.
+    """
+    docs = project / DOCS_DIR
+    if docs.is_dir():
+        suffixed = _first_match(docs.glob("*_TRANSLATION_LAYER.md"))
+        if suffixed is not None:
+            return suffixed
+        plain = docs / "TRANSLATION_LAYER.md"
+        if plain.is_file():
+            return plain
+    root_plain = project / "TRANSLATION_LAYER.md"
     if root_plain.is_file():
         return root_plain
     return None

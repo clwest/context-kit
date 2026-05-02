@@ -128,12 +128,14 @@ This lets you stop chasing drift in 100 docs. The canonical pair is maintained; 
 
 ---
 
-## Complementary docs, not replacements: `PIPELINE.md` and `BEHAVIOR_LAYER.md`
+## Complementary docs, not replacements: `PIPELINE.md`, `BEHAVIOR_LAYER.md`, `TRANSLATION_LAYER.md`
 
 For projects with LLM, agent, task-runner, or queue-driven flows —
-or any product that *speaks* in a defined voice — the two-doc anchor
-pair is necessary but not sufficient. The anchor pair holds **what
-exists** and **what it is**. Two complementary docs handle the rest:
+or any product that *speaks* in a defined voice — or any project
+with multiple audiences who need to understand the same facts — the
+two-doc anchor pair is necessary but not sufficient. The anchor pair
+holds **what exists** and **what it is**. Three complementary docs
+handle the rest:
 
 - **`PIPELINE.md`** holds **how requests actually move through the
   system** — entry points, guard coverage, state surfaces, retrieval
@@ -144,30 +146,47 @@ exists** and **what it is**. Two complementary docs handle the rest:
   preservation across follow-ups, decision-authority boundary
   between deterministic services and LLM phrasing, and small-model
   guard guidance.
+- **`TRANSLATION_LAYER.md`** holds **how the same source-of-truth is
+  explained to different audiences** — personas (builder /
+  operator / executive / tester), translation modes (technical
+  summary / business impact / executive brief / QA checklist), and
+  truth-preservation rules ("same truth → different explanation,
+  zero invention"). It reframes facts that already live in the
+  other anchors; it does not introduce new ones.
 
-Neither doc replaces the anchor pair:
+None of these replace the anchor pair:
 
 - They don't carry counts. INVENTORY still wins for numbers.
 - They don't redefine the system. WHAT_IT_IS still owns the concept.
-- They carry the *operational asymmetries* and *behavioral
-  contracts* that don't live naturally in either anchor.
+- They carry the *operational asymmetries*, *behavioral contracts*,
+  and *audience contracts* that don't live naturally in either
+  anchor.
 
-Both docs are optional. Pick what you need:
+All three are optional. Pick what you need:
 
 | Project shape | What you probably need |
 |---|---|
 | Static site / single-script tool | WHAT_IT_IS + INVENTORY only |
 | LLM-using API or agent system | + PIPELINE.md |
 | Chat surface, voice agent, or persona-bearing UI | + BEHAVIOR_LAYER.md |
-| All of the above | all four |
+| Multi-stakeholder product (engineer + operator + executive + tester read the same docs) | + TRANSLATION_LAYER.md |
+| All of the above | all five |
 
-`context-kit init` scaffolds `docs/<APP>_PIPELINE.md` and
-`docs/<APP>_BEHAVIOR_LAYER.md` alongside the two-doc anchor.
-`context-kit doctor` warns when project indicators suggest you'd
-benefit from each but the file is missing. Both warnings are soft —
-never blocking — and silently skipped on projects where they don't
-apply.
+`context-kit init` scaffolds `docs/<APP>_PIPELINE.md`,
+`docs/<APP>_BEHAVIOR_LAYER.md`, and `docs/<APP>_TRANSLATION_LAYER.md`
+alongside the two-doc anchor. `context-kit doctor` warns when
+project indicators suggest you'd benefit from each but the file is
+missing. All three warnings are soft — never blocking — and
+silently skipped on projects where they don't apply.
+
+The translation layer is the youngest of the three, added after
+stress testing showed that mature, multi-stakeholder projects
+needed an explicit "same truth → different framing" contract. The
+failure mode it catches: an assistant writing prose for an
+executive, an operator, and a tester from the same source-of-truth,
+but inventing different "progress" / "business impact" / "next
+step" claims for each audience because no doc said *don't*.
 
 ---
 
-*See [`templates/PLATFORM_WHAT_IT_IS.template.md`](templates/PLATFORM_WHAT_IT_IS.template.md) + [`templates/PLATFORM_INVENTORY.template.md`](templates/PLATFORM_INVENTORY.template.md) + [`templates/PLATFORM_PIPELINE.template.md`](templates/PLATFORM_PIPELINE.template.md) + [`templates/PLATFORM_BEHAVIOR_LAYER.template.md`](templates/PLATFORM_BEHAVIOR_LAYER.template.md) to start.*
+*See [`templates/PLATFORM_WHAT_IT_IS.template.md`](templates/PLATFORM_WHAT_IT_IS.template.md) + [`templates/PLATFORM_INVENTORY.template.md`](templates/PLATFORM_INVENTORY.template.md) + [`templates/PLATFORM_PIPELINE.template.md`](templates/PLATFORM_PIPELINE.template.md) + [`templates/PLATFORM_BEHAVIOR_LAYER.template.md`](templates/PLATFORM_BEHAVIOR_LAYER.template.md) + [`templates/PLATFORM_TRANSLATION_LAYER.template.md`](templates/PLATFORM_TRANSLATION_LAYER.template.md) to start.*

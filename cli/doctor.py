@@ -92,6 +92,7 @@ def run_all_checks(project: Path) -> list[CheckResult]:
         check_inventory(project),
         check_pipeline_doc(project),
         check_behavior_layer_doc(project),
+        check_translation_layer_doc(project),
         check_next_task_consistency(project),
         check_handoff_numbering(project),
         check_adopt_placeholders(project),
@@ -901,6 +902,201 @@ def check_behavior_layer_doc(project: Path) -> CheckResult:
         fix=[
             "Create docs/<APP>_BEHAVIOR_LAYER.md (template ships with `context-kit init`)",
             "Document voice / tone, UI source-of-truth contract, constraint preservation, GOOD/BAD examples, and post-generation checks",
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Translation-layer doc check (multi-audience / stakeholder projects)
+# ---------------------------------------------------------------------------
+
+# Audience / role tokens — when several show up in a single project,
+# someone is writing prose for multiple readers, and a translation
+# contract is meaningful. Kept lowercase; matched as substrings
+# against filename stems and (separately) against doc text. Conservative
+# list: each token must be unambiguous enough that a single hit on a
+# trivial repo doesn't false-positive.
+_TRANSLATION_INDICATOR_TOKENS = (
+    "stakeholder", "stakeholders",
+    "persona", "personas",
+    "audience", "audiences",
+    "executive", "executives",
+    "operator", "operators",
+    "owner", "owners",
+    "reviewer", "reviewers",
+    "tester", "testers",
+    "qa",
+    "training",
+    "onboarding",
+    "customer", "customers",
+    "sales",
+    "demo",
+)
+
+# Multi-audience signals require *more than one* role token to fire.
+# A single "customer" mention in a README is not enough; two distinct
+# audience words across docs / filenames is the threshold. Tunable —
+# raise to reduce noise, lower to surface earlier.
+_MIN_DISTINCT_TRANSLATION_INDICATORS = 2
+
+# Minimum handoff count before "you have multiple build sessions and
+# multiple readers" is a fair claim. Below this, the translation
+# contract is overkill — one builder, one reader, one session.
+_MIN_HANDOFFS_FOR_TRANSLATION_HINT = 3
+
+
+def _has_translation_layer_doc(project: Path) -> bool:
+    """Mirror of ``cli.orient._find_translation_layer_doc``'s discovery
+    rules. Inlined to keep doctor a leaf module (no orient import)."""
+    docs = project / "docs"
+    if docs.is_dir():
+        for path in sorted(docs.glob("*_TRANSLATION_LAYER.md")):
+            if path.is_file():
+                return True
+        if (docs / "TRANSLATION_LAYER.md").is_file():
+            return True
+    return (project / "TRANSLATION_LAYER.md").is_file()
+
+
+def _project_has_translation_indicators(project: Path) -> tuple[bool, list[str]]:
+    """Heuristic: does this project look like it serves multiple
+    audiences / stakeholders?
+
+    Returns ``(triggered, reasons)`` so the warning can name the
+    specific evidence that fired (avoids opaque "trust me" warnings
+    on a heuristic).
+
+    Triggers — any one is sufficient *if* the project also has
+    BEHAVIOR_LAYER (clear sign of LLM-generated user-facing language)
+    or a non-trivial handoff history. Tiny one-doc repos pass silently.
+
+    1. Filenames containing two or more distinct audience tokens
+       (``stakeholder``, ``persona``, ``executive``, ``tester``,
+       ``operator``, etc.) — see ``_TRANSLATION_INDICATOR_TOKENS``.
+    2. Multiple sessions in ``docs/handoffs/`` (``>=
+       _MIN_HANDOFFS_FOR_TRANSLATION_HINT``) AND a BEHAVIOR_LAYER
+       doc present (real multi-session product with persona output).
+    """
+    reasons: list[str] = []
+
+    filename_hits = _scan_filenames_for_translation_tokens(project)
+    if len(filename_hits) >= _MIN_DISTINCT_TRANSLATION_INDICATORS:
+        reasons.append(
+            "filename signals: " + ", ".join(sorted(filename_hits)[:5])
+        )
+
+    handoff_count = _count_session_handoffs(project)
+    behavior_present = _has_behavior_layer_doc(project)
+    if handoff_count >= _MIN_HANDOFFS_FOR_TRANSLATION_HINT and behavior_present:
+        reasons.append(
+            f"{handoff_count} session handoffs + a BEHAVIOR_LAYER doc — "
+            "multi-session product with persona-bearing output"
+        )
+
+    return (bool(reasons), reasons)
+
+
+def _scan_filenames_for_translation_tokens(project: Path) -> set[str]:
+    """Walk the project (skipping ignored dirs) collecting which
+    audience tokens appear in filename stems. Returns the set of
+    tokens that hit at least once.
+    """
+    skip_dirs = {
+        ".git", "node_modules", "__pycache__", ".venv", "venv",
+        ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+        # docs/ included because role tokens often appear in doc
+        # filenames (e.g. ONBOARDING.md). Don't skip it.
+    }
+    if not project.is_dir():
+        return set()
+    hits: set[str] = set()
+    stack = [project]
+    visited = 0
+    while stack and visited < 2000:
+        current = stack.pop()
+        try:
+            children = list(current.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            visited += 1
+            if visited >= 2000:
+                break
+            if child.is_dir():
+                if child.name in skip_dirs or child.name.startswith("."):
+                    continue
+                stack.append(child)
+                continue
+            if not child.is_file():
+                continue
+            stem = child.stem.lower()
+            if not stem:
+                continue
+            for token in _TRANSLATION_INDICATOR_TOKENS:
+                if token in stem:
+                    hits.add(token)
+    return hits
+
+
+def _count_session_handoffs(project: Path) -> int:
+    """Count numbered ``SESSION_<digits>_*.md`` files. Matches the
+    same pattern orient uses for "is this a multi-session repo?"."""
+    handoffs = project / "docs" / "handoffs"
+    if not handoffs.is_dir():
+        return 0
+    pat = re.compile(r"^SESSION_\d+_.+\.md$")
+    return sum(1 for p in handoffs.glob("SESSION_*.md") if p.is_file() and pat.match(p.name))
+
+
+def check_translation_layer_doc(project: Path) -> CheckResult:
+    """Soft warning when a project has multi-audience / stakeholder
+    indicators but no TRANSLATION_LAYER doc.
+
+    Status taxonomy:
+    - ok       — TRANSLATION_LAYER.md present
+    - skipped  — no multi-audience indicators detected
+    - warning  — indicators present, doc missing
+
+    Never blocking. The translation layer is the contract that says
+    *same truth → different explanation, zero invention* across
+    audiences. Without it, prose for stakeholders / executives /
+    testers tends to drift toward invented progress, business
+    impact, or customer value the source-of-truth never claimed.
+    """
+    if _has_translation_layer_doc(project):
+        return CheckResult(
+            id="translation_layer_doc",
+            label="Translation layer (audience contract)",
+            status="ok",
+            detail="TRANSLATION_LAYER.md present",
+        )
+
+    triggered, reasons = _project_has_translation_indicators(project)
+    if not triggered:
+        return CheckResult(
+            id="translation_layer_doc",
+            label="Translation layer (audience contract)",
+            status="skipped",
+            detail=(
+                "No multi-audience / stakeholder indicators detected; "
+                "TRANSLATION_LAYER.md not required"
+            ),
+        )
+
+    return CheckResult(
+        id="translation_layer_doc",
+        label="Translation layer (audience contract)",
+        status="warning",
+        detail=(
+            "TRANSLATION_LAYER.md missing. Projects with multiple "
+            "audiences, stakeholders, testers, or operators should "
+            "document how to translate the same facts for each "
+            "audience without inventing unsupported claims. "
+            "Indicators: " + "; ".join(reasons)
+        ),
+        fix=[
+            "Create docs/<APP>_TRANSLATION_LAYER.md (template ships with `context-kit init`)",
+            "Document personas, translation modes, and truth-preservation rules so prose for each audience cites only source-of-truth facts.",
         ],
     )
 
