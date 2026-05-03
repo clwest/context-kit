@@ -33,6 +33,7 @@ assumes you're starting fresh; `adopt` is the entry point when you
 already have code), and **`refactor track`** for reporting progress
 on multi-PR module-extraction work (split a monolith file into
 sibling modules across many PRs and watch the percentage tick up).
+For a smoother Codex startup, use `context-kit codex --mode=execute --short`.
 All read-only by default. All exit cleanly for an agent to parse.
 
 Think `create-next-app`, but for the memory layer around your code.
@@ -124,7 +125,10 @@ context-kit doctor
 # 6. Confirm the agent has what it needs at session start
 context-kit orient
 
-# 7. Build
+# 7. Start a Codex session with the same boot protocol
+context-kit codex --mode=execute --short
+
+# 8. Build
 claude  # or your AI tool of choice — the bundled skill auto-loads
 ```
 
@@ -174,6 +178,7 @@ Commands:
   seed PATH            Turn a structured idea file into project context (5 files)
   recommend-stack PATH Suggest a beginner-friendly v0 stack from an idea file
   start                Launch the onboarding server for the current project
+  codex                Prepare and launch the Codex startup flow
   orient               Print the assembled session-start orientation report
   hotpath              Show the largest files most likely to dominate AI context
   inventory            Generate a runtime-derived inventory of the project

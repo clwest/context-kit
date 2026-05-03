@@ -15,7 +15,13 @@
 If you have the `context-kit` CLI on PATH, just run:
 
 ```bash
-context-kit orient
+context-kit codex --mode=execute --short
+```
+
+If you want the lower-level prompt only:
+
+```bash
+context-kit start-codex --mode=execute --short
 ```
 
 Or from this repo:
@@ -33,8 +39,8 @@ any agent loaded in this repo to do exactly that.
 
 context-kit is both:
 
-- **The tool** — a zero-dependency Python CLI (`init`, `start`, `orient`,
-  `hotpath`, `verify`) that scaffolds AI-friendly project context
+- **The tool** — a zero-dependency Python CLI (`init`, `start`, `codex`,
+  `start-codex`, `orient`, `hotpath`, `verify`) that scaffolds AI-friendly project context
 - **The teaching material** — 8 guide docs (`01_*.md` … `08_*.md`) that
   explain *why* the pattern works
 
@@ -50,6 +56,9 @@ the guide docs already live at the repo root rather than under
   and overwrites `00-START-NEXT-SESSION.md` with next session's priorities.
 - **Runtime wins.** The inventory is currently hand-maintained — when it
   drifts from the code, fix the inventory rather than the other way round.
+- **Verification config wins for doc claims.** Use `.context-kit/verify.yaml`
+  as the source map for canonical docs, and treat historical docs as memory
+  unless the task explicitly says to include archive evidence.
 - **AI Notes** section in every handoff is where the AI writes as itself
   (per `08_collaboration_roles.md`).
 - **`docs/TRUST_CALIBRATION.md`** is the append-only log of calibration
@@ -65,6 +74,9 @@ python3 -m unittest discover -s tests -t .
 
 # Read the assembled session-start orientation
 python3 context_kit.py orient
+
+# Prepare and launch a Codex session
+python3 context_kit.py codex --mode=execute --short
 
 # Check which files are large enough to dominate context
 python3 context_kit.py hotpath

@@ -468,6 +468,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include archive and historical docs in primary scoring",
     )
     verify.add_argument(
+        "--all-docs",
+        action="store_true",
+        help="Scan all active docs for count claims instead of canonical docs only",
+    )
+    verify.add_argument(
         "--write",
         action="store_true",
         help="Write or refresh docs/verification/VERIFY_REPORT.md",
@@ -519,6 +524,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     del translation_init  # parser registration is the side effect
 
+    # codex
+    codex = sub.add_parser(
+        "codex",
+        help="Prepare and launch the Codex startup flow",
+        description=(
+            "Prepare the same startup prompt as start-codex, ensure the "
+            "verification scaffold exists, and best-effort launch Codex "
+            "or provide paste-ready output."
+        ),
+    )
+    codex.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    codex.add_argument(
+        "--user",
+        default=None,
+        metavar="NAME",
+        help="Apply persona-aware startup framing from TRANSLATION_LAYER.md when available.",
+    )
+    codex.add_argument(
+        "--mode",
+        choices=("design", "execute"),
+        default="design",
+        help="Startup prompt mode (default: design).",
+    )
+    codex.add_argument(
+        "--model",
+        choices=("cheap", "heavy"),
+        default=None,
+        help="Add a prompt-only model hint; does not invoke or configure an API model.",
+    )
+    codex.add_argument(
+        "--short",
+        action="store_true",
+        help="Print the compact startup prompt instead of the full prompt.",
+    )
+
     # start-codex
     start_codex = sub.add_parser(
         "start-codex",
@@ -552,6 +596,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("cheap", "heavy"),
         default=None,
         help="Add a prompt-only model hint; does not invoke or configure an API model.",
+    )
+    start_codex.add_argument(
+        "--short",
+        action="store_true",
+        help="Print the compact startup prompt instead of the full prompt.",
     )
 
     # refactor (group)
@@ -635,6 +684,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify":
         from cli.verify import run_verify
         return run_verify(args)
+
+    if args.command == "codex":
+        from cli.start_codex import run_codex
+        return run_codex(args)
 
     if args.command == "refactor":
         from cli.refactor import run_refactor

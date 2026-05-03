@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -21,7 +22,8 @@ from cli.doctor import (  # noqa: E402
     check_version_drift,
 )
 from cli.orient import run_orient  # noqa: E402
-from cli.start_codex import render_codex_prompt, run_start_codex  # noqa: E402
+from cli.start_codex import render_codex_prompt, run_codex, run_start_codex  # noqa: E402
+from context_kit import build_parser  # noqa: E402
 
 
 def _write_min_project(project: Path, *, version: str = "0.15.0") -> None:
@@ -178,13 +180,114 @@ class TestOrientRuntimeState(TruthStateTestCase):
 
 
 class TestStartCodex(TruthStateTestCase):
+    def test_codex_command_parses_short_flag(self):
+        args = build_parser().parse_args(["codex", "--mode=execute", "--short"])
+        self.assertEqual(args.command, "codex")
+        self.assertEqual(args.mode, "execute")
+        self.assertTrue(args.short)
+
+    def test_codex_command_falls_back_helpfully_when_binary_is_missing(self):
+        (self.project / "README.md").write_text("# Demo\n", encoding="utf-8")
+        (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
+        buf = io.StringIO()
+        with patch("cli.start_codex.shutil.which", return_value=None):
+            with redirect_stdout(buf):
+                rc = run_codex(
+                    argparse.Namespace(
+                        command="codex",
+                        project=str(self.project),
+                        user=None,
+                        mode="execute",
+                        model=None,
+                        short=True,
+                    )
+                )
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("Codex CLI: not found on PATH.", out)
+        self.assertIn("Verification config: created `.context-kit/verify.yaml`.", out)
+        self.assertIn("Clipboard unavailable.", out)
+        self.assertIn("Paste the prompt below into Codex.", out)
+        self.assertIn("Essential rules:", out)
+        self.assertIn("context-kit inspect", out)
+        self.assertIn("context-kit verify", out)
+
+    def test_codex_command_preserves_existing_verify_config(self):
+        verify = self.project / ".context-kit" / "verify.yaml"
+        verify.parent.mkdir(parents=True, exist_ok=True)
+        verify.write_text("sentinel: keep\n", encoding="utf-8")
+        buf = io.StringIO()
+        with patch("cli.start_codex.shutil.which", return_value=None):
+            with redirect_stdout(buf):
+                rc = run_codex(
+                    argparse.Namespace(
+                        command="codex",
+                        project=str(self.project),
+                        user=None,
+                        mode="execute",
+                        model=None,
+                        short=True,
+                    )
+                )
+        self.assertEqual(rc, 0)
+        self.assertEqual(verify.read_text(encoding="utf-8"), "sentinel: keep\n")
+        self.assertIn("already exists", buf.getvalue())
+
+    def test_start_codex_creates_verify_config_when_missing(self):
+        (self.project / "README.md").write_text("# Demo\n", encoding="utf-8")
+        (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
+        (self.project / "docs" / "CONTEXT_KIT_WHAT_IT_IS.md").write_text("# What it is\n", encoding="utf-8")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_start_codex(
+                argparse.Namespace(command="start-codex", project=str(self.project), user=None)
+            )
+        self.assertEqual(rc, 0)
+        verify = self.project / ".context-kit" / "verify.yaml"
+        self.assertTrue(verify.exists())
+        text = verify.read_text(encoding="utf-8")
+        self.assertIn("canonical_docs:", text)
+        self.assertIn("00-START-NEXT-SESSION.md", text)
+        self.assertIn("README.md", text)
+        self.assertIn("CLAUDE.md", text)
+        self.assertIn("docs/CONTEXT_KIT_INVENTORY.md", text)
+        self.assertIn("docs/CONTEXT_KIT_WHAT_IT_IS.md", text)
+        self.assertNotIn("docs/PLATFORM_INVENTORY.md", text)
+        self.assertNotIn("docs/PLATFORM_WHAT_IT_IS.md", text)
+        self.assertIn("Verification config: created", buf.getvalue())
+
+    def test_start_codex_preserves_existing_verify_config(self):
+        verify = self.project / ".context-kit" / "verify.yaml"
+        verify.parent.mkdir(parents=True, exist_ok=True)
+        verify.write_text("sentinel: keep\n", encoding="utf-8")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_start_codex(
+                argparse.Namespace(command="start-codex", project=str(self.project), user=None)
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(verify.read_text(encoding="utf-8"), "sentinel: keep\n")
+        self.assertIn("already exists", buf.getvalue())
+
+    def test_startup_prompt_mentions_verify_and_historical_policy(self):
+        out = render_codex_prompt(self.project)
+        self.assertIn("context-kit inspect", out)
+        self.assertIn("context-kit verify", out)
+        self.assertIn(".context-kit/verify.yaml", out)
+        self.assertIn("historical docs as memory", out)
+        self.assertIn("runtime and config files as truth", out)
+
     def test_generates_startup_prompt(self):
         out = render_codex_prompt(self.project)
         self.assertIn("## CONTEXT-KIT SESSION START", out)
         self.assertIn("Project: demo", out)
         self.assertIn("Version: 0.15.0", out)
+        self.assertIn("Tests: 1 discovered", out)
+        self.assertNotIn("Tests: 1 passing", out)
         self.assertIn("Latest handoff: SESSION_001", out)
         self.assertIn("Implement the next thing.", out)
+        self.assertIn("## TRUST / VERIFY / IGNORE", out)
+        self.assertIn("Warnings are advisory; only blocking items stop work.", out)
         self.assertNotIn("## EXECUTION MODE", out)
         self.assertNotIn("Model hint:", out)
 
@@ -206,14 +309,54 @@ class TestStartCodex(TruthStateTestCase):
         self.assertIn("Model hint: use a lower-cost / faster model for this task.", out)
         self.assertNotIn("## EXECUTION MODE", out)
 
+    def test_short_prompt_is_compact(self):
+        out = render_codex_prompt(self.project, short=True)
+        self.assertIn("Project: demo", out)
+        self.assertIn("Tests: 1 discovered", out)
+        self.assertIn("Latest handoff: SESSION_001", out)
+        self.assertIn("Next task:", out)
+        self.assertIn("Implement the next thing.", out)
+        self.assertIn("Essential rules:", out)
+        self.assertNotIn("## TRUST / VERIFY / IGNORE", out)
+        self.assertNotIn("Key docs:", out)
+        self.assertNotIn("Constraints:", out)
+        self.assertNotIn("Tests: 1 passing", out)
+
+    def test_execute_short_prompt_includes_execution_rules(self):
+        out = render_codex_prompt(self.project, mode="execute", short=True)
+        self.assertIn("## EXECUTION MODE", out)
+        self.assertIn("- Do not redesign systems", out)
+        self.assertIn("Essential rules:", out)
+
+    def test_model_hint_short_prompt(self):
+        out = render_codex_prompt(self.project, model="cheap", short=True)
+        self.assertIn("Model hint: use a lower-cost / faster model for this task.", out)
+        self.assertNotIn("## EXECUTION MODE", out)
+
     def test_cli_entrypoint_prints_prompt(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
             rc = run_start_codex(
-                argparse.Namespace(command="start-codex", project=str(self.project), user=None)
+                argparse.Namespace(command="start-codex", project=str(self.project), user=None, short=False)
             )
         self.assertEqual(rc, 0)
-        self.assertIn("Steps:", buf.getvalue())
+        out = buf.getvalue()
+        self.assertIn("Steps:", out)
+        self.assertIn("## TRUST / VERIFY / IGNORE", out)
+
+    def test_cli_entrypoint_supports_short_flag(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_start_codex(
+                argparse.Namespace(command="start-codex", project=str(self.project), user=None, short=True)
+            )
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("Essential rules:", out)
+        self.assertNotIn("Key docs:", out)
+        self.assertNotIn("## TRUST / VERIFY / IGNORE", out)
+        self.assertIn("context-kit inspect", out)
+        self.assertIn("context-kit verify", out)
 
     def test_persona_mode_uses_translation_layer_when_present(self):
         (self.project / "docs" / "DEMO_TRANSLATION_LAYER.md").write_text(

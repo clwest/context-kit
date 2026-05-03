@@ -7,6 +7,8 @@ state that `orient` and `doctor` use. Read-only by contract.
 from __future__ import annotations
 
 import argparse
+import shutil
+import subprocess
 from pathlib import Path
 
 from . import state
@@ -18,13 +20,53 @@ def run_start_codex(args: argparse.Namespace) -> int:
         print(f"context-kit: {project} is not a directory.")
         return 2
 
+    verify_status = _ensure_verify_config(project)
+
     prompt = render_codex_prompt(
         project,
         user=getattr(args, "user", None),
         mode=getattr(args, "mode", "design"),
         model=getattr(args, "model", None),
+        short=getattr(args, "short", False),
     )
+    if verify_status == "created":
+        print("Verification config: created `.context-kit/verify.yaml`.")
+    else:
+        print("Verification config: `.context-kit/verify.yaml` already exists.")
     print(prompt.rstrip() + "\n")
+    return 0
+
+
+def run_codex(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve() if getattr(args, "project", None) else Path.cwd().resolve()
+    if not project.is_dir():
+        print(f"context-kit: {project} is not a directory.")
+        return 2
+
+    verify_status = _ensure_verify_config(project)
+    prompt = render_codex_prompt(
+        project,
+        user=getattr(args, "user", None),
+        mode=getattr(args, "mode", "design"),
+        model=getattr(args, "model", None),
+        short=getattr(args, "short", False),
+    )
+
+    codex_bin = shutil.which("codex")
+    if codex_bin is None:
+        print("Codex CLI: not found on PATH.")
+        _print_verify_status(verify_status)
+        _emit_prompt_fallback(prompt, copied=_copy_to_clipboard(prompt))
+        return 0
+
+    launch_result = _launch_codex(codex_bin, project, prompt)
+    _print_verify_status(verify_status)
+    if launch_result == "exec":
+        print("Codex CLI: launched with `codex exec`.")
+        return 0
+
+    print("Codex CLI: launch failed; showing the prompt instead.")
+    _emit_prompt_fallback(prompt, copied=_copy_to_clipboard(prompt))
     return 0
 
 
@@ -34,6 +76,7 @@ def render_codex_prompt(
     user: str | None = None,
     mode: str = "design",
     model: str | None = None,
+    short: bool = False,
 ) -> str:
     version = state.get_current_version(project) or "(unknown)"
     test_count = state.get_actual_test_count(project)
@@ -46,6 +89,19 @@ def render_codex_prompt(
     doctor_counts = _doctor_counts(project)
     docs = _key_docs(project)
     persona = _persona_context(project, user)
+
+    if short:
+        return _render_short_prompt(
+            project=project,
+            version=version,
+            tests=tests,
+            latest_token=latest_token,
+            next_token=next_token,
+            next_task=next_task,
+            doctor_counts=doctor_counts,
+            mode=mode,
+            model=model,
+        )
 
     lines: list[str] = []
     lines.append("## CONTEXT-KIT SESSION START — CODEX")
@@ -60,12 +116,17 @@ def render_codex_prompt(
     lines.append("Doctor:")
     lines.append(f"- {doctor_counts['warnings']} warnings")
     lines.append(f"- {doctor_counts['blocking']} blocking")
+    lines.append("- Warnings are advisory; only blocking items stop work.")
+    lines.append("")
+    lines.append("-----")
     lines.append("")
     lines.append("Key docs:")
     for doc in docs:
         lines.append(f"- {doc}")
     if not docs:
         lines.append("- (none found)")
+    lines.append("")
+    lines.extend(_trust_verify_ignore())
     lines.append("")
     if persona:
         lines.extend(persona)
@@ -81,16 +142,100 @@ def render_codex_prompt(
     lines.append("")
     lines.append("Rules:")
     lines.append("- Docs override assumptions")
+    lines.append("- Treat runtime and config files as truth when docs conflict")
+    lines.append("- Treat historical docs as memory, not current truth")
+    lines.append("- Use `.context-kit/verify.yaml` as the verification source map")
+    lines.append("- Run `context-kit inspect` before trusting the repo shape")
+    lines.append("- Run `context-kit verify` before trusting documentation claims")
     lines.append("- Do not modify protected systems")
     lines.append("- LLM = language layer only")
     lines.append("- Drift checks are warnings; do not treat warnings as blockers unless the user says so")
     lines.append("")
     lines.append("Steps:")
-    lines.append("1. Run `context-kit orient`")
-    lines.append("2. Run `context-kit doctor`")
-    lines.append("3. Build understanding")
-    lines.append("4. Confirm before coding")
+    lines.append("1. Run `context-kit inspect`")
+    lines.append("2. Run `context-kit verify`")
+    lines.append("3. Run `context-kit orient`")
+    lines.append("4. Run `context-kit doctor`")
+    lines.append("5. Build understanding")
+    lines.append("6. Confirm before coding")
     return "\n".join(lines)
+
+
+def _render_short_prompt(
+    *,
+    project: Path,
+    version: str,
+    tests: str,
+    latest_token: str,
+    next_token: str,
+    next_task: str,
+    doctor_counts: dict[str, int],
+    mode: str,
+    model: str | None,
+) -> str:
+    lines: list[str] = []
+    lines.append("## CONTEXT-KIT SESSION START — CODEX")
+    lines.append("")
+    lines.append(f"Project: {project.name}")
+    lines.append(f"Version: {version}")
+    lines.append(f"Tests: {tests}")
+    lines.append(f"Latest handoff: {latest_token}")
+    lines.append(f"Next session: {next_token}")
+    lines.append(f"Doctor: {doctor_counts['blocking']} blocking, {doctor_counts['warnings']} warnings")
+    lines.append("")
+    if model:
+        lines.extend(_model_hint(model))
+        lines.append("")
+    if mode == "execute":
+        lines.extend(_execution_mode())
+        lines.append("")
+    lines.append("Next task:")
+    lines.append(_compact_task(next_task))
+    lines.append("")
+    lines.append("Essential rules:")
+    lines.append("- Docs override assumptions")
+    lines.append("- Treat runtime and config files as truth when docs conflict")
+    lines.append("- Treat historical docs as memory, not current truth")
+    lines.append("- Use `.context-kit/verify.yaml` as the verification source map")
+    lines.append("- Run `context-kit inspect` before trusting the repo shape")
+    lines.append("- Run `context-kit verify` before trusting documentation claims")
+    lines.append("- Warnings are advisory; blocking items stop work")
+    lines.append("- Do not expand scope without asking")
+    lines.append("- If unclear, ask before acting")
+    return "\n".join(lines)
+
+
+def _trust_verify_ignore() -> list[str]:
+    return [
+        "## TRUST / VERIFY / IGNORE",
+        "",
+        "Trust:",
+        "- pyproject.toml version",
+        "- unittest discovery count shown above",
+        "- docs/CONTEXT_KIT_INVENTORY.md as the runtime anchor",
+        "",
+        "Verify:",
+        "- run `context-kit inspect` first",
+        "- run `context-kit verify` after inspect",
+        "- runtime and config files over docs when they disagree",
+        "- doctor warnings before treating them as blockers",
+        "- latest handoff and 00-START-NEXT-SESSION.md when they differ",
+        "- `.context-kit/verify.yaml` as the verification source map",
+        "",
+        "Ignore:",
+        "- historical docs as current truth",
+        "- missing optional docs unless the task needs them",
+    ]
+
+
+def _compact_task(next_task: str) -> str:
+    for line in next_task.splitlines():
+        stripped = line.strip()
+        if stripped:
+            if not stripped.endswith((".", "!", "?")) and "." in stripped:
+                return stripped[: stripped.rfind(".") + 1]
+            return stripped
+    return "(no next task found in 00-START-NEXT-SESSION.md)"
 
 
 def _execution_mode() -> list[str]:
@@ -207,3 +352,92 @@ def _find_persona_line(text: str, user: str) -> str | None:
         if needle in stripped.lower():
             return stripped
     return None
+
+
+def _print_verify_status(status: str) -> None:
+    if status == "created":
+        print("Verification config: created `.context-kit/verify.yaml`.")
+    else:
+        print("Verification config: `.context-kit/verify.yaml` already exists.")
+
+
+def _emit_prompt_fallback(prompt: str, *, copied: bool) -> None:
+    if copied:
+        print("Prompt copied to clipboard.")
+    else:
+        print("Clipboard unavailable.")
+        print("Paste the prompt below into Codex.")
+    print("")
+    print("=== Codex startup prompt ===")
+    print(prompt.rstrip())
+    print("=== End Codex startup prompt ===")
+
+
+def _launch_codex(codex_bin: str, project: Path, prompt: str) -> str:
+    try:
+        result = subprocess.run(
+            [codex_bin, "exec", "--cd", str(project)],
+            input=prompt,
+            text=True,
+            check=False,
+        )
+        return "exec" if result.returncode == 0 else "failed"
+    except OSError:
+        return "failed"
+
+
+def _copy_to_clipboard(text: str) -> bool:
+    commands: list[list[str]] = []
+    if shutil.which("pbcopy"):
+        commands.append(["pbcopy"])
+    if shutil.which("wl-copy"):
+        commands.append(["wl-copy"])
+    if shutil.which("xclip"):
+        commands.append(["xclip", "-selection", "clipboard"])
+    if shutil.which("xsel"):
+        commands.append(["xsel", "--clipboard", "--input"])
+    if shutil.which("clip"):
+        commands.append(["clip"])
+    for command in commands:
+        try:
+            subprocess.run(command, input=text, text=True, check=False)
+            return True
+        except OSError:
+            continue
+    return False
+
+
+def _ensure_verify_config(project: Path) -> str:
+    path = project / ".context-kit" / "verify.yaml"
+    if path.exists():
+        return "exists"
+
+    canonical_docs = [
+        "00-START-NEXT-SESSION.md",
+        "README.md",
+        "CLAUDE.md",
+        "docs/CONTEXT_KIT_INVENTORY.md",
+        "docs/CONTEXT_KIT_WHAT_IT_IS.md",
+        "docs/PLATFORM_INVENTORY.md",
+        "docs/PLATFORM_WHAT_IT_IS.md",
+    ]
+    active_doc_roots = ["docs/", ".claude/"]
+    historical_roots = ["archive/", "docs/archive/", "external-project-docs/"]
+    generated_artifact_roots = ["frontend/dist/", "dist/", "build/", "venv/", ".venv/", "venv_ml/"]
+
+    existing = [doc for doc in canonical_docs if (project / doc).exists()]
+
+    body = [
+        "canonical_docs:",
+        *[f"  - {doc}" for doc in existing],
+        "active_doc_roots:",
+        *[f"  - {root}" for root in active_doc_roots],
+        "historical_roots:",
+        *[f"  - {root}" for root in historical_roots],
+        "generated_artifact_roots:",
+        *[f"  - {root}" for root in generated_artifact_roots],
+        "",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(body), encoding="utf-8")
+    return "created"
