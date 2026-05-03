@@ -60,7 +60,22 @@ _CODE_SUFFIXES = {
 }
 _DOC_SUFFIXES = {".md", ".markdown", ".rst"}
 _CONFIG_SUFFIXES = {".toml", ".yaml", ".yml", ".json", ".ini", ".cfg"}
-_GENERATED_DIR_HINTS = {"dist", "build", "node_modules", "__pycache__", ".venv", "venv", "venv_ml", "htmlcov"}
+_GENERATED_DIR_HINTS = {"dist", "build", "node_modules", "__pycache__", ".venv", "venv", "venv_ml", "htmlcov", "artifacts"}
+_ASSET_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".avif",
+    ".bmp",
+    ".ico",
+    ".svg",
+    ".tif",
+    ".tiff",
+    ".heic",
+    ".heif",
+}
 
 
 @dataclass
@@ -237,10 +252,18 @@ def _is_generated_artifact(path: Path) -> bool:
     lowered = path.as_posix().lower()
     if any(seg in lowered for seg in ("/docs/verification/", "docs/verification/")):
         return True
+    if lowered.startswith(".rag/") or "/.rag/" in lowered:
+        return True
+    if lowered.startswith("tests/artifacts/") or "/tests/artifacts/" in lowered:
+        return True
+    if lowered.startswith("mobile/assets/") or "/mobile/assets/" in lowered:
+        return True
     parts = set(path.parts)
     if parts & _GENERATED_DIR_HINTS:
         return True
     if any(part.endswith(".egg-info") for part in path.parts):
+        return True
+    if path.suffix.lower() in _ASSET_SUFFIXES and any(part in {"assets", "asset", "images", "img", "media"} for part in path.parts[:-1]):
         return True
     return False
 
@@ -287,8 +310,6 @@ def _is_config_deployment(path: Path) -> bool:
     if parts & {"deployment", "railway", "config"}:
         return True
     if ".github" in parts and "workflows" in parts:
-        return True
-    if lowered.startswith(".rag/"):
         return True
     if name in {"package.json", "pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "poetry.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}:
         return True

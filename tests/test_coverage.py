@@ -87,6 +87,8 @@ class TestCoverageJsonShape(_GitRepo):
         _write(self.project / "core" / "app.py", "print('hi')\n")
         _write(self.project / "docs" / "guide.md", "# guide\n")
         _write(self.project / "docs" / "archive" / "old.md", "# old\n")
+        _write(self.project / ".rag" / "corpus.jsonl", "{\"doc\": 1}\n")
+        _write(self.project / "mobile" / "assets" / "icon.png", "PNGDATA\n")
         _write(self.project / "tests" / "test_app.py", "def test_ok(): pass\n")
         _write(self.project / ".env.example", "X=1\n")
         _write(self.project / "dist" / "bundle.js", "console.log(1)\n")
@@ -102,10 +104,39 @@ class TestCoverageJsonShape(_GitRepo):
         self.assertEqual(by_class["docs-historical"]["files"], 1)
         self.assertEqual(by_class["tests"]["files"], 1)
         self.assertEqual(by_class["config/deployment"]["files"], 1)
-        self.assertEqual(by_class["generated/artifact"]["files"], 1)
+        self.assertEqual(by_class["generated/artifact"]["files"], 3)
         self.assertEqual(by_class["unknown"]["files"], 1)
         self.assertTrue(data["by_top_directory"])
         self.assertTrue(data["unclassified_hot_files"])
+
+    def test_rag_corpus_is_generated_artifact(self):
+        _write(self.project / ".rag" / "corpus.jsonl", "{\"doc\": 1}\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["generated/artifact"]["files"], 1)
+        self.assertEqual(data["by_classification"]["unknown"]["files"], 0)
+
+    def test_mobile_asset_is_generated_artifact(self):
+        _write(self.project / "mobile" / "assets" / "icon.png", "PNGDATA\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["generated/artifact"]["files"], 1)
+        self.assertEqual(data["by_classification"]["unknown"]["files"], 0)
+
+    def test_unknown_arbitrary_file_stays_unknown(self):
+        _write(self.project / "misc" / "odd.txt", "mystery\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["unknown"]["files"], 1)
 
 
 class TestCoverageScope(_GitRepo):
