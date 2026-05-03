@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -186,6 +187,68 @@ class TestStartCodex(TruthStateTestCase):
         self.assertEqual(args.mode, "execute")
         self.assertTrue(args.short)
 
+    def test_codex_command_parses_interactive_flag(self):
+        args = build_parser().parse_args(["codex", "--interactive"])
+        self.assertEqual(args.command, "codex")
+        self.assertTrue(args.interactive)
+        self.assertFalse(args.exec)
+
+    def test_codex_command_parses_exec_flag(self):
+        args = build_parser().parse_args(["codex", "--exec"])
+        self.assertEqual(args.command, "codex")
+        self.assertTrue(args.exec)
+        self.assertFalse(args.interactive)
+
+    def test_codex_default_launches_interactively(self):
+        (self.project / "README.md").write_text("# Demo\n", encoding="utf-8")
+        (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
+        with patch("cli.start_codex.shutil.which", side_effect=lambda name: "/usr/bin/codex" if name == "codex" else None):
+            with patch("cli.start_codex.subprocess.Popen") as popen:
+                with patch("cli.start_codex._copy_to_clipboard", return_value=True):
+                    buf = io.StringIO()
+                    with redirect_stdout(buf):
+                        rc = run_codex(
+                            argparse.Namespace(
+                                command="codex",
+                                project=str(self.project),
+                                user=None,
+                                mode="execute",
+                                model=None,
+                                short=True,
+                            )
+                        )
+        self.assertEqual(rc, 0)
+        popen.assert_called_once()
+        self.assertIn("Codex is opening interactively. Paste the copied startup prompt as the first message.", buf.getvalue())
+        self.assertIn("Prompt copied to clipboard.", buf.getvalue())
+
+    def test_codex_exec_mode_calls_codex_exec(self):
+        (self.project / "README.md").write_text("# Demo\n", encoding="utf-8")
+        (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
+        with patch("cli.start_codex.shutil.which", side_effect=lambda name: "/usr/bin/codex" if name == "codex" else None):
+            with patch("cli.start_codex.subprocess.run") as run_mock:
+                run_mock.return_value = subprocess.CompletedProcess(args=["codex"], returncode=0)
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = run_codex(
+                        argparse.Namespace(
+                            command="codex",
+                            project=str(self.project),
+                            user=None,
+                            mode="execute",
+                            model=None,
+                            short=True,
+                            exec=True,
+                            interactive=False,
+                        )
+                    )
+        self.assertEqual(rc, 0)
+        run_mock.assert_called_once()
+        called_args, called_kwargs = run_mock.call_args
+        self.assertEqual(called_args[0][1], "exec")
+        self.assertIn("input", called_kwargs)
+        self.assertIn("Codex CLI: launched with `codex exec`.", buf.getvalue())
+
     def test_codex_command_falls_back_helpfully_when_binary_is_missing(self):
         (self.project / "README.md").write_text("# Demo\n", encoding="utf-8")
         (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
@@ -207,7 +270,7 @@ class TestStartCodex(TruthStateTestCase):
         self.assertIn("Codex CLI: not found on PATH.", out)
         self.assertIn("Verification config: created `.context-kit/verify.yaml`.", out)
         self.assertIn("Clipboard unavailable.", out)
-        self.assertIn("Paste the prompt below into Codex.", out)
+        self.assertIn("Codex is opening interactively. Paste the copied startup prompt as the first message.", out)
         self.assertIn("Essential rules:", out)
         self.assertIn("context-kit inspect", out)
         self.assertIn("context-kit verify", out)

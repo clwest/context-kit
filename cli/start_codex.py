@@ -51,22 +51,33 @@ def run_codex(args: argparse.Namespace) -> int:
         model=getattr(args, "model", None),
         short=getattr(args, "short", False),
     )
+    exec_mode = bool(getattr(args, "exec", False))
+    interactive_mode = bool(getattr(args, "interactive", False)) or not exec_mode
 
     codex_bin = shutil.which("codex")
     if codex_bin is None:
         print("Codex CLI: not found on PATH.")
         _print_verify_status(verify_status)
-        _emit_prompt_fallback(prompt, copied=_copy_to_clipboard(prompt))
+        if interactive_mode:
+            print("Codex is opening interactively. Paste the copied startup prompt as the first message.")
+        else:
+            print("Codex is running one-shot with `codex exec`.")
+        _emit_prompt_fallback(prompt, copied=_copy_to_clipboard(prompt), interactive=interactive_mode)
         return 0
 
-    launch_result = _launch_codex(codex_bin, project, prompt)
+    launch_result = _launch_codex(codex_bin, project, prompt, exec_mode=exec_mode)
     _print_verify_status(verify_status)
     if launch_result == "exec":
         print("Codex CLI: launched with `codex exec`.")
         return 0
+    if launch_result == "interactive":
+        copied = _copy_to_clipboard(prompt)
+        print("Prompt copied to clipboard." if copied else "Clipboard unavailable.")
+        print("Codex is opening interactively. Paste the copied startup prompt as the first message.")
+        return 0
 
     print("Codex CLI: launch failed; showing the prompt instead.")
-    _emit_prompt_fallback(prompt, copied=_copy_to_clipboard(prompt))
+    _emit_prompt_fallback(prompt, copied=_copy_to_clipboard(prompt), interactive=interactive_mode)
     return 0
 
 
@@ -361,11 +372,15 @@ def _print_verify_status(status: str) -> None:
         print("Verification config: `.context-kit/verify.yaml` already exists.")
 
 
-def _emit_prompt_fallback(prompt: str, *, copied: bool) -> None:
+def _emit_prompt_fallback(prompt: str, *, copied: bool, interactive: bool) -> None:
     if copied:
         print("Prompt copied to clipboard.")
     else:
         print("Clipboard unavailable.")
+    if interactive:
+        print("Codex is opening interactively. Paste the copied startup prompt as the first message.")
+    else:
+        print("Codex is running one-shot with `codex exec`.")
         print("Paste the prompt below into Codex.")
     print("")
     print("=== Codex startup prompt ===")
@@ -373,15 +388,18 @@ def _emit_prompt_fallback(prompt: str, *, copied: bool) -> None:
     print("=== End Codex startup prompt ===")
 
 
-def _launch_codex(codex_bin: str, project: Path, prompt: str) -> str:
+def _launch_codex(codex_bin: str, project: Path, prompt: str, *, exec_mode: bool) -> str:
     try:
-        result = subprocess.run(
-            [codex_bin, "exec", "--cd", str(project)],
-            input=prompt,
-            text=True,
-            check=False,
-        )
-        return "exec" if result.returncode == 0 else "failed"
+        if exec_mode:
+            result = subprocess.run(
+                [codex_bin, "exec", "--cd", str(project)],
+                input=prompt,
+                text=True,
+                check=False,
+            )
+            return "exec" if result.returncode == 0 else "failed"
+        subprocess.Popen([codex_bin, "--cd", str(project)], cwd=project)
+        return "interactive"
     except OSError:
         return "failed"
 

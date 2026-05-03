@@ -18,6 +18,13 @@ If you have the `context-kit` CLI on PATH, just run:
 context-kit codex --mode=execute --short
 ```
 
+That opens Codex interactively and copies the startup prompt. For
+one-shot automation, use:
+
+```bash
+context-kit codex --exec --mode=execute --short
+```
+
 If you want the lower-level prompt only:
 
 ```bash

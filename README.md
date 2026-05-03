@@ -34,6 +34,7 @@ already have code), and **`refactor track`** for reporting progress
 on multi-PR module-extraction work (split a monolith file into
 sibling modules across many PRs and watch the percentage tick up).
 For a smoother Codex startup, use `context-kit codex --mode=execute --short`.
+That opens Codex interactively by default; add `--exec` for one-shot automation.
 All read-only by default. All exit cleanly for an agent to parse.
 
 Think `create-next-app`, but for the memory layer around your code.

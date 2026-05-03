@@ -562,6 +562,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the compact startup prompt instead of the full prompt.",
     )
+    codex_mode = codex.add_mutually_exclusive_group()
+    codex_mode.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Launch Codex interactively and paste the copied startup prompt manually.",
+    )
+    codex_mode.add_argument(
+        "--exec",
+        dest="exec",
+        action="store_true",
+        help="Run a one-shot Codex exec session with the startup prompt.",
+    )
 
     # start-codex
     start_codex = sub.add_parser(
