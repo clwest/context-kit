@@ -75,6 +75,7 @@ def run_codex(args: argparse.Namespace) -> int:
         print("Codex CLI: launched with `codex exec`.")
         return 0
     if launch_result == "interactive":
+        print("Codex CLI: launched interactively.")
         print("Codex is opening interactively. Paste the copied startup prompt as the first message.")
         return 0
 
@@ -400,7 +401,7 @@ def _launch_codex(codex_bin: str, project: Path, prompt: str, *, launch_mode: st
                 check=False,
             )
             return "exec" if result.returncode == 0 else "failed"
-        subprocess.Popen([codex_bin, "--cd", str(project)], cwd=project)
+        subprocess.run([codex_bin], cwd=project, check=False)
         return "interactive"
     except OSError:
         return "failed"
