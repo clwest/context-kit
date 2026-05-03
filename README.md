@@ -182,6 +182,7 @@ Commands:
   fix                  Print docs/audit/CLEANUP_PLAN.md as an actionable outline
   exec                 Render docs/audit/CLEANUP_PLAN.md as an AI execution prompt
   inspect              Print a deterministic system map for any repo
+  verify               Check whether key repo claims are verified, doc-only, conflicting, or unknown
 
 Run `python3 context_kit.py <command> --help` for per-command options.
 ```
@@ -258,6 +259,29 @@ output), `inspect` reads the code and prints what it found:
 ```bash
 context-kit inspect [PATH]
 ```
+
+### `verify` — truth/status layer (v0.15.0)
+
+`verify` reads docs plus code/config files and classifies a small set of high-value claims as `VERIFIED`, `DOC_ONLY`, `CONFLICT`, or `UNKNOWN`.
+
+```bash
+context-kit verify [PATH]
+```
+
+It currently checks:
+
+- Django settings module ownership
+- Celery beat schedule ownership
+- tracked generated artifacts in git
+- docs-only count claims such as agents, spiders, APIs, and frontend pages
+
+**`verify` options**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| *positional* `PATH` | `.` | Project root to verify |
+| `--json` | off | Emit machine-readable JSON |
+| `--write` | off | Write or refresh `docs/verification/VERIFY_REPORT.md` |
 
 One short pass over the tree (~0.3s on a 7,900-file Django repo)
 produces:

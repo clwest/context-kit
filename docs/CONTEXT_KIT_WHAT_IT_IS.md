@@ -40,7 +40,7 @@ verifier, and AI-collaboration conventions that keep AI-assisted
 projects from losing context across sessions, distilled from ~1,100
 AI-assisted build sessions.
 
-**Scale (manual, see inventory):** ~6 Python source files, 4 CLI
+**Scale (manual, see inventory):** ~7 Python source files, 5 CLI
 subcommands, 8 guide docs, 1 Claude skill, 69 unit tests.
 
 ---
@@ -72,6 +72,7 @@ Two things on purpose:
 | `start` | Launch a localhost onboarding page for a generated project. |
 | `orient` | Print the project's authoritative session-start context as one plain-text report. The Claude skill calls this. |
 | `hotpath` | Read-only file-size dashboard. Warns when any file or the top-N sum is large enough to dominate an AI session's context. |
+| `verify` | Read-only truth/status layer that checks whether key repo claims are verified, doc-only, conflicting, or unknown. |
 
 **The teaching material.** 8 guide docs at the repo root explaining
 each piece of the pattern:

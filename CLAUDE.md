@@ -34,7 +34,7 @@ any agent loaded in this repo to do exactly that.
 context-kit is both:
 
 - **The tool** — a zero-dependency Python CLI (`init`, `start`, `orient`,
-  `hotpath`) that scaffolds AI-friendly project context
+  `hotpath`, `verify`) that scaffolds AI-friendly project context
 - **The teaching material** — 8 guide docs (`01_*.md` … `08_*.md`) that
   explain *why* the pattern works
 
@@ -68,6 +68,9 @@ python3 context_kit.py orient
 
 # Check which files are large enough to dominate context
 python3 context_kit.py hotpath
+
+# Verify important repo claims against docs + code/config
+python3 context_kit.py verify
 
 # Smoke-test the bootstrap into a temp dir
 python3 context_kit.py init "Smoke" --target /tmp/ctx-smoke --force

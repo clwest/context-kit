@@ -438,6 +438,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory walk depth for monorepo / workspace child detection (default: 2)",
     )
 
+    # verify
+    verify = sub.add_parser(
+        "verify",
+        help="Check whether key repo claims are verified, doc-only, conflicting, or unknown",
+        description=(
+            "Read docs plus code/config files and produce a deterministic "
+            "verification report for a small set of high-value claims: "
+            "Django settings module ownership, Celery beat schedule "
+            "ownership, tracked generated artifacts, and common count "
+            "claims in docs. Read-only by default; --write stores the "
+            "report in docs/verification/VERIFY_REPORT.md."
+        ),
+    )
+    verify.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Project root to verify (default: current working directory)",
+    )
+    verify.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON to stdout",
+    )
+    verify.add_argument(
+        "--write",
+        action="store_true",
+        help="Write or refresh docs/verification/VERIFY_REPORT.md",
+    )
+
     # exec
     exec_cmd = sub.add_parser(
         "exec",
@@ -596,6 +626,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "inspect":
         from cli.inspect import run_inspect
         return run_inspect(args)
+
+    if args.command == "verify":
+        from cli.verify import run_verify
+        return run_verify(args)
 
     if args.command == "refactor":
         from cli.refactor import run_refactor
