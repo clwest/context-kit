@@ -535,6 +535,8 @@ def _is_relevant_candidate(path: Path) -> bool:
             return False
     except OSError:
         pass
+    if _is_verification_output(path):
+        return False
     return _is_doc_or_env_file(path) or path.suffix == ".py"
 
 
@@ -593,3 +595,19 @@ def _rel_key(project: Path, path: Path) -> str:
     except ValueError:
         rel = path
     return rel.as_posix()
+
+
+def _is_verification_output(path: Path) -> bool:
+    parts = path.parts
+    if "docs" not in parts:
+        return False
+    try:
+        docs_idx = parts.index("docs")
+    except ValueError:
+        return False
+    tail = parts[docs_idx + 1 :]
+    if not tail:
+        return False
+    if tail[0] != "verification":
+        return False
+    return True

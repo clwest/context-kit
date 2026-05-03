@@ -99,6 +99,16 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("74", out)
         self.assertIn("75", out)
 
+    def test_verification_report_is_ignored_as_input(self):
+        _write(self.project / "README.md", "We have 74 agents.\n")
+        _write(self.project / "docs" / "verification" / "VERIFY_REPORT.md", "Actually we have 75 agents.\n")
+        rc, out = _capture(_args(self.project))
+        self.assertEqual(rc, 0)
+        self.assertIn("DOC_ONLY", out)
+        self.assertIn("74", out)
+        self.assertNotIn("75", out)
+        self.assertNotIn("docs/verification/VERIFY_REPORT.md", out)
+
 
 class TestVerifyTrackedArtifacts(VerifyTestCase):
     def test_detects_tracked_generated_artifact(self):
