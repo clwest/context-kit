@@ -73,6 +73,7 @@ _DOC_COUNT_STRONG_LABELS = {
 _DOC_COUNT_CONTEXT_RE = re.compile(
     r"(?i)(?:^\s*#{1,6}\s*|^\s*[-*+]\s*|^\s*\|\s*|(?:\b(?:total|registered|current|count|agents|spiders|apis|frontend pages)\s*:))"
 )
+_DOC_COUNT_DIMENSIONS = ("total", "db_persona", "dormant", "provenance", "workspace", "category_table", "unknown")
 _DJANGO_SETTINGS_RE = re.compile(r"DJANGO_SETTINGS_MODULE", re.IGNORECASE)
 _CELERY_OWNER_RE = re.compile(
     r"(?i)(?:beat_schedule\s*=|app\.conf\.beat_schedule|CELERY_BEAT_SCHEDULE|CELERY_BEAT_SCHEDULER|PeriodicTask\.objects|sync_celery_schedules)"
@@ -745,63 +746,78 @@ def _verify_doc_count_claims(
 ) -> list[Finding]:
     findings: list[Finding] = []
     for label in _DOC_COUNT_LABEL_PATTERNS:
-        values_by_scope: dict[str, dict[str, set[str]]] = {scope: {} for scope in _EVIDENCE_SCOPE_ORDER}
+        claims_by_scope: dict[str, dict[str, dict[str, set[str]]]] = {
+            scope: {dimension: {} for dimension in _DOC_COUNT_DIMENSIONS}
+            for scope in _EVIDENCE_SCOPE_ORDER
+        }
         evidence_by_scope = _new_scope_evidence_map()
         for path in doc_files:
             text = _read_text(path)
             if not text:
                 continue
             for line_no, line in enumerate(text.splitlines(), start=1):
-                if not _is_doc_count_claim_line(line, label):
+                entries = _extract_doc_count_entries(line, label)
+                if not entries:
                     continue
-                for value in _extract_doc_count_values(line, label):
-                    rel = _rel(project, path, line_no)
-                    scope = _doc_scope_for_path(path, project, config, all_docs=all_docs)
-                    evidence_by_scope[scope].add(rel)
-                    values_by_scope[scope].setdefault(value, set()).add(rel)
-        if not any(values_by_scope[scope] for scope in _EVIDENCE_SCOPE_ORDER):
+                rel = _rel(project, path, line_no)
+                scope = _doc_scope_for_path(path, project, config, all_docs=all_docs)
+                evidence_by_scope[scope].add(rel)
+                for value, dimension in entries:
+                    claims_by_scope[scope][dimension].setdefault(value, set()).add(rel)
+        if not any(
+            claims_by_scope[scope][dimension]
+            for scope in _EVIDENCE_SCOPE_ORDER
+            for dimension in _DOC_COUNT_DIMENSIONS
+        ):
             continue
-        canonical_values = _scope_value_set(values_by_scope, {"canonical_docs"})
-        supporting_values = _scope_value_set(values_by_scope, {"supporting_docs"})
-        active_values = _scope_value_set(values_by_scope, {"active_docs"})
-        historical_values = _scope_value_set(values_by_scope, _HISTORICAL_SCOPES)
+        canonical_total = _scope_dimension_value_set(claims_by_scope, {"canonical_docs"}, "total")
+        supporting_total = _scope_dimension_value_set(claims_by_scope, {"supporting_docs"}, "total")
+        active_total = _scope_dimension_value_set(claims_by_scope, {"active_docs"}, "total")
+        historical_total = _scope_dimension_value_set(claims_by_scope, _HISTORICAL_SCOPES, "total")
+        active_unknown = _scope_dimension_value_set(claims_by_scope, {"active_docs"}, "unknown")
+        active_other_dims = _scope_dimension_value_set(claims_by_scope, {"active_docs"}, {"db_persona", "dormant", "provenance", "workspace", "category_table"})
         status = "DOC_ONLY"
         if config and config.canonical_docs:
-            scoring_values = canonical_values if not all_docs else canonical_values | supporting_values
+            scoring_values = canonical_total if not all_docs else canonical_total | supporting_total
         else:
-            scoring_values = active_values
-        if scoring_values:
-            if len(scoring_values) > 1:
-                status = "CONFLICT"
-            elif include_archive and historical_values and historical_values != scoring_values:
-                status = "CONFLICT"
-        elif include_archive and len(historical_values) > 1:
+            scoring_values = active_total
+        total_dimension = "total"
+        if include_archive:
+            scoring_values = scoring_values | historical_total
+        if scoring_values and len(scoring_values) > 1:
             status = "CONFLICT"
 
         title = f"{label.title()} count claims"
-        display_values = sorted({value for scope in _EVIDENCE_SCOPE_ORDER for value in values_by_scope[scope].keys()}, key=int)
-        chosen_values = sorted(scoring_values or historical_values or supporting_values or active_values, key=int)
+        display_values = sorted({value for scope in _EVIDENCE_SCOPE_ORDER for value in claims_by_scope[scope][total_dimension].keys()}, key=int)
+        chosen_values = sorted(scoring_values or historical_total or supporting_total or active_total, key=int)
         if status == "CONFLICT":
-            details = f"Docs claim multiple {label} counts: {display_values}."
+            details = f"Docs claim multiple {label} total counts: {display_values}."
             recommendation = f"Pick one {label} count, update stale docs, and keep the strongest source of truth in a single place."
         else:
-            chosen = chosen_values[0]
-            if config and config.canonical_docs and canonical_values and supporting_values and supporting_values != canonical_values and not all_docs:
-                details = f"Canonical docs mention `{chosen}`, while supporting docs drift to {sorted(supporting_values, key=int)}."
-            elif config and config.canonical_docs and not canonical_values and supporting_values:
-                details = f"Supporting docs mention `{chosen}`; canonical docs did not claim this count."
-            elif historical_values and not (canonical_values or active_values or supporting_values):
-                if len(historical_values) > 1:
-                    details = f"Historical drift mentions multiple {label} counts: {sorted(historical_values, key=int)}."
+            chosen = chosen_values[0] if chosen_values else None
+            if config and config.canonical_docs and canonical_total and supporting_total and supporting_total != canonical_total and not all_docs:
+                details = f"Canonical docs mention `{chosen}`, while supporting docs drift to {sorted(supporting_total, key=int)}."
+            elif config and config.canonical_docs and not canonical_total and supporting_total:
+                details = f"Supporting docs mention `{chosen}`; canonical docs did not claim this total."
+            elif historical_total and not (canonical_total or active_total or supporting_total):
+                if len(historical_total) > 1:
+                    details = f"Historical drift mentions multiple {label} total counts: {sorted(historical_total, key=int)}."
                 else:
                     details = f"Historical drift mentions `{chosen}` and no runtime source was checked for this claim."
             else:
-                if config and config.canonical_docs and not all_docs and canonical_values:
-                    details = f"Canonical docs mention a single {label} count (`{chosen}`) and no runtime source was checked for this claim."
+                if config and config.canonical_docs and not all_docs and canonical_total:
+                    details = f"Canonical docs mention a single {label} total count (`{chosen}`) and no runtime source was checked for this claim."
                 else:
-                    details = f"Docs mention a single {label} count (`{chosen}`) and no runtime source was checked for this claim."
-                if historical_values:
-                    details += f" Historical docs still mention {sorted(historical_values, key=int)}."
+                    if chosen is not None:
+                        details = f"Docs mention a single {label} total count (`{chosen}`) and no runtime source was checked for this claim."
+                    else:
+                        details = f"Docs mention only subordinate {label} counts and no runtime source was checked for this claim."
+                if historical_total:
+                    details += f" Historical docs still mention {sorted(historical_total, key=int)}."
+                if active_other_dims:
+                    details += f" Subordinate dimensions mention {sorted(active_other_dims, key=int)}."
+                if active_unknown:
+                    details += f" Additional advisory counts mention {sorted(active_unknown, key=int)}."
             recommendation = f"Treat the `{chosen}` claim as documentation-only until a runtime source is added."
         findings.append(_make_finding(
             id=f"doc-count-{label.replace(' ', '-')}",
@@ -1036,6 +1052,23 @@ def _scope_value_set(values_by_scope: dict[str, dict[str, set[str]]], scopes: se
     return values
 
 
+def _scope_dimension_value_set(
+    claims_by_scope: dict[str, dict[str, dict[str, set[str]]]],
+    scopes: set[str] | tuple[str, ...] | list[str],
+    dimensions: str | set[str] | tuple[str, ...] | list[str],
+) -> set[str]:
+    if isinstance(dimensions, str):
+        dims = {dimensions}
+    else:
+        dims = set(dimensions)
+    values: set[str] = set()
+    for scope in scopes:
+        scope_claims = claims_by_scope.get(scope, {})
+        for dimension in dims:
+            values.update(scope_claims.get(dimension, {}).keys())
+    return values
+
+
 def _scope_for_path(path: Path) -> str:
     if _is_runtime_settings_path(path):
         return "runtime"
@@ -1093,11 +1126,13 @@ def _is_doc_count_claim_line(line: str, label: str) -> bool:
     return False
 
 
-def _extract_doc_count_values(line: str, label: str) -> set[str]:
+def _extract_doc_count_entries(line: str, label: str) -> list[tuple[str, str]]:
     stripped = line.strip()
-    values: set[str] = set()
+    entries: list[tuple[str, str]] = []
     if not stripped:
-        return values
+        return entries
+    if not _is_doc_count_claim_line(stripped, label) and not _is_doc_count_table_row(stripped):
+        return entries
     label_re = _DOC_COUNT_LABEL_PATTERNS[label]
     strong_label_re = _DOC_COUNT_STRONG_LABELS[label]
     strong_patterns = (
@@ -1114,13 +1149,47 @@ def _extract_doc_count_values(line: str, label: str) -> set[str]:
         for match in re.finditer(pattern, stripped):
             value = match.group(1)
             if _is_valid_doc_count_value(value):
-                values.add(value)
+                entries.append((value, _classify_doc_count_dimension(stripped, label, strong=True)))
     for pattern in weak_patterns:
         for match in re.finditer(pattern, stripped):
             value = match.group(1)
             if _is_valid_doc_count_value(value) and int(value) >= 10:
-                values.add(value)
+                entries.append((value, _classify_doc_count_dimension(stripped, label, strong=False)))
+    if not entries and _is_doc_count_table_row(stripped):
+        for value in _extract_doc_count_table_values(stripped):
+            entries.append((value, _classify_doc_count_dimension(stripped, label, strong=False, table_row=True)))
+    return entries
+
+
+def _extract_doc_count_table_values(line: str) -> list[str]:
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    values: list[str] = []
+    for cell in cells:
+        if re.fullmatch(r"\d{1,3}", cell) and _is_valid_doc_count_value(cell):
+            values.append(cell)
     return values
+
+
+def _is_doc_count_table_row(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("|") and stripped.endswith("|") and "|" in stripped
+
+
+def _classify_doc_count_dimension(line: str, label: str, *, strong: bool, table_row: bool = False) -> str:
+    lowered = line.lower()
+    if strong or any(token in lowered for token in ("agent_map", "agent-map", "agmap", "code agent", "code-agent", "headline", "primary agents", "current agents", "total agents")):
+        return "total"
+    if any(token in lowered for token in ("persona", "db", "database")):
+        return "db_persona"
+    if any(token in lowered for token in ("dormant", "inactive", "sleeping")):
+        return "dormant"
+    if "provenance" in lowered:
+        return "provenance"
+    if "workspace" in lowered:
+        return "workspace"
+    if table_row or "|" in line:
+        return "category_table"
+    return "unknown"
 
 
 def _is_valid_doc_count_value(value: str) -> bool:

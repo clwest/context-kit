@@ -111,8 +111,8 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("74", out)
 
     def test_conflicting_count_claims(self):
-        _write(self.project / "README.md", "- agents: 74\n")
-        _write(self.project / "docs" / "NOTES.md", "- agents: 75\n")
+        _write(self.project / "README.md", "## Total Agents: 74\n")
+        _write(self.project / "docs" / "NOTES.md", "## Total Agents: 75\n")
         rc, out = _capture(_args(self.project))
         self.assertEqual(rc, 0)
         self.assertIn("CONFLICT", out)
@@ -131,8 +131,8 @@ class TestVerifyDocCounts(VerifyTestCase):
             "generated_artifact_roots:\n"
             "  - dist/\n",
         )
-        _write(self.project / "README.md", "- agents: 74\n")
-        _write(self.project / "docs" / "NOTES.md", "- agents: 75\n")
+        _write(self.project / "README.md", "## Total Agents: 74\n")
+        _write(self.project / "docs" / "NOTES.md", "## Total Agents: 75\n")
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
@@ -153,8 +153,8 @@ class TestVerifyDocCounts(VerifyTestCase):
             "active_doc_roots:\n"
             "  - docs/\n",
         )
-        _write(self.project / "README.md", "- agents: 74\n")
-        _write(self.project / "docs" / "NOTES.md", "- agents: 75\n")
+        _write(self.project / "README.md", "## Total Agents: 74\n")
+        _write(self.project / "docs" / "NOTES.md", "## Total Agents: 75\n")
         rc, out = _capture(_args(self.project))
         self.assertEqual(rc, 0)
         self.assertIn("DOC_ONLY", out)
@@ -169,8 +169,8 @@ class TestVerifyDocCounts(VerifyTestCase):
             "active_doc_roots:\n"
             "  - docs/\n",
         )
-        _write(self.project / "README.md", "- agents: 74\n")
-        _write(self.project / "docs" / "NOTES.md", "- agents: 75\n")
+        _write(self.project / "README.md", "## Total Agents: 74\n")
+        _write(self.project / "docs" / "NOTES.md", "## Total Agents: 75\n")
         rc, out = _capture(_args(self.project, json_=True, all_docs=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
@@ -178,8 +178,8 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertEqual(finding["status"], "CONFLICT")
 
     def test_archived_docs_do_not_create_primary_conflict_by_default(self):
-        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "- agents: 74\n")
-        _write(self.project / "docs" / "archive" / "SESSION_002.md", "- agents: 75\n")
+        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "## Total Agents: 74\n")
+        _write(self.project / "docs" / "archive" / "SESSION_002.md", "## Total Agents: 75\n")
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
@@ -198,8 +198,8 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("Django settings module", out)
 
     def test_include_archive_brings_historical_evidence_into_scoring(self):
-        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "- agents: 74\n")
-        _write(self.project / "docs" / "archive" / "SESSION_002.md", "- agents: 75\n")
+        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "## Total Agents: 74\n")
+        _write(self.project / "docs" / "archive" / "SESSION_002.md", "## Total Agents: 75\n")
         rc, out = _capture(_args(self.project, json_=True, include_archive=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
@@ -210,9 +210,9 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("75", finding["details"])
 
     def test_human_report_truncates_long_evidence_lists(self):
-        _write(self.project / "README.md", "- agents: 74\n")
+        _write(self.project / "README.md", "## Total Agents: 74\n")
         for idx in range(1, 9):
-            _write(self.project / "docs" / "notes" / f"NOTE_{idx}.md", f"- agents: {74 + idx}\n")
+            _write(self.project / "docs" / "notes" / f"NOTE_{idx}.md", f"## Total Agents: {74 + idx}\n")
         rc, out = _capture(_args(self.project))
         self.assertEqual(rc, 0)
         self.assertIn("Primary evidence:", out)
@@ -279,6 +279,53 @@ class TestVerifyDocCounts(VerifyTestCase):
         ids = {item["id"] for item in data["findings"] if item["id"].startswith("doc-count-")}
         self.assertIn("doc-count-agents", ids)
         self.assertIn("doc-count-spiders", ids)
+
+    def test_total_agents_do_not_conflict_with_db_persona_counts(self):
+        _write(self.project / "README.md", "## AGENT_MAP: 83 agents\n")
+        _write(self.project / "docs" / "people.md", "DB persona agents: 223\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
+        self.assertEqual(finding["status"], "DOC_ONLY")
+        self.assertIn("83", finding["details"])
+        self.assertIn("223", finding["details"])
+
+    def test_category_table_rows_do_not_conflict_with_total(self):
+        _write(self.project / "README.md", "## Total Agents: 83\n")
+        _write(self.project / "docs" / "table.md", "| Creation | 4 |\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
+        self.assertEqual(finding["status"], "DOC_ONLY")
+        self.assertIn("4", finding["details"])
+
+    def test_dormant_provenance_workspace_counts_do_not_conflict_with_total(self):
+        _write(self.project / "README.md", "## Total Agents: 83\n")
+        _write(self.project / "docs" / "dormant.md", "- dormant agents: 12\n")
+        _write(self.project / "docs" / "provenance.md", "- provenance-tracked agents: 11\n")
+        _write(self.project / "docs" / "workspace.md", "- workspace-aware agents: 10\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
+        self.assertEqual(finding["status"], "DOC_ONLY")
+        self.assertIn("83", finding["details"])
+        self.assertIn("12", finding["details"])
+        self.assertIn("11", finding["details"])
+        self.assertIn("10", finding["details"])
+
+    def test_total_agents_conflict_with_total_only(self):
+        _write(self.project / "README.md", "## Total Agents: 83\n")
+        _write(self.project / "docs" / "other.md", "## Total Agents: 74\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
+        self.assertEqual(finding["status"], "CONFLICT")
+        self.assertIn("83", finding["details"])
+        self.assertIn("74", finding["details"])
 
     def test_verification_report_is_ignored_as_input(self):
         _write(self.project / "README.md", "- agents: 74\n")
