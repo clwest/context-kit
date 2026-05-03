@@ -38,6 +38,15 @@ _INTRO = (
 )
 
 _STATUS_ORDER = ("VERIFIED", "DOC_ONLY", "CONFLICT", "UNKNOWN")
+_EVIDENCE_SCOPE_ORDER = (
+    "runtime",
+    "active_docs",
+    "env",
+    "historical_docs",
+    "external_docs",
+)
+_ACTIVE_SCOPES = {"runtime", "active_docs", "env"}
+_HISTORICAL_SCOPES = {"historical_docs", "external_docs"}
 _TRACKED_ARTIFACT_PREFIXES = (
     "venv/",
     ".venv/",
@@ -72,6 +81,7 @@ class Finding:
     status: str
     category: str
     evidence: list[str] = field(default_factory=list)
+    evidence_by_scope: dict[str, list[str]] = field(default_factory=dict)
     details: str = ""
     recommendation: str = ""
 
@@ -90,7 +100,7 @@ def run_verify(args: argparse.Namespace) -> int:
         print(f"context-kit: {project} is not a directory.")
         return 2
 
-    report = collect_verification(project)
+    report = collect_verification(project, include_archive=getattr(args, "include_archive", False))
 
     if getattr(args, "write", False):
         write_verification_report(project, report)
@@ -102,17 +112,17 @@ def run_verify(args: argparse.Namespace) -> int:
     return 0
 
 
-def collect_verification(project: Path) -> VerificationReport:
+def collect_verification(project: Path, *, include_archive: bool = False) -> VerificationReport:
     files = _project_files(project)
     docs_files = [p for p in files if _is_doc_file(p)]
     env_files = [p for p in files if _is_env_file(p)]
     python_files = [p for p in files if p.suffix == ".py"]
 
     findings: list[Finding] = []
-    findings.extend(_verify_django_settings(project, docs_files + env_files + python_files))
-    findings.extend(_verify_celery_beat(project, docs_files + env_files + python_files))
+    findings.extend(_verify_django_settings(project, docs_files + env_files + python_files, include_archive=include_archive))
+    findings.extend(_verify_celery_beat(project, docs_files + env_files + python_files, include_archive=include_archive))
     findings.extend(_verify_tracked_artifacts(project))
-    findings.extend(_verify_doc_count_claims(project, docs_files))
+    findings.extend(_verify_doc_count_claims(project, docs_files, include_archive=include_archive))
 
     findings.sort(key=lambda f: (_STATUS_ORDER.index(f.status), f.category, f.title))
 
@@ -157,13 +167,8 @@ def render_human_report(report: VerificationReport) -> str:
                 f"### {finding.title}",
                 f"- Status: `{finding.status}`",
                 f"- Category: `{finding.category}`",
-                "- Evidence:",
             ])
-            if finding.evidence:
-                for item in finding.evidence:
-                    lines.append(f"  - {item}")
-            else:
-                lines.append("  - None")
+            lines.extend(_render_finding_evidence(finding))
             lines.extend([
                 f"- Details: {finding.details}",
                 f"- Recommended next action: {finding.recommendation}",
@@ -207,11 +212,9 @@ def _replace_block(existing: str, new_block: str) -> str:
     return pre + new_block + post
 
 
-def _verify_django_settings(project: Path, files: list[Path]) -> list[Finding]:
-    docs_evidence: list[str] = []
-    runtime_evidence: list[str] = []
-    docs_values: set[str] = set()
-    runtime_values: set[str] = set()
+def _verify_django_settings(project: Path, files: list[Path], *, include_archive: bool = False) -> list[Finding]:
+    evidence_by_scope = _new_scope_evidence_map()
+    values_by_scope: dict[str, set[str]] = {scope: set() for scope in _EVIDENCE_SCOPE_ORDER}
 
     for path in files:
         if path.suffix == ".py" and path.name not in {"manage.py", "asgi.py", "wsgi.py", "celery.py"} and not path.name.endswith((".asgi.py", ".wsgi.py", ".celery.py")):
@@ -226,86 +229,134 @@ def _verify_django_settings(project: Path, files: list[Path]) -> list[Finding]:
                 continue
             value = _extract_settings_module(line)
             rel = _rel(project, path, line_no)
-            if _is_runtime_settings_path(path):
-                runtime_evidence.append(rel)
-                if value:
-                    runtime_values.add(value)
-            else:
-                docs_evidence.append(rel)
-                if value:
-                    docs_values.add(value)
+            scope = _scope_for_path(path)
+            evidence_by_scope[scope].add(rel)
+            if value:
+                values_by_scope[scope].add(value)
 
-    evidence = sorted({*docs_evidence, *runtime_evidence})
+    evidence = _flatten_scope_evidence(evidence_by_scope)
     if not evidence:
-        return [Finding(
+        return [_make_finding(
             id="django-settings-module",
             title="Django settings module",
             status="UNKNOWN",
             category="runtime/doc claim",
-            evidence=[],
             details="No `DJANGO_SETTINGS_MODULE` evidence was found in docs/env files or runtime entrypoints.",
             recommendation="Add a clearly declared settings module in runtime files or document the module path in a load-bearing doc.",
         )]
 
-    if docs_values and runtime_values:
-        if len(docs_values | runtime_values) == 1:
-            value = next(iter(docs_values | runtime_values))
-            return [Finding(
-                id="django-settings-module",
-                title="Django settings module",
-                status="VERIFIED",
-                category="runtime/doc claim",
-                evidence=evidence,
-                details=f"Docs/env and runtime agree on `{value}`.",
-                recommendation="Keep docs/env and runtime aligned if the settings module changes.",
-            )]
-        return [Finding(
-            id="django-settings-module",
-            title="Django settings module",
-            status="CONFLICT",
-            category="runtime/doc claim",
-            evidence=evidence,
-            details=f"Docs/env mention {sorted(docs_values)}, but runtime entrypoints mention {sorted(runtime_values)}.",
-            recommendation="Pick one settings module as the source of truth and update the other references to match.",
-        )]
+    runtime_values = _scope_values(values_by_scope, {"runtime"})
+    active_values = _scope_values(values_by_scope, {"active_docs", "env"})
+    historical_values = _scope_values(values_by_scope, _HISTORICAL_SCOPES)
 
     if runtime_values:
-        return [Finding(
+        if active_values and runtime_values != active_values:
+            return [_make_finding(
+                id="django-settings-module",
+                title="Django settings module",
+                status="CONFLICT",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=f"Docs/env mention {sorted(active_values)}, but runtime entrypoints mention {sorted(runtime_values)}.",
+                recommendation="Pick one settings module as the source of truth and update the other references to match.",
+            )]
+        primary_values = runtime_values
+        if include_archive:
+            primary_values |= active_values | historical_values
+        if len(primary_values) > 1:
+            return [_make_finding(
+                id="django-settings-module",
+                title="Django settings module",
+                status="CONFLICT",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=_build_doc_runtime_details(active_values or runtime_values, historical_values, include_archive=include_archive),
+                recommendation="Pick one settings module as the source of truth and update the other references to match.",
+            )]
+        details = f"Runtime entrypoints confirm `{sorted(runtime_values)[0]}`."
+        if historical_values and historical_values != runtime_values and not include_archive:
+            details += f" Historical docs drift to {sorted(historical_values)}."
+        return [_make_finding(
             id="django-settings-module",
             title="Django settings module",
             status="VERIFIED",
             category="runtime/doc claim",
-            evidence=evidence,
-            details=f"Runtime entrypoints confirm `{sorted(runtime_values)[0]}`.",
+            evidence_by_scope=evidence_by_scope,
+            details=details,
             recommendation="Keep runtime declarations stable and re-run verify after any settings-module move.",
         )]
 
-    if docs_values:
-        return [Finding(
+    if active_values:
+        if len(active_values) > 1:
+            return [_make_finding(
+                id="django-settings-module",
+                title="Django settings module",
+                status="CONFLICT",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=_build_doc_runtime_details(active_values, historical_values, include_archive=include_archive),
+                recommendation="Pick one settings module as the source of truth and update the other references to match.",
+            )]
+        if include_archive and historical_values and historical_values != active_values:
+            return [_make_finding(
+                id="django-settings-module",
+                title="Django settings module",
+                status="CONFLICT",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=_build_doc_runtime_details(active_values, historical_values, include_archive=include_archive),
+                recommendation="Pick one settings module as the source of truth and update the other references to match.",
+            )]
+        return [_make_finding(
             id="django-settings-module",
             title="Django settings module",
             status="DOC_ONLY",
             category="runtime/doc claim",
-            evidence=evidence,
-            details=f"Docs/env mention {sorted(docs_values)}, but no runtime entrypoint confirmation was found.",
+            evidence_by_scope=evidence_by_scope,
+            details=f"Docs/env mention {sorted(active_values)}, but no runtime entrypoint confirmation was found.",
             recommendation="Add or check runtime entrypoints so the declared settings module is actually wired up.",
         )]
 
-    return [Finding(
+    if historical_values:
+        if include_archive and len(historical_values) > 1:
+            return [_make_finding(
+                id="django-settings-module",
+                title="Django settings module",
+                status="CONFLICT",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=f"Historical docs mention multiple settings modules: {sorted(historical_values)}.",
+                recommendation="Keep historical references for context, but add a live runtime declaration if the claim still matters.",
+            )]
+        details = (
+            f"Historical docs mention multiple settings modules: {sorted(historical_values)}."
+            if len(historical_values) > 1
+            else f"Historical docs mention `{sorted(historical_values)[0]}` but no active runtime evidence was found."
+        )
+        return [_make_finding(
+            id="django-settings-module",
+            title="Django settings module",
+            status="DOC_ONLY",
+            category="runtime/doc claim",
+            evidence_by_scope=evidence_by_scope,
+            details=details + (" Historical docs are drift only unless include-archive is enabled." if len(historical_values) > 1 else ""),
+            recommendation="Keep historical references for context, but add a live runtime declaration if the claim still matters.",
+        )]
+
+    return [_make_finding(
         id="django-settings-module",
         title="Django settings module",
         status="UNKNOWN",
         category="runtime/doc claim",
-        evidence=evidence,
+        evidence_by_scope=evidence_by_scope,
         details="Evidence existed, but no concrete module value could be extracted.",
         recommendation="State the settings module explicitly in docs/env or runtime so it can be verified deterministically.",
     )]
 
 
-def _verify_celery_beat(project: Path, files: list[Path]) -> list[Finding]:
-    docs_lines: list[str] = []
-    docs_sources: set[str] = set()
-    code_lines: list[str] = []
+def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bool = False) -> list[Finding]:
+    evidence_by_scope = _new_scope_evidence_map()
+    docs_sources_by_scope: dict[str, set[str]] = {scope: set() for scope in _EVIDENCE_SCOPE_ORDER}
     schedule_sources: set[str] = set()
     scheduler_sources: set[str] = set()
 
@@ -316,79 +367,137 @@ def _verify_celery_beat(project: Path, files: list[Path]) -> list[Finding]:
         for line_no, line in enumerate(text.splitlines(), start=1):
             if _BEAT_RE.search(line):
                 rel = _rel(project, path, line_no)
-                if _is_doc_or_env_file(path):
-                    docs_lines.append(rel)
-                    docs_sources.update(_extract_sources_from_line(line))
-                elif path.suffix == ".py":
-                    code_lines.append(rel)
+                scope = _scope_for_path(path)
+                evidence_by_scope[scope].add(rel)
+                if scope in _ACTIVE_SCOPES:
+                    docs_sources_by_scope[scope].update(_extract_sources_from_line(line))
+                if path.suffix == ".py":
                     if "beat_schedule" in line or "CELERY_BEAT_SCHEDULE" in line or "app.conf.beat_schedule" in line:
                         schedule_sources.add(_normalize_source(path))
                     if "CELERY_BEAT_SCHEDULER" in line:
                         scheduler_sources.add(_normalize_source(path))
 
-    evidence = sorted({*docs_lines, *code_lines})
+    evidence = _flatten_scope_evidence(evidence_by_scope)
     if not evidence and not schedule_sources and not scheduler_sources:
-        return [Finding(
+        return [_make_finding(
             id="celery-beat-schedule",
             title="Celery beat schedule ownership",
             status="UNKNOWN",
             category="runtime/doc claim",
-            evidence=[],
             details="No Celery beat schedule or scheduler evidence was found.",
             recommendation="Add a clear schedule owner or a doc note that explains where the beat schedule is defined.",
         )]
 
     owner_sources = schedule_sources
-    if docs_sources and owner_sources:
-        if docs_sources & owner_sources:
-            chosen = sorted(docs_sources & owner_sources)[0]
-            return [Finding(
+    active_doc_sources = _scope_values(docs_sources_by_scope, {"active_docs", "env"})
+    historical_doc_sources = _scope_values(docs_sources_by_scope, _HISTORICAL_SCOPES)
+    primary_doc_sources = active_doc_sources if active_doc_sources else historical_doc_sources
+    if active_doc_sources and owner_sources:
+        if active_doc_sources & owner_sources:
+            if include_archive and historical_doc_sources and historical_doc_sources != active_doc_sources:
+                return [_make_finding(
+                    id="celery-beat-schedule",
+                    title="Celery beat schedule ownership",
+                    status="CONFLICT",
+                    category="runtime/doc claim",
+                    evidence_by_scope=evidence_by_scope,
+                    details=f"Docs/env mention {sorted(active_doc_sources)}, but historical docs also point at {sorted(historical_doc_sources)} while code defines the schedule in {sorted(owner_sources)}.",
+                    recommendation="Decide which file owns the schedule and update the docs to match the actual code path.",
+                )]
+            chosen = sorted(active_doc_sources & owner_sources)[0]
+            details = f"Docs/env and code both point at `{chosen}` as the beat schedule source."
+            if historical_doc_sources and historical_doc_sources != active_doc_sources:
+                details += f" Historical docs also mention {sorted(historical_doc_sources)}."
+            return [_make_finding(
                 id="celery-beat-schedule",
                 title="Celery beat schedule ownership",
                 status="VERIFIED",
                 category="runtime/doc claim",
-                evidence=evidence,
-                details=f"Docs/env and code both point at `{chosen}` as the beat schedule source.",
+                evidence_by_scope=evidence_by_scope,
+                details=details,
                 recommendation="Keep the documented owner and code owner in sync whenever the beat schedule moves.",
             )]
-        return [Finding(
+        return [_make_finding(
             id="celery-beat-schedule",
             title="Celery beat schedule ownership",
             status="CONFLICT",
             category="runtime/doc claim",
-            evidence=evidence,
-            details=f"Docs/env mention {sorted(docs_sources)}, but code defines the schedule in {sorted(owner_sources)}.",
+            evidence_by_scope=evidence_by_scope,
+            details=f"Docs/env mention {sorted(active_doc_sources)}, but code defines the schedule in {sorted(owner_sources)}.",
             recommendation="Decide which file owns the schedule and update the docs to match the actual code path.",
         )]
 
     if owner_sources:
-        return [Finding(
+        if include_archive and historical_doc_sources and historical_doc_sources != owner_sources:
+            return [_make_finding(
+                id="celery-beat-schedule",
+                title="Celery beat schedule ownership",
+                status="CONFLICT",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=f"Code defines the beat schedule in {sorted(owner_sources)}, but historical docs mention {sorted(historical_doc_sources)}.",
+                recommendation="Keep the schedule centralized and re-run verify if ownership changes.",
+            )]
+        details = f"Code defines the beat schedule in {sorted(owner_sources)}."
+        if historical_doc_sources and historical_doc_sources != owner_sources:
+            details += f" Historical docs drift to {sorted(historical_doc_sources)}."
+        return [_make_finding(
             id="celery-beat-schedule",
             title="Celery beat schedule ownership",
             status="VERIFIED",
             category="runtime/doc claim",
-            evidence=evidence,
-            details=f"Code defines the beat schedule in {sorted(owner_sources)}.",
+            evidence_by_scope=evidence_by_scope,
+            details=details,
             recommendation="Keep the schedule centralized and re-run verify if ownership changes.",
         )]
 
-    if docs_sources:
-        return [Finding(
+    if primary_doc_sources:
+        primary_sources = sorted(primary_doc_sources)
+        if len(active_doc_sources) > 1:
+            return [_make_finding(
+                id="celery-beat-schedule",
+                title="Celery beat schedule ownership",
+                status="CONFLICT",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=f"Docs/env mention {sorted(active_doc_sources or historical_doc_sources)}, but no schedule-definition code was found.",
+                recommendation="Confirm the schedule is implemented in code, or update the docs if the claim is stale.",
+            )]
+        if include_archive and historical_doc_sources and historical_doc_sources != primary_doc_sources:
+            return [_make_finding(
+                id="celery-beat-schedule",
+                title="Celery beat schedule ownership",
+                status="CONFLICT",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=f"Docs/env mention {sorted(primary_doc_sources)}, but historical docs also mention {sorted(historical_doc_sources)}.",
+                recommendation="Confirm the schedule is implemented in code, or update the docs if the claim is stale.",
+            )]
+        if include_archive and len(primary_doc_sources) > 1:
+            return [_make_finding(
+                id="celery-beat-schedule",
+                title="Celery beat schedule ownership",
+                status="CONFLICT",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=f"Historical docs mention multiple beat schedule owners: {primary_sources}.",
+                recommendation="Confirm the schedule is implemented in code, or update the docs if the claim is stale.",
+            )]
+        return [_make_finding(
             id="celery-beat-schedule",
             title="Celery beat schedule ownership",
             status="DOC_ONLY",
             category="runtime/doc claim",
-            evidence=evidence,
-            details=f"Docs/env mention {sorted(docs_sources)}, but no schedule-definition code was found.",
+            evidence_by_scope=evidence_by_scope,
+            details=f"Docs/env mention {primary_sources}, but no schedule-definition code was found.",
             recommendation="Confirm the schedule is implemented in code, or update the docs if the claim is stale.",
         )]
 
-    return [Finding(
+    return [_make_finding(
         id="celery-beat-schedule",
         title="Celery beat schedule ownership",
         status="UNKNOWN",
         category="runtime/doc claim",
-        evidence=evidence,
         details="Celery beat configuration tokens were found, but no concrete owner could be determined.",
         recommendation="Make the owner explicit in code or docs so the schedule can be verified deterministically.",
     )]
@@ -409,22 +518,22 @@ def _verify_tracked_artifacts(project: Path) -> list[Finding]:
         return []
 
     offenders.sort()
-    return [Finding(
+    return [_make_finding(
         id="tracked-generated-artifacts",
         title="Tracked generated artifacts",
         status="CONFLICT",
         category="repo hygiene",
-        evidence=offenders,
+        evidence_by_scope={"runtime": set(offenders)},
         details="Generated or build-output paths are tracked in git, which conflicts with the usual ignore-and-regenerate workflow.",
         recommendation="Untrack these paths, add or tighten ignore rules, and regenerate them only as build artifacts.",
     )]
 
 
-def _verify_doc_count_claims(project: Path, doc_files: list[Path]) -> list[Finding]:
+def _verify_doc_count_claims(project: Path, doc_files: list[Path], *, include_archive: bool = False) -> list[Finding]:
     findings: list[Finding] = []
     for label, pattern in _DOC_COUNT_PATTERNS.items():
-        values: dict[str, set[str]] = {}
-        evidence: set[str] = set()
+        values_by_scope: dict[str, dict[str, set[str]]] = {scope: {} for scope in _EVIDENCE_SCOPE_ORDER}
+        evidence_by_scope = _new_scope_evidence_map()
         for path in doc_files:
             text = _read_text(path)
             if not text:
@@ -434,29 +543,47 @@ def _verify_doc_count_claims(project: Path, doc_files: list[Path]) -> list[Findi
                 if not match:
                     continue
                 value = match.group(1)
-                values.setdefault(value, set()).add(_rel(project, path, line_no))
-                evidence.add(_rel(project, path, line_no))
-        if not values:
+                rel = _rel(project, path, line_no)
+                scope = _scope_for_path(path)
+                evidence_by_scope[scope].add(rel)
+                values_by_scope[scope].setdefault(value, set()).add(rel)
+        if not any(values_by_scope[scope] for scope in _EVIDENCE_SCOPE_ORDER):
             continue
-        unique_values = sorted(values.keys(), key=int)
-        status = "CONFLICT" if len(unique_values) > 1 else "DOC_ONLY"
+        active_values = _scope_value_set(values_by_scope, _ACTIVE_SCOPES)
+        historical_values = _scope_value_set(values_by_scope, _HISTORICAL_SCOPES)
+        status = "DOC_ONLY"
+        if active_values:
+            if len(active_values) > 1:
+                status = "CONFLICT"
+            elif include_archive and historical_values and historical_values != active_values:
+                status = "CONFLICT"
+        elif include_archive and len(historical_values) > 1:
+            status = "CONFLICT"
+
         title = f"{label.title()} count claims"
-        details = (
-            f"Docs claim multiple {label} counts: {unique_values}."
-            if status == "CONFLICT"
-            else f"Docs mention a single {label} count (`{unique_values[0]}`) and no runtime source was checked for this claim."
-        )
-        recommendation = (
-            f"Pick one {label} count, update stale docs, and keep the strongest source of truth in a single place."
-            if status == "CONFLICT"
-            else f"Treat the `{unique_values[0]}` claim as documentation-only until a runtime source is added."
-        )
-        findings.append(Finding(
+        display_values = sorted({value for scope in _EVIDENCE_SCOPE_ORDER for value in values_by_scope[scope].keys()}, key=int)
+        chosen_values = sorted(active_values or historical_values, key=int)
+        if status == "CONFLICT":
+            details = f"Docs claim multiple {label} counts: {display_values}."
+            recommendation = f"Pick one {label} count, update stale docs, and keep the strongest source of truth in a single place."
+        else:
+            chosen = chosen_values[0]
+            if historical_values and not active_values:
+                if len(historical_values) > 1:
+                    details = f"Historical drift mentions multiple {label} counts: {sorted(historical_values, key=int)}."
+                else:
+                    details = f"Historical drift mentions `{chosen}` and no runtime source was checked for this claim."
+            else:
+                details = f"Docs mention a single {label} count (`{chosen}`) and no runtime source was checked for this claim."
+                if historical_values:
+                    details += f" Historical docs still mention {sorted(historical_values, key=int)}."
+            recommendation = f"Treat the `{chosen}` claim as documentation-only until a runtime source is added."
+        findings.append(_make_finding(
             id=f"doc-count-{label.replace(' ', '-')}",
             title=title,
             status=status,
             category="documentation claim",
-            evidence=sorted(evidence),
+            evidence_by_scope=evidence_by_scope,
             details=details,
             recommendation=recommendation,
         ))
@@ -469,6 +596,8 @@ def _project_files(project: Path) -> list[Path]:
     tracked = _git_tracked_files(project)
     if tracked is not None:
         for path in tracked:
+            if not _is_relevant_candidate(path):
+                continue
             files[_rel_key(project, path)] = path
 
     for path in _walk_files(project):
@@ -537,7 +666,11 @@ def _is_relevant_candidate(path: Path) -> bool:
         pass
     if _is_verification_output(path):
         return False
-    return _is_doc_or_env_file(path) or path.suffix == ".py"
+    if _is_doc_or_env_file(path) or path.suffix == ".py":
+        return True
+    if _is_deploy_template(path):
+        return True
+    return False
 
 
 def _is_runtime_settings_path(path: Path) -> bool:
@@ -611,3 +744,137 @@ def _is_verification_output(path: Path) -> bool:
     if tail[0] != "verification":
         return False
     return True
+
+
+def _new_scope_evidence_map() -> dict[str, set[str]]:
+    return {scope: set() for scope in _EVIDENCE_SCOPE_ORDER}
+
+
+def _flatten_scope_evidence(evidence_by_scope: dict[str, set[str]]) -> list[str]:
+    return sorted({item for items in evidence_by_scope.values() for item in items})
+
+
+def _scope_values(values_by_scope: dict[str, set[str]], scopes: set[str] | tuple[str, ...] | list[str]) -> set[str]:
+    values: set[str] = set()
+    for scope in scopes:
+        values.update(values_by_scope.get(scope, set()))
+    return values
+
+
+def _scope_value_set(values_by_scope: dict[str, dict[str, set[str]]], scopes: set[str] | tuple[str, ...] | list[str]) -> set[str]:
+    values: set[str] = set()
+    for scope in scopes:
+        values.update(values_by_scope.get(scope, {}).keys())
+    return values
+
+
+def _scope_for_path(path: Path) -> str:
+    if _is_runtime_settings_path(path):
+        return "runtime"
+    if _is_env_file(path) or _is_deploy_template(path):
+        return "env"
+    if _is_doc_file(path):
+        lowered_parts = [part.lower() for part in path.parts]
+        lowered_path = path.as_posix().lower()
+        name = path.name.lower()
+        if any(
+            marker in lowered_parts
+            for marker in {"archive", "archives", "historical", "history", "legacy", "old", "handoff", "handoffs", "session", "sessions", "case-studies", "case_studies"}
+        ) or any(token in lowered_path for token in ("session_", "handoff", "case-study", "case_study", "old-session", "old_sessions")):
+            return "historical_docs"
+        if any(
+            marker in lowered_parts
+            for marker in {"external", "externals", "reference", "references", "third-party", "third_party", "vendor", "imported", "imported-reference"}
+        ) or any(token in lowered_path for token in ("external-project-docs", "external-docs", "imported-reference", "reference", "references")):
+            return "external_docs"
+        return "active_docs"
+    return "runtime"
+
+
+def _is_deploy_template(path: Path) -> bool:
+    lowered = path.as_posix().lower()
+    if path.suffix.lower() not in {".yaml", ".yml", ".toml", ".json"}:
+        return False
+    markers = (
+        "deploy",
+        "deployment",
+        "compose",
+        "docker-compose",
+        "render",
+        "railway",
+        "vercel",
+        "fly",
+        "heroku",
+        "kubernetes",
+        "k8s",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _make_finding(
+    *,
+    id: str,
+    title: str,
+    status: str,
+    category: str,
+    details: str,
+    recommendation: str,
+    evidence_by_scope: dict[str, set[str]] | None = None,
+) -> Finding:
+    if evidence_by_scope is None:
+        evidence_by_scope = _new_scope_evidence_map()
+    normalized_by_scope = {
+        scope: sorted(items)
+        for scope, items in evidence_by_scope.items()
+        if items
+    }
+    return Finding(
+        id=id,
+        title=title,
+        status=status,
+        category=category,
+        evidence=_flatten_scope_evidence(evidence_by_scope),
+        evidence_by_scope=normalized_by_scope,
+        details=details,
+        recommendation=recommendation,
+    )
+
+
+def _render_finding_evidence(finding: Finding) -> list[str]:
+    lines = ["- Evidence:"]
+    primary_items = _grouped_evidence_items(finding.evidence_by_scope, _ACTIVE_SCOPES)
+    historical_items = _grouped_evidence_items(finding.evidence_by_scope, _HISTORICAL_SCOPES)
+    lines.extend(_render_scope_group("Primary evidence", primary_items, "primary"))
+    lines.extend(_render_scope_group("Historical drift", historical_items, "historical"))
+    if not primary_items and not historical_items:
+        lines.append("  - None")
+    return lines
+
+
+def _render_scope_group(title: str, items: list[tuple[str, str]], label: str) -> list[str]:
+    if not items:
+        return []
+    lines = [f"  - {title}:"]
+    for scope, item in items[:5]:
+        lines.append(f"    - [{scope}] {item}")
+    remaining = len(items) - min(len(items), 5)
+    if remaining > 0:
+        lines.append(f"    - +{remaining} more {label} matches")
+    return lines
+
+
+def _grouped_evidence_items(evidence_by_scope: dict[str, list[str]], scopes: set[str]) -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = []
+    for scope in _EVIDENCE_SCOPE_ORDER:
+        if scope not in scopes:
+            continue
+        for item in evidence_by_scope.get(scope, []):
+            items.append((scope, item))
+    return items
+
+
+def _build_doc_runtime_details(active_values: set[str], historical_values: set[str], *, include_archive: bool) -> str:
+    details = f"Docs/env mention {sorted(active_values)}, but no runtime entrypoint confirmation was found."
+    if historical_values and (include_archive or historical_values != active_values):
+        details += f" Historical docs mention {sorted(historical_values)}."
+    return details

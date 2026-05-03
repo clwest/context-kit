@@ -463,6 +463,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print machine-readable JSON to stdout",
     )
     verify.add_argument(
+        "--include-archive",
+        action="store_true",
+        help="Include archive and historical docs in primary scoring",
+    )
+    verify.add_argument(
         "--write",
         action="store_true",
         help="Write or refresh docs/verification/VERIFY_REPORT.md",

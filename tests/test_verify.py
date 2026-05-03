@@ -20,8 +20,20 @@ if str(REPO_ROOT) not in sys.path:
 from cli.verify import END_MARKER, START_MARKER, run_verify  # noqa: E402
 
 
-def _args(project: Path, *, json_: bool = False, write: bool = False) -> argparse.Namespace:
-    return argparse.Namespace(command="verify", path=str(project), json=json_, write=write)
+def _args(
+    project: Path,
+    *,
+    json_: bool = False,
+    write: bool = False,
+    include_archive: bool = False,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="verify",
+        path=str(project),
+        json=json_,
+        write=write,
+        include_archive=include_archive,
+    )
 
 
 def _capture(args: argparse.Namespace) -> tuple[int, str]:
@@ -48,7 +60,7 @@ class VerifyTestCase(unittest.TestCase):
 
 class TestVerifyJsonSchema(VerifyTestCase):
     def test_json_shape(self):
-        _write(self.project / "README.md", "# Project\n")
+        _write(self.project / "README.md", "We have 74 agents.\n")
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
@@ -58,8 +70,9 @@ class TestVerifyJsonSchema(VerifyTestCase):
         self.assertIsInstance(data["findings"], list)
         if data["findings"]:
             finding = data["findings"][0]
-            for key in ("id", "title", "status", "category", "evidence", "details", "recommendation"):
+            for key in ("id", "title", "status", "category", "evidence", "evidence_by_scope", "details", "recommendation"):
                 self.assertIn(key, finding)
+            self.assertIn("active_docs", finding["evidence_by_scope"])
 
 
 class TestVerifyDjangoSettings(VerifyTestCase):
@@ -98,6 +111,48 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("CONFLICT", out)
         self.assertIn("74", out)
         self.assertIn("75", out)
+
+    def test_archived_docs_do_not_create_primary_conflict_by_default(self):
+        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "We have 74 agents.\n")
+        _write(self.project / "docs" / "archive" / "SESSION_002.md", "We have 75 agents.\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
+        self.assertEqual(finding["status"], "DOC_ONLY")
+        self.assertIn("historical_docs", finding["evidence_by_scope"])
+        self.assertIn("74", finding["details"])
+        self.assertIn("75", finding["details"])
+
+    def test_env_files_create_primary_conflict(self):
+        _write(self.project / ".env", "DJANGO_SETTINGS_MODULE=proj.settings\n")
+        _write(self.project / ".env.example", "DJANGO_SETTINGS_MODULE=other.settings\n")
+        rc, out = _capture(_args(self.project))
+        self.assertEqual(rc, 0)
+        self.assertIn("CONFLICT", out)
+        self.assertIn("Django settings module", out)
+
+    def test_include_archive_brings_historical_evidence_into_scoring(self):
+        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "We have 74 agents.\n")
+        _write(self.project / "docs" / "archive" / "SESSION_002.md", "We have 75 agents.\n")
+        rc, out = _capture(_args(self.project, json_=True, include_archive=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
+        self.assertEqual(finding["status"], "CONFLICT")
+        self.assertIn("historical_docs", finding["evidence_by_scope"])
+        self.assertIn("74", finding["details"])
+        self.assertIn("75", finding["details"])
+
+    def test_human_report_truncates_long_evidence_lists(self):
+        _write(self.project / "README.md", "We have 74 agents.\n")
+        for idx in range(1, 9):
+            _write(self.project / "docs" / "notes" / f"NOTE_{idx}.md", f"We have {74 + idx} agents.\n")
+        rc, out = _capture(_args(self.project))
+        self.assertEqual(rc, 0)
+        self.assertIn("Primary evidence:", out)
+        self.assertIn("+", out)
+        self.assertIn("more primary matches", out)
 
     def test_verification_report_is_ignored_as_input(self):
         _write(self.project / "README.md", "We have 74 agents.\n")
