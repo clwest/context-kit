@@ -26,6 +26,7 @@ def _args(
     json_: bool = False,
     write: bool = False,
     include_archive: bool = False,
+    all_docs: bool = False,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         command="verify",
@@ -33,6 +34,7 @@ def _args(
         json=json_,
         write=write,
         include_archive=include_archive,
+        all_docs=all_docs,
     )
 
 
@@ -46,6 +48,10 @@ def _capture(args: argparse.Namespace) -> tuple[int, str]:
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _write_verify_config(project: Path, content: str) -> None:
+    _write(project / ".context-kit" / "verify.yaml", content)
 
 
 class VerifyTestCase(unittest.TestCase):
@@ -64,13 +70,15 @@ class TestVerifyJsonSchema(VerifyTestCase):
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
-        self.assertEqual(sorted(data.keys()), ["findings", "generated_at", "repo", "summary"])
+        self.assertEqual(sorted(data.keys()), ["canonical_docs_used", "config_path", "findings", "generated_at", "repo", "summary"])
         self.assertIn("total", data["summary"])
         self.assertIn("by_status", data["summary"])
         self.assertIsInstance(data["findings"], list)
         finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
         for key in ("id", "title", "status", "category", "evidence", "evidence_by_scope", "details", "recommendation"):
             self.assertIn(key, finding)
+        self.assertIsNone(data["config_path"])
+        self.assertFalse(data["canonical_docs_used"])
         self.assertIn("active_docs", finding["evidence_by_scope"])
 
 
@@ -110,6 +118,64 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("CONFLICT", out)
         self.assertIn("74", out)
         self.assertIn("75", out)
+
+    def test_canonical_docs_limit_count_scoring(self):
+        _write_verify_config(
+            self.project,
+            "canonical_docs:\n"
+            "  - README.md\n"
+            "active_doc_roots:\n"
+            "  - docs/\n"
+            "historical_roots:\n"
+            "  - docs/archive/\n"
+            "generated_artifact_roots:\n"
+            "  - dist/\n",
+        )
+        _write(self.project / "README.md", "- agents: 74\n")
+        _write(self.project / "docs" / "NOTES.md", "- agents: 75\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
+        self.assertEqual(finding["status"], "DOC_ONLY")
+        self.assertEqual(data["config_path"], ".context-kit/verify.yaml")
+        self.assertTrue(data["canonical_docs_used"])
+        self.assertIn("canonical_docs", finding["evidence_by_scope"])
+        self.assertIn("supporting_docs", finding["evidence_by_scope"])
+        self.assertIn("74", finding["details"])
+        self.assertIn("75", finding["details"])
+
+    def test_supporting_docs_do_not_create_primary_conflicts(self):
+        _write_verify_config(
+            self.project,
+            "canonical_docs:\n"
+            "  - README.md\n"
+            "active_doc_roots:\n"
+            "  - docs/\n",
+        )
+        _write(self.project / "README.md", "- agents: 74\n")
+        _write(self.project / "docs" / "NOTES.md", "- agents: 75\n")
+        rc, out = _capture(_args(self.project))
+        self.assertEqual(rc, 0)
+        self.assertIn("DOC_ONLY", out)
+        self.assertIn("Canonical evidence", out)
+        self.assertIn("Supporting drift", out)
+
+    def test_all_docs_restores_broad_behavior(self):
+        _write_verify_config(
+            self.project,
+            "canonical_docs:\n"
+            "  - README.md\n"
+            "active_doc_roots:\n"
+            "  - docs/\n",
+        )
+        _write(self.project / "README.md", "- agents: 74\n")
+        _write(self.project / "docs" / "NOTES.md", "- agents: 75\n")
+        rc, out = _capture(_args(self.project, json_=True, all_docs=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
+        self.assertEqual(finding["status"], "CONFLICT")
 
     def test_archived_docs_do_not_create_primary_conflict_by_default(self):
         _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "- agents: 74\n")
@@ -186,7 +252,7 @@ class TestVerifyDocCounts(VerifyTestCase):
     def test_headings_bullets_and_tables_create_count_claims(self):
         _write(self.project / "README.md", "## Agents: 74\n")
         _write(self.project / "docs" / "notes.md", "- total spiders: 3\n")
-        _write(self.project / "docs" / "table.md", "| apis | 5 |\n")
+        _write(self.project / "docs" / "table.md", "| total apis | 5 |\n")
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
@@ -284,6 +350,68 @@ class TestVerifyCeleryOwnership(VerifyTestCase):
         finding = next(item for item in data["findings"] if item["id"] == "celery-beat-schedule")
         self.assertEqual(finding["status"], "VERIFIED")
         self.assertIn("app/celery.py", finding["details"])
+
+    def test_split_ownership_docs_with_matching_runtime_are_verified(self):
+        _write(
+            self.project / "README.md",
+            "Split Celery ownership: the static celery beat schedule lives in core/celery.py, django-celery-beat stores PeriodicTask rows, sync_celery_schedules repairs rows, and core/settings.py handles routing config.\n",
+        )
+        _write(
+            self.project / "core" / "celery.py",
+            "from celery import Celery\n\napp = Celery('demo')\napp.conf.beat_schedule = {'ping': {'task': 'app.tasks.ping', 'schedule': 10}}\n",
+        )
+        _write(
+            self.project / "core" / "settings.py",
+            "CELERY_TASK_ROUTES = {'app.tasks.ping': {'queue': 'default'}}\nCELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'\n",
+        )
+        _write(
+            self.project / "app" / "management" / "commands" / "sync_celery_schedules.py",
+            "def sync_celery_schedules():\n    return True\n",
+        )
+        _write(
+            self.project / "app" / "models.py",
+            "from django_celery_beat.models import PeriodicTask\n\nPeriodicTask.objects.get_or_create(name='ping')\n",
+        )
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "celery-beat-schedule")
+        self.assertEqual(finding["status"], "VERIFIED")
+        self.assertIn("split celery ownership", finding["details"].lower())
+        self.assertIn("core/celery.py", finding["details"])
+        self.assertIn("DB store", finding["details"])
+
+    def test_exclusive_settings_docs_conflict_with_celery_runtime(self):
+        _write(
+            self.project / "README.md",
+            "settings.py owns the celery beat schedule and celery.py is dead code.\n",
+        )
+        _write(
+            self.project / "core" / "celery.py",
+            "from celery import Celery\n\napp = Celery('demo')\napp.conf.beat_schedule = {'ping': {'task': 'app.tasks.ping', 'schedule': 10}}\n",
+        )
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "celery-beat-schedule")
+        self.assertEqual(finding["status"], "CONFLICT")
+        self.assertIn("exclusive ownership", finding["details"].lower())
+        self.assertIn("core/celery.py", finding["details"])
+
+    def test_historical_old_ownership_does_not_conflict_by_default(self):
+        _write(
+            self.project / "docs" / "archive" / "OLD_CELERY.md",
+            "Old docs said celery.py owns the beat schedule, but that has since moved.\n",
+        )
+        _write(
+            self.project / "core" / "celery.py",
+            "from celery import Celery\n\napp = Celery('demo')\napp.conf.beat_schedule = {'ping': {'task': 'app.tasks.ping', 'schedule': 10}}\n",
+        )
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "celery-beat-schedule")
+        self.assertEqual(finding["status"], "VERIFIED")
 
 
 if __name__ == "__main__":

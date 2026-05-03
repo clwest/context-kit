@@ -40,8 +40,10 @@ _INTRO = (
 _STATUS_ORDER = ("VERIFIED", "DOC_ONLY", "CONFLICT", "UNKNOWN")
 _EVIDENCE_SCOPE_ORDER = (
     "runtime",
-    "active_docs",
     "env",
+    "canonical_docs",
+    "supporting_docs",
+    "active_docs",
     "historical_docs",
     "external_docs",
 )
@@ -102,6 +104,17 @@ class VerificationReport:
     generated_at: str
     summary: dict
     findings: list[Finding]
+    config_path: str | None = None
+    canonical_docs_used: bool = False
+
+
+@dataclass
+class VerifyConfig:
+    path: Path
+    canonical_docs: list[str] = field(default_factory=list)
+    active_doc_roots: list[str] = field(default_factory=list)
+    historical_roots: list[str] = field(default_factory=list)
+    generated_artifact_roots: list[str] = field(default_factory=list)
 
 
 def run_verify(args: argparse.Namespace) -> int:
@@ -110,7 +123,11 @@ def run_verify(args: argparse.Namespace) -> int:
         print(f"context-kit: {project} is not a directory.")
         return 2
 
-    report = collect_verification(project, include_archive=getattr(args, "include_archive", False))
+    report = collect_verification(
+        project,
+        include_archive=getattr(args, "include_archive", False),
+        all_docs=getattr(args, "all_docs", False),
+    )
 
     if getattr(args, "write", False):
         write_verification_report(project, report)
@@ -122,7 +139,8 @@ def run_verify(args: argparse.Namespace) -> int:
     return 0
 
 
-def collect_verification(project: Path, *, include_archive: bool = False) -> VerificationReport:
+def collect_verification(project: Path, *, include_archive: bool = False, all_docs: bool = False) -> VerificationReport:
+    config = _load_verify_config(project)
     files = _project_files(project)
     docs_files = [p for p in files if _is_doc_file(p)]
     env_files = [p for p in files if _is_env_file(p)]
@@ -131,8 +149,8 @@ def collect_verification(project: Path, *, include_archive: bool = False) -> Ver
     findings: list[Finding] = []
     findings.extend(_verify_django_settings(project, docs_files + env_files + python_files, include_archive=include_archive))
     findings.extend(_verify_celery_beat(project, docs_files + env_files + python_files, include_archive=include_archive))
-    findings.extend(_verify_tracked_artifacts(project))
-    findings.extend(_verify_doc_count_claims(project, docs_files, include_archive=include_archive))
+    findings.extend(_verify_tracked_artifacts(project, config=config))
+    findings.extend(_verify_doc_count_claims(project, docs_files, config=config, include_archive=include_archive, all_docs=all_docs))
 
     findings.sort(key=lambda f: (_STATUS_ORDER.index(f.status), f.category, f.title))
 
@@ -145,6 +163,8 @@ def collect_verification(project: Path, *, include_archive: bool = False) -> Ver
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         summary=summary,
         findings=findings,
+        config_path=_rel_key(project, config.path) if config else None,
+        canonical_docs_used=bool(config and config.canonical_docs and not all_docs),
     )
 
 
@@ -154,10 +174,15 @@ def render_human_report(report: VerificationReport) -> str:
         "",
         f"- Repo: `{report.repo}`",
         f"- Generated at: `{report.generated_at}`",
+    ]
+    if report.config_path:
+        lines.append(f"- Config: `{report.config_path}`")
+        lines.append(f"- Canonical docs used: `{str(report.canonical_docs_used).lower()}`")
+    lines.extend([
         "",
         "## Summary",
         "",
-    ]
+    ])
     for status in _STATUS_ORDER:
         lines.append(f"- {status}: {report.summary['by_status'].get(status, 0)}")
 
@@ -220,6 +245,105 @@ def _replace_block(existing: str, new_block: str) -> str:
     pre, _, after_start = existing.partition(START_MARKER)
     _, _, post = after_start.partition(END_MARKER)
     return pre + new_block + post
+
+
+def _load_verify_config(project: Path) -> VerifyConfig | None:
+    path = project / ".context-kit" / "verify.yaml"
+    if not path.exists():
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return None
+
+    data: dict[str, list[str]] = {
+        "canonical_docs": [],
+        "active_doc_roots": [],
+        "historical_roots": [],
+        "generated_artifact_roots": [],
+    }
+    current_key: str | None = None
+    for raw in lines:
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if not line.startswith(" ") and line.endswith(":"):
+            key = line[:-1].strip()
+            current_key = key if key in data else None
+            continue
+        if current_key and re.match(r"^\s*-\s+", line):
+            item = line.split("-", 1)[1].strip().strip("'\"")
+            if item:
+                data[current_key].append(_normalize_config_item(item))
+    return VerifyConfig(path=path, **data)
+
+
+def _normalize_config_item(text: str) -> str:
+    value = text.replace("\\", "/").strip()
+    if value.startswith("./"):
+        value = value[2:]
+    while value.startswith("/"):
+        value = value[1:]
+    return value
+
+
+def _path_matches_spec(rel_path: str, spec: str) -> bool:
+    normalized = _normalize_config_item(spec)
+    if not normalized:
+        return False
+    if normalized.endswith("/"):
+        return rel_path == normalized.rstrip("/") or rel_path.startswith(normalized)
+    return rel_path == normalized or rel_path.startswith(normalized + "/")
+
+
+def _path_matches_any_spec(rel_path: str, specs: list[str]) -> bool:
+    return any(_path_matches_spec(rel_path, spec) for spec in specs)
+
+
+def _doc_scope_for_path(path: Path, project: Path, config: VerifyConfig | None, *, all_docs: bool) -> str:
+    rel = _rel_key(project, path)
+    if _is_historical_doc_path(path, config):
+        return "historical_docs"
+    if _is_external_doc_path(path, config):
+        return "external_docs"
+    if config and config.canonical_docs and _path_matches_any_spec(rel, config.canonical_docs):
+        return "canonical_docs"
+    if config and config.canonical_docs and not all_docs:
+        return "supporting_docs"
+    if config and config.canonical_docs and all_docs:
+        return "supporting_docs"
+    return "active_docs"
+
+
+def _is_historical_doc_path(path: Path, config: VerifyConfig | None) -> bool:
+    rel = path.as_posix().replace("\\", "/")
+    roots = config.historical_roots if config else []
+    if roots and _path_matches_any_spec(rel, roots):
+        return True
+    lowered_parts = [part.lower() for part in path.parts]
+    lowered_path = rel.lower()
+    return any(
+        marker in lowered_parts
+        for marker in {"archive", "archives", "historical", "history", "legacy", "old", "handoff", "handoffs", "session", "sessions", "case-studies", "case_studies"}
+    ) or any(token in lowered_path for token in ("session_", "handoff", "case-study", "case_study", "old-session", "old_sessions"))
+
+
+def _is_external_doc_path(path: Path, config: VerifyConfig | None) -> bool:
+    rel = path.as_posix().replace("\\", "/")
+    roots = config.historical_roots if config else []
+    if roots and any("external-project-docs" in _normalize_config_item(root) for root in roots):
+        if _path_matches_any_spec(rel, [root for root in roots if "external-project-docs" in _normalize_config_item(root)]):
+            return True
+    lowered_parts = [part.lower() for part in path.parts]
+    lowered_path = rel.lower()
+    return any(
+        marker in lowered_parts
+        for marker in {"external", "externals", "reference", "references", "third-party", "third_party", "vendor", "imported", "imported-reference"}
+    ) or any(token in lowered_path for token in ("external-project-docs", "external-docs", "imported-reference", "reference", "references"))
+
+
+def _is_artifact_path(rel_path: str, roots: list[str]) -> bool:
+    return any(_path_matches_spec(rel_path, root) for root in roots)
 
 
 def _verify_django_settings(project: Path, files: list[Path], *, include_archive: bool = False) -> list[Finding]:
@@ -368,7 +492,12 @@ def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bo
     evidence_by_scope = _new_scope_evidence_map()
     docs_sources_by_scope: dict[str, set[str]] = {scope: set() for scope in _EVIDENCE_SCOPE_ORDER}
     schedule_sources: set[str] = set()
-    scheduler_sources: set[str] = set()
+    db_store_sources: set[str] = set()
+    bridge_sources: set[str] = set()
+    routing_sources: set[str] = set()
+    doc_split_claim = False
+    doc_exclusive_settings_claim = False
+    doc_exclusive_celery_claim = False
 
     for path in files:
         text = _read_text(path)
@@ -378,20 +507,39 @@ def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bo
             if _CELERY_DOC_RE.search(line):
                 rel = _rel(project, path, line_no)
                 scope = _scope_for_path(path)
-                if path.suffix == ".py" and _is_celery_schedule_owner_line(line):
+                if path.suffix == ".py" and _is_celery_runtime_signal_line(line):
                     evidence_by_scope[scope].add(rel)
                     if scope in _ACTIVE_SCOPES:
                         docs_sources_by_scope[scope].update(_extract_sources_from_line(line))
-                    schedule_sources.add(_normalize_source(path))
+                    if _is_celery_static_schedule_line(line):
+                        schedule_sources.add(_normalize_source(path))
+                    if _is_celery_db_store_line(line):
+                        db_store_sources.add(_normalize_source(path))
+                    if _is_celery_bridge_line(line):
+                        bridge_sources.add(_normalize_source(path))
+                    if _is_celery_routing_line(line, path):
+                        routing_sources.add(_normalize_source(path))
                 elif path.suffix != ".py":
                     evidence_by_scope[scope].add(rel)
                     if scope in _ACTIVE_SCOPES:
                         docs_sources_by_scope[scope].update(_extract_sources_from_line(line))
-                if path.suffix == ".py" and "CELERY_BEAT_SCHEDULER" in line and _is_celery_schedule_owner_line(line):
-                    scheduler_sources.add(_normalize_source(path))
+                if path.suffix != ".py" and scope in _ACTIVE_SCOPES:
+                    lowered = line.lower()
+                    if "split" in lowered and "celery" in lowered:
+                        doc_split_claim = True
+                    if (
+                        "settings.py" in lowered
+                        and "beat schedule" in lowered
+                        and any(token in lowered for token in ("owns", "owns the", "source of truth", "exclusive", "dead code", "is the owner"))
+                    ):
+                        doc_exclusive_settings_claim = True
+                    if "celery.py" in lowered and any(token in lowered for token in ("dead code", "obsolete", "not used", "exclusive", "only")):
+                        doc_exclusive_celery_claim = True
+                    if "primary static" in lowered or "runtime store" in lowered or "sync" in lowered or "bridge" in lowered:
+                        doc_split_claim = True
 
     evidence = _flatten_scope_evidence(evidence_by_scope)
-    if not evidence and not schedule_sources and not scheduler_sources:
+    if not evidence and not schedule_sources and not db_store_sources and not bridge_sources and not routing_sources:
         return [_make_finding(
             id="celery-beat-schedule",
             title="Celery beat schedule ownership",
@@ -404,31 +552,20 @@ def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bo
     owner_sources = schedule_sources
     active_doc_sources = _scope_values(docs_sources_by_scope, {"active_docs", "env"})
     historical_doc_sources = _scope_values(docs_sources_by_scope, _HISTORICAL_SCOPES)
-    primary_doc_sources = active_doc_sources if active_doc_sources else historical_doc_sources
-    if active_doc_sources and owner_sources:
-        if active_doc_sources & owner_sources:
-            if include_archive and historical_doc_sources and historical_doc_sources != active_doc_sources:
-                return [_make_finding(
-                    id="celery-beat-schedule",
-                    title="Celery beat schedule ownership",
-                    status="CONFLICT",
-                    category="runtime/doc claim",
-                    evidence_by_scope=evidence_by_scope,
-                    details=f"Docs/env mention {sorted(active_doc_sources)}, but historical docs also point at {sorted(historical_doc_sources)} while code defines the schedule in {sorted(owner_sources)}.",
-                    recommendation="Decide which file owns the schedule and update the docs to match the actual code path.",
-                )]
-            chosen = sorted(active_doc_sources & owner_sources)[0]
-            details = f"Docs/env and code both point at `{chosen}` as the beat schedule source."
-            if historical_doc_sources and historical_doc_sources != active_doc_sources:
-                details += f" Historical docs also mention {sorted(historical_doc_sources)}."
+    split_runtime_supported = bool(schedule_sources and (db_store_sources or bridge_sources or routing_sources))
+    split_runtime_supported = split_runtime_supported and bool(db_store_sources or bridge_sources)
+    routing_supported = bool(routing_sources)
+
+    if doc_exclusive_settings_claim or doc_exclusive_celery_claim:
+        if owner_sources:
             return [_make_finding(
                 id="celery-beat-schedule",
                 title="Celery beat schedule ownership",
-                status="VERIFIED",
+                status="CONFLICT",
                 category="runtime/doc claim",
                 evidence_by_scope=evidence_by_scope,
-                details=details,
-                recommendation="Keep the documented owner and code owner in sync whenever the beat schedule moves.",
+                details=f"Docs/env claim exclusive ownership in {sorted(active_doc_sources or historical_doc_sources)}, but code defines the static schedule in {sorted(owner_sources)} and also shows split-owner signals in {sorted(db_store_sources | bridge_sources | routing_sources)}.",
+                recommendation="Describe the split ownership model accurately or update the exclusive-ownership claim.",
             )]
         return [_make_finding(
             id="celery-beat-schedule",
@@ -436,22 +573,100 @@ def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bo
             status="CONFLICT",
             category="runtime/doc claim",
             evidence_by_scope=evidence_by_scope,
-            details=f"Docs/env mention {sorted(active_doc_sources)}, but code defines the schedule in {sorted(owner_sources)}.",
-            recommendation="Decide which file owns the schedule and update the docs to match the actual code path.",
+            details=f"Docs/env claim exclusive ownership in {sorted(active_doc_sources or historical_doc_sources)}, but no matching exclusive runtime owner was found.",
+            recommendation="Describe the split ownership model accurately or update the exclusive-ownership claim.",
         )]
 
-    if owner_sources:
-        if include_archive and historical_doc_sources and historical_doc_sources != owner_sources:
+    if active_doc_sources:
+        if doc_split_claim and split_runtime_supported:
+            details = "Docs/env describe split Celery ownership and runtime evidence supports a static schedule source, DB store, bridge command, and routing/config owner."
+            if owner_sources:
+                details += f" Static schedule source: {sorted(owner_sources)}."
+            if db_store_sources:
+                details += f" DB store: {sorted(db_store_sources)}."
+            if bridge_sources:
+                details += f" Bridge/bootstrap: {sorted(bridge_sources)}."
+            if routing_sources:
+                details += f" Routing/config: {sorted(routing_sources)}."
+            if historical_doc_sources and historical_doc_sources != active_doc_sources:
+                details += f" Historical docs drift to {sorted(historical_doc_sources)}."
             return [_make_finding(
                 id="celery-beat-schedule",
                 title="Celery beat schedule ownership",
-                status="CONFLICT",
+                status="VERIFIED",
                 category="runtime/doc claim",
                 evidence_by_scope=evidence_by_scope,
-                details=f"Code defines the beat schedule in {sorted(owner_sources)}, but historical docs mention {sorted(historical_doc_sources)}.",
-                recommendation="Keep the schedule centralized and re-run verify if ownership changes.",
+                details=details,
+                recommendation="Keep the split ownership model documented and re-run verify if the balance changes.",
             )]
+
+        if owner_sources:
+            details = f"Docs/env mention {sorted(active_doc_sources)}, but code defines the static schedule in {sorted(owner_sources)}."
+            if split_runtime_supported:
+                details += f" Additional split-owner signals were found in {sorted(db_store_sources | bridge_sources | routing_sources)}."
+                return [_make_finding(
+                    id="celery-beat-schedule",
+                    title="Celery beat schedule ownership",
+                    status="VERIFIED",
+                    category="runtime/doc claim",
+                    evidence_by_scope=evidence_by_scope,
+                    details=details,
+                    recommendation="Keep the split ownership model documented and re-run verify if the balance changes.",
+                )]
+            if historical_doc_sources and include_archive and historical_doc_sources != active_doc_sources:
+                return [_make_finding(
+                    id="celery-beat-schedule",
+                    title="Celery beat schedule ownership",
+                    status="CONFLICT",
+                    category="runtime/doc claim",
+                    evidence_by_scope=evidence_by_scope,
+                    details=details + f" Historical docs also mention {sorted(historical_doc_sources)}.",
+                    recommendation="Describe the split ownership model accurately or update the exclusive-ownership claim.",
+                )]
+            return [_make_finding(
+                id="celery-beat-schedule",
+                title="Celery beat schedule ownership",
+                status="VERIFIED",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=details,
+                recommendation="Keep the split ownership model documented and re-run verify if the balance changes.",
+            )]
+
+        if split_runtime_supported:
+            details = "Docs/env mention split Celery ownership and runtime evidence supports the model."
+            if db_store_sources:
+                details += f" DB store: {sorted(db_store_sources)}."
+            if bridge_sources:
+                details += f" Bridge/bootstrap: {sorted(bridge_sources)}."
+            if routing_sources:
+                details += f" Routing/config: {sorted(routing_sources)}."
+            return [_make_finding(
+                id="celery-beat-schedule",
+                title="Celery beat schedule ownership",
+                status="VERIFIED",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=details,
+                recommendation="Keep the split ownership model documented and re-run verify if the balance changes.",
+            )]
+
+        if owner_sources:
+            details = f"Docs/env mention {sorted(active_doc_sources)}, but no matching split runtime evidence was found."
+            return [_make_finding(
+                id="celery-beat-schedule",
+                title="Celery beat schedule ownership",
+                status="DOC_ONLY",
+                category="runtime/doc claim",
+                evidence_by_scope=evidence_by_scope,
+                details=details,
+                recommendation="Confirm the split ownership model in code or update the docs if the claim is stale.",
+            )]
+
+    if owner_sources:
         details = f"Code defines the beat schedule in {sorted(owner_sources)}."
+        if split_runtime_supported:
+            details += f" Split-owner runtime signals were also found in {sorted(db_store_sources | bridge_sources | routing_sources)}."
         if historical_doc_sources and historical_doc_sources != owner_sources:
             details += f" Historical docs drift to {sorted(historical_doc_sources)}."
         return [_make_finding(
@@ -464,46 +679,20 @@ def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bo
             recommendation="Keep the schedule centralized and re-run verify if ownership changes.",
         )]
 
-    if primary_doc_sources:
-        primary_sources = sorted(primary_doc_sources)
-        if len(active_doc_sources) > 1:
-            return [_make_finding(
-                id="celery-beat-schedule",
-                title="Celery beat schedule ownership",
-                status="CONFLICT",
-                category="runtime/doc claim",
-                evidence_by_scope=evidence_by_scope,
-                details=f"Docs/env mention {sorted(active_doc_sources or historical_doc_sources)}, but no schedule-definition code was found.",
-                recommendation="Confirm the schedule is implemented in code, or update the docs if the claim is stale.",
-            )]
-        if include_archive and historical_doc_sources and historical_doc_sources != primary_doc_sources:
-            return [_make_finding(
-                id="celery-beat-schedule",
-                title="Celery beat schedule ownership",
-                status="CONFLICT",
-                category="runtime/doc claim",
-                evidence_by_scope=evidence_by_scope,
-                details=f"Docs/env mention {sorted(primary_doc_sources)}, but historical docs also mention {sorted(historical_doc_sources)}.",
-                recommendation="Confirm the schedule is implemented in code, or update the docs if the claim is stale.",
-            )]
-        if include_archive and len(primary_doc_sources) > 1:
-            return [_make_finding(
-                id="celery-beat-schedule",
-                title="Celery beat schedule ownership",
-                status="CONFLICT",
-                category="runtime/doc claim",
-                evidence_by_scope=evidence_by_scope,
-                details=f"Historical docs mention multiple beat schedule owners: {primary_sources}.",
-                recommendation="Confirm the schedule is implemented in code, or update the docs if the claim is stale.",
-            )]
+    if historical_doc_sources:
+        details = (
+            f"Historical docs mention split Celery ownership {sorted(historical_doc_sources)} but no active runtime confirmation was found."
+            if len(historical_doc_sources) > 1
+            else f"Historical docs mention `{sorted(historical_doc_sources)[0]}` but no active runtime confirmation was found."
+        )
         return [_make_finding(
             id="celery-beat-schedule",
             title="Celery beat schedule ownership",
             status="DOC_ONLY",
             category="runtime/doc claim",
             evidence_by_scope=evidence_by_scope,
-            details=f"Docs/env mention {primary_sources}, but no schedule-definition code was found.",
-            recommendation="Confirm the schedule is implemented in code, or update the docs if the claim is stale.",
+            details=details + (" Historical docs are drift only unless include-archive is enabled." if len(historical_doc_sources) > 1 else ""),
+            recommendation="Keep historical references for context, but add a live runtime declaration if the claim still matters.",
         )]
 
     return [_make_finding(
@@ -516,15 +705,19 @@ def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bo
     )]
 
 
-def _verify_tracked_artifacts(project: Path) -> list[Finding]:
+def _verify_tracked_artifacts(project: Path, *, config: VerifyConfig | None = None) -> list[Finding]:
     tracked = _git_tracked_files(project)
     if tracked is None:
         return []
 
+    artifact_roots = list(_TRACKED_ARTIFACT_PREFIXES)
+    if config:
+        artifact_roots.extend(root if root.endswith("/") else f"{root}/" for root in config.generated_artifact_roots)
+
     offenders = []
     for path in tracked:
         rel = _rel_key(project, path)
-        if any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _TRACKED_ARTIFACT_PREFIXES):
+        if _is_artifact_path(rel, artifact_roots):
             offenders.append(rel)
 
     if not offenders:
@@ -542,7 +735,14 @@ def _verify_tracked_artifacts(project: Path) -> list[Finding]:
     )]
 
 
-def _verify_doc_count_claims(project: Path, doc_files: list[Path], *, include_archive: bool = False) -> list[Finding]:
+def _verify_doc_count_claims(
+    project: Path,
+    doc_files: list[Path],
+    *,
+    config: VerifyConfig | None = None,
+    include_archive: bool = False,
+    all_docs: bool = False,
+) -> list[Finding]:
     findings: list[Finding] = []
     for label in _DOC_COUNT_LABEL_PATTERNS:
         values_by_scope: dict[str, dict[str, set[str]]] = {scope: {} for scope in _EVIDENCE_SCOPE_ORDER}
@@ -556,37 +756,50 @@ def _verify_doc_count_claims(project: Path, doc_files: list[Path], *, include_ar
                     continue
                 for value in _extract_doc_count_values(line, label):
                     rel = _rel(project, path, line_no)
-                    scope = _scope_for_path(path)
+                    scope = _doc_scope_for_path(path, project, config, all_docs=all_docs)
                     evidence_by_scope[scope].add(rel)
                     values_by_scope[scope].setdefault(value, set()).add(rel)
         if not any(values_by_scope[scope] for scope in _EVIDENCE_SCOPE_ORDER):
             continue
-        active_values = _scope_value_set(values_by_scope, _ACTIVE_SCOPES)
+        canonical_values = _scope_value_set(values_by_scope, {"canonical_docs"})
+        supporting_values = _scope_value_set(values_by_scope, {"supporting_docs"})
+        active_values = _scope_value_set(values_by_scope, {"active_docs"})
         historical_values = _scope_value_set(values_by_scope, _HISTORICAL_SCOPES)
         status = "DOC_ONLY"
-        if active_values:
-            if len(active_values) > 1:
+        if config and config.canonical_docs:
+            scoring_values = canonical_values if not all_docs else canonical_values | supporting_values
+        else:
+            scoring_values = active_values
+        if scoring_values:
+            if len(scoring_values) > 1:
                 status = "CONFLICT"
-            elif include_archive and historical_values and historical_values != active_values:
+            elif include_archive and historical_values and historical_values != scoring_values:
                 status = "CONFLICT"
         elif include_archive and len(historical_values) > 1:
             status = "CONFLICT"
 
         title = f"{label.title()} count claims"
         display_values = sorted({value for scope in _EVIDENCE_SCOPE_ORDER for value in values_by_scope[scope].keys()}, key=int)
-        chosen_values = sorted(active_values or historical_values, key=int)
+        chosen_values = sorted(scoring_values or historical_values or supporting_values or active_values, key=int)
         if status == "CONFLICT":
             details = f"Docs claim multiple {label} counts: {display_values}."
             recommendation = f"Pick one {label} count, update stale docs, and keep the strongest source of truth in a single place."
         else:
             chosen = chosen_values[0]
-            if historical_values and not active_values:
+            if config and config.canonical_docs and canonical_values and supporting_values and supporting_values != canonical_values and not all_docs:
+                details = f"Canonical docs mention `{chosen}`, while supporting docs drift to {sorted(supporting_values, key=int)}."
+            elif config and config.canonical_docs and not canonical_values and supporting_values:
+                details = f"Supporting docs mention `{chosen}`; canonical docs did not claim this count."
+            elif historical_values and not (canonical_values or active_values or supporting_values):
                 if len(historical_values) > 1:
                     details = f"Historical drift mentions multiple {label} counts: {sorted(historical_values, key=int)}."
                 else:
                     details = f"Historical drift mentions `{chosen}` and no runtime source was checked for this claim."
             else:
-                details = f"Docs mention a single {label} count (`{chosen}`) and no runtime source was checked for this claim."
+                if config and config.canonical_docs and not all_docs and canonical_values:
+                    details = f"Canonical docs mention a single {label} count (`{chosen}`) and no runtime source was checked for this claim."
+                else:
+                    details = f"Docs mention a single {label} count (`{chosen}`) and no runtime source was checked for this claim."
                 if historical_values:
                     details += f" Historical docs still mention {sorted(historical_values, key=int)}."
             recommendation = f"Treat the `{chosen}` claim as documentation-only until a runtime source is added."
@@ -710,12 +923,51 @@ def _extract_sources_from_line(line: str) -> set[str]:
             module = match.group("module")
             if ".conf." in module or module.endswith(".beat_schedule") or module.upper().startswith("CELERY_"):
                 continue
+            if "PeriodicTask" in module and "objects" not in line:
+                continue
             sources.add(_normalize_source_text(module))
     return sources
 
 
 def _is_celery_schedule_owner_line(line: str) -> bool:
     return bool(_CELERY_OWNER_RE.search(line))
+
+
+def _is_celery_runtime_signal_line(line: str) -> bool:
+    lowered = line.lower()
+    return (
+        "beat_schedule" in lowered
+        or "app.conf.beat_schedule" in lowered
+        or "celery_beat_schedule" in lowered
+        or "periodictask.objects" in lowered
+        or "periodictask" in lowered
+        or "sync_celery_schedules" in lowered
+        or "celery_task_routes" in lowered
+        or "celery_beat_scheduler" in lowered
+        or "django-celery-beat" in lowered
+        or "database scheduler" in lowered
+        or "scheduler" in lowered and "celery" in lowered
+    )
+
+
+def _is_celery_static_schedule_line(line: str) -> bool:
+    lowered = line.lower()
+    return "beat_schedule" in lowered or "app.conf.beat_schedule" in lowered or "celery_beat_schedule" in lowered
+
+
+def _is_celery_db_store_line(line: str) -> bool:
+    lowered = line.lower()
+    return "periodictask.objects" in lowered or "django-celery-beat" in lowered or "periodictask" in lowered
+
+
+def _is_celery_bridge_line(line: str) -> bool:
+    lowered = line.lower()
+    return "sync_celery_schedules" in lowered or "bootstrap" in lowered or "repair rows" in lowered or "materializ" in lowered
+
+
+def _is_celery_routing_line(line: str, path: Path) -> bool:
+    lowered = line.lower()
+    return "celery_task_routes" in lowered or "celery_beat_scheduler" in lowered or path.name == "settings.py" or path.name.endswith("settings.py")
 
 
 def _normalize_source(path: Path) -> str:
@@ -831,7 +1083,7 @@ def _is_doc_count_claim_line(line: str, label: str) -> bool:
     stripped = line.strip()
     if not stripped:
         return False
-    if re.match(r"^\s*\d+(?:\.\d+)*[.)]\s+", stripped):
+    if re.match(r"^\s*(?:#{1,6}\s*)?\d+(?:\.\d+)*[.)]\s+", stripped):
         return False
     if not _DOC_COUNT_CONTEXT_RE.search(stripped):
         return False
@@ -914,7 +1166,18 @@ def _make_finding(
 
 def _render_finding_evidence(finding: Finding) -> list[str]:
     lines = ["- Evidence:"]
-    primary_items = _grouped_evidence_items(finding.evidence_by_scope, _ACTIVE_SCOPES)
+    if "canonical_docs" in finding.evidence_by_scope or "supporting_docs" in finding.evidence_by_scope:
+        canonical_items = _grouped_evidence_items(finding.evidence_by_scope, {"canonical_docs"}) + _grouped_evidence_items(finding.evidence_by_scope, {"runtime", "env"})
+        supporting_items = _grouped_evidence_items(finding.evidence_by_scope, {"supporting_docs"})
+        historical_items = _grouped_evidence_items(finding.evidence_by_scope, _HISTORICAL_SCOPES)
+        lines.extend(_render_scope_group("Canonical evidence", canonical_items, "canonical"))
+        lines.extend(_render_scope_group("Supporting drift", supporting_items, "supporting"))
+        lines.extend(_render_scope_group("Historical drift", historical_items, "historical"))
+        if not canonical_items and not supporting_items and not historical_items:
+            lines.append("  - None")
+        return lines
+
+    primary_items = _grouped_evidence_items(finding.evidence_by_scope, {"runtime", "active_docs", "env"})
     historical_items = _grouped_evidence_items(finding.evidence_by_scope, _HISTORICAL_SCOPES)
     lines.extend(_render_scope_group("Primary evidence", primary_items, "primary"))
     lines.extend(_render_scope_group("Historical drift", historical_items, "historical"))
