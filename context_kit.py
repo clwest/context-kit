@@ -452,6 +452,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include broader related paths for the selected scope",
     )
 
+    # coverage
+    coverage = sub.add_parser(
+        "coverage",
+        help="Map which tracked files are covered, skipped, or still unclassified",
+        description=(
+            "Walk tracked files and classify them into runtime/source, "
+            "docs-active, docs-historical, tests, generated/artifact, "
+            "config/deployment, or unknown. This is a coverage map, not a "
+            "correctness proof. Read-only by default."
+        ),
+    )
+    coverage.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Project root to inspect (default: current working directory)",
+    )
+    coverage.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON to stdout",
+    )
+    coverage.add_argument(
+        "--scope",
+        help="Restrict coverage to a named inspect scope (core, celery, agents, spiders, docs-rag, frontend, deployment, tests)",
+    )
+
     # verify
     verify = sub.add_parser(
         "verify",
@@ -711,6 +738,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "inspect":
         from cli.inspect import run_inspect
         return run_inspect(args)
+
+    if args.command == "coverage":
+        from cli.coverage import run_coverage
+        return run_coverage(args)
 
     if args.command == "verify":
         from cli.verify import run_verify
