@@ -74,6 +74,26 @@ _DOC_COUNT_CONTEXT_RE = re.compile(
     r"(?i)(?:^\s*#{1,6}\s*|^\s*[-*+]\s*|^\s*\|\s*|(?:\b(?:total|registered|current|count|agents|spiders|apis|frontend pages)\s*:))"
 )
 _DOC_COUNT_DIMENSIONS = ("total", "db_persona", "dormant", "provenance", "workspace", "category_table", "unknown")
+_DOC_COUNT_SPIDER_SUBCOUNT_TERMS = (
+    "working",
+    "placeholder",
+    "api key",
+    "api keys",
+    "need api keys",
+    "needs api keys",
+    "api-key",
+    "api-keys",
+    "status",
+    "breakdown",
+    "by category",
+    "per category",
+    "source",
+    "sources",
+    "subcount",
+    "sub-count",
+    "dormant",
+    "inactive",
+)
 _DJANGO_SETTINGS_RE = re.compile(r"DJANGO_SETTINGS_MODULE", re.IGNORECASE)
 _CELERY_OWNER_RE = re.compile(
     r"(?i)(?:beat_schedule\s*=|app\.conf\.beat_schedule|CELERY_BEAT_SCHEDULE|CELERY_BEAT_SCHEDULER|PeriodicTask\.objects|sync_celery_schedules)"
@@ -1131,7 +1151,9 @@ def _extract_doc_count_entries(line: str, label: str) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     if not stripped:
         return entries
-    if not _is_doc_count_claim_line(stripped, label) and not _is_doc_count_table_row(stripped):
+    table_row = _is_doc_count_table_row(stripped)
+    table_cells = _doc_count_table_cells(stripped) if table_row else None
+    if not _is_doc_count_claim_line(stripped, label) and not table_row:
         return entries
     label_re = _DOC_COUNT_LABEL_PATTERNS[label]
     strong_label_re = _DOC_COUNT_STRONG_LABELS[label]
@@ -1149,15 +1171,15 @@ def _extract_doc_count_entries(line: str, label: str) -> list[tuple[str, str]]:
         for match in re.finditer(pattern, stripped):
             value = match.group(1)
             if _is_valid_doc_count_value(value):
-                entries.append((value, _classify_doc_count_dimension(stripped, label, strong=True)))
+                entries.append((value, _classify_doc_count_dimension(stripped, label, strong=True, table_row=table_row, table_cells=table_cells)))
     for pattern in weak_patterns:
         for match in re.finditer(pattern, stripped):
             value = match.group(1)
             if _is_valid_doc_count_value(value) and int(value) >= 10:
-                entries.append((value, _classify_doc_count_dimension(stripped, label, strong=False)))
-    if not entries and _is_doc_count_table_row(stripped):
+                entries.append((value, _classify_doc_count_dimension(stripped, label, strong=False, table_row=table_row, table_cells=table_cells)))
+    if not entries and table_row:
         for value in _extract_doc_count_table_values(stripped):
-            entries.append((value, _classify_doc_count_dimension(stripped, label, strong=False, table_row=True)))
+            entries.append((value, _classify_doc_count_dimension(stripped, label, strong=False, table_row=True, table_cells=table_cells)))
     return entries
 
 
@@ -1175,8 +1197,50 @@ def _is_doc_count_table_row(line: str) -> bool:
     return stripped.startswith("|") and stripped.endswith("|") and "|" in stripped
 
 
-def _classify_doc_count_dimension(line: str, label: str, *, strong: bool, table_row: bool = False) -> str:
+def _doc_count_table_cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_doc_count_summary_table_row(line: str, label: str, cells: list[str] | None = None) -> bool:
+    cells = cells or _doc_count_table_cells(line)
+    if not cells:
+        return False
+    numeric_indexes = [index for index, cell in enumerate(cells) if re.fullmatch(r"\d{1,3}", cell or "")]
+    if len(numeric_indexes) != 1:
+        return False
+    label_re = _DOC_COUNT_LABEL_PATTERNS[label]
+    strong_label_re = _DOC_COUNT_STRONG_LABELS[label]
+    has_label_cell = any(
+        re.fullmatch(rf"(?i)(?:{strong_label_re}|{label_re})", cell.strip())
+        for cell in cells
+    )
+    if not has_label_cell:
+        return False
+    lowered = " ".join(cells).lower()
+    return not any(term in lowered for term in _DOC_COUNT_SPIDER_SUBCOUNT_TERMS)
+
+
+def _classify_doc_count_dimension(
+    line: str,
+    label: str,
+    *,
+    strong: bool,
+    table_row: bool = False,
+    table_cells: list[str] | None = None,
+) -> str:
     lowered = line.lower()
+    if table_row:
+        if _is_doc_count_summary_table_row(line, label, table_cells):
+            return "total"
+        return "category_table"
+    if label == "spiders":
+        if any(term in lowered for term in _DOC_COUNT_SPIDER_SUBCOUNT_TERMS):
+            return "unknown"
+        if strong or any(token in lowered for token in ("across", "summary", "index", "total", "registered", "current", "count")):
+            return "total"
+        if re.search(rf"(?i)\b{_DOC_COUNT_LABEL_PATTERNS[label]}\b", lowered):
+            return "total"
+        return "unknown"
     if strong or any(token in lowered for token in ("agent_map", "agent-map", "agmap", "code agent", "code-agent", "headline", "primary agents", "current agents", "total agents")):
         return "total"
     if any(token in lowered for token in ("persona", "db", "database")):
@@ -1187,8 +1251,6 @@ def _classify_doc_count_dimension(line: str, label: str, *, strong: bool, table_
         return "provenance"
     if "workspace" in lowered:
         return "workspace"
-    if table_row or "|" in line:
-        return "category_table"
     return "unknown"
 
 

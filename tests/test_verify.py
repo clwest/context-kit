@@ -280,6 +280,51 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("doc-count-agents", ids)
         self.assertIn("doc-count-spiders", ids)
 
+    def test_spider_total_and_status_subcounts_do_not_conflict(self):
+        _write(self.project / "README.md", "## 80 spiders across 18 categories\n")
+        _write(self.project / "docs" / "status.md", "- spiders: 74 working, 5 need API keys\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-spiders")
+        self.assertEqual(finding["status"], "DOC_ONLY")
+        self.assertIn("80", finding["details"])
+        self.assertIn("74", finding["details"])
+
+    def test_spider_total_conflicts_with_total_only(self):
+        _write(self.project / "README.md", "## Spiders: 80\n")
+        _write(self.project / "docs" / "other.md", "## Spiders: 77\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-spiders")
+        self.assertEqual(finding["status"], "CONFLICT")
+        self.assertIn("80", finding["details"])
+        self.assertIn("77", finding["details"])
+
+    def test_spider_table_rows_do_not_conflict_with_total(self):
+        _write(self.project / "README.md", "| spiders | 80 | Data collection spiders |\n")
+        _write(self.project / "docs" / "table.md", "| working | 74 | Need API keys |\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-spiders")
+        self.assertEqual(finding["status"], "DOC_ONLY")
+        self.assertIn("80", finding["details"])
+        self.assertIn("74", finding["details"])
+
+    def test_historical_spider_counts_do_not_conflict_by_default(self):
+        _write(self.project / "README.md", "## Spiders: 80\n")
+        _write(self.project / "docs" / "archive" / "OLD.md", "## Spiders: 77\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-spiders")
+        self.assertEqual(finding["status"], "DOC_ONLY")
+        self.assertIn("historical_docs", finding["evidence_by_scope"])
+        self.assertIn("80", finding["details"])
+        self.assertIn("77", finding["details"])
+
     def test_total_agents_do_not_conflict_with_db_persona_counts(self):
         _write(self.project / "README.md", "## AGENT_MAP: 83 agents\n")
         _write(self.project / "docs" / "people.md", "DB persona agents: 223\n")
