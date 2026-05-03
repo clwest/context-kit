@@ -484,6 +484,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     del translation_init  # parser registration is the side effect
 
+    # start-codex
+    start_codex = sub.add_parser(
+        "start-codex",
+        help="Print a ready-to-copy Codex startup prompt for this project",
+        description=(
+            "Read current runtime state, doctor warnings, latest handoff, "
+            "and the next task from 00-START-NEXT-SESSION.md, then print "
+            "a deterministic startup prompt for Codex. Read-only: never "
+            "modifies files and never invokes an AI."
+        ),
+    )
+    start_codex.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    start_codex.add_argument(
+        "--user",
+        default=None,
+        metavar="NAME",
+        help="Apply persona-aware startup framing from TRANSLATION_LAYER.md when available.",
+    )
+    start_codex.add_argument(
+        "--mode",
+        choices=("design", "execute"),
+        default="design",
+        help="Startup prompt mode (default: design).",
+    )
+    start_codex.add_argument(
+        "--model",
+        choices=("cheap", "heavy"),
+        default=None,
+        help="Add a prompt-only model hint; does not invoke or configure an API model.",
+    )
+
     # refactor (group)
     from cli.refactor import add_subparser as _add_refactor_subparser
     _add_refactor_subparser(sub)
@@ -569,6 +604,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "translation-init":
         from cli.translation_init import run_translation_init
         return run_translation_init(args)
+
+    if args.command == "start-codex":
+        from cli.start_codex import run_start_codex
+        return run_start_codex(args)
 
     parser.print_help()
     return 1
