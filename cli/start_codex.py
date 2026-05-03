@@ -53,6 +53,7 @@ def run_codex(args: argparse.Namespace) -> int:
     )
     exec_mode = bool(getattr(args, "exec", False))
     interactive_mode = bool(getattr(args, "interactive", False)) or not exec_mode
+    launch_mode = "exec" if exec_mode else "interactive"
 
     codex_bin = shutil.which("codex")
     if codex_bin is None:
@@ -65,14 +66,15 @@ def run_codex(args: argparse.Namespace) -> int:
         _emit_prompt_fallback(prompt, copied=_copy_to_clipboard(prompt), interactive=interactive_mode)
         return 0
 
-    launch_result = _launch_codex(codex_bin, project, prompt, exec_mode=exec_mode)
     _print_verify_status(verify_status)
+    if interactive_mode:
+        copied = _copy_to_clipboard(prompt)
+        print("Prompt copied to clipboard." if copied else "Clipboard unavailable.")
+    launch_result = _launch_codex(codex_bin, project, prompt, launch_mode=launch_mode)
     if launch_result == "exec":
         print("Codex CLI: launched with `codex exec`.")
         return 0
     if launch_result == "interactive":
-        copied = _copy_to_clipboard(prompt)
-        print("Prompt copied to clipboard." if copied else "Clipboard unavailable.")
         print("Codex is opening interactively. Paste the copied startup prompt as the first message.")
         return 0
 
@@ -388,9 +390,9 @@ def _emit_prompt_fallback(prompt: str, *, copied: bool, interactive: bool) -> No
     print("=== End Codex startup prompt ===")
 
 
-def _launch_codex(codex_bin: str, project: Path, prompt: str, *, exec_mode: bool) -> str:
+def _launch_codex(codex_bin: str, project: Path, prompt: str, *, launch_mode: str) -> str:
     try:
-        if exec_mode:
+        if launch_mode == "exec":
             result = subprocess.run(
                 [codex_bin, "exec", "--cd", str(project)],
                 input=prompt,

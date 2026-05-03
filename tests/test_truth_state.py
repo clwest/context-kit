@@ -204,11 +204,12 @@ class TestStartCodex(TruthStateTestCase):
         (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
         with patch("cli.start_codex.shutil.which", side_effect=lambda name: "/usr/bin/codex" if name == "codex" else None):
             with patch("cli.start_codex.subprocess.Popen") as popen:
-                with patch("cli.start_codex._copy_to_clipboard", return_value=True):
-                    buf = io.StringIO()
-                    with redirect_stdout(buf):
-                        rc = run_codex(
-                            argparse.Namespace(
+                with patch("cli.start_codex.subprocess.run") as run_mock:
+                    with patch("cli.start_codex._copy_to_clipboard", return_value=True):
+                        buf = io.StringIO()
+                        with redirect_stdout(buf):
+                            rc = run_codex(
+                                argparse.Namespace(
                                 command="codex",
                                 project=str(self.project),
                                 user=None,
@@ -219,6 +220,7 @@ class TestStartCodex(TruthStateTestCase):
                         )
         self.assertEqual(rc, 0)
         popen.assert_called_once()
+        run_mock.assert_not_called()
         self.assertIn("Codex is opening interactively. Paste the copied startup prompt as the first message.", buf.getvalue())
         self.assertIn("Prompt copied to clipboard.", buf.getvalue())
 
@@ -226,23 +228,25 @@ class TestStartCodex(TruthStateTestCase):
         (self.project / "README.md").write_text("# Demo\n", encoding="utf-8")
         (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
         with patch("cli.start_codex.shutil.which", side_effect=lambda name: "/usr/bin/codex" if name == "codex" else None):
-            with patch("cli.start_codex.subprocess.run") as run_mock:
-                run_mock.return_value = subprocess.CompletedProcess(args=["codex"], returncode=0)
-                buf = io.StringIO()
-                with redirect_stdout(buf):
-                    rc = run_codex(
-                        argparse.Namespace(
-                            command="codex",
-                            project=str(self.project),
-                            user=None,
-                            mode="execute",
-                            model=None,
-                            short=True,
-                            exec=True,
-                            interactive=False,
+            with patch("cli.start_codex.subprocess.Popen") as popen:
+                with patch("cli.start_codex.subprocess.run") as run_mock:
+                    run_mock.return_value = subprocess.CompletedProcess(args=["codex"], returncode=0)
+                    buf = io.StringIO()
+                    with redirect_stdout(buf):
+                        rc = run_codex(
+                            argparse.Namespace(
+                                command="codex",
+                                project=str(self.project),
+                                user=None,
+                                mode="execute",
+                                model=None,
+                                short=True,
+                                exec=True,
+                                interactive=False,
+                            )
                         )
-                    )
         self.assertEqual(rc, 0)
+        popen.assert_not_called()
         run_mock.assert_called_once()
         called_args, called_kwargs = run_mock.call_args
         self.assertEqual(called_args[0][1], "exec")
