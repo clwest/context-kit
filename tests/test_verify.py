@@ -60,7 +60,7 @@ class VerifyTestCase(unittest.TestCase):
 
 class TestVerifyJsonSchema(VerifyTestCase):
     def test_json_shape(self):
-        _write(self.project / "README.md", "We have 74 agents.\n")
+        _write(self.project / "README.md", "- agents: 74\n")
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
@@ -68,11 +68,10 @@ class TestVerifyJsonSchema(VerifyTestCase):
         self.assertIn("total", data["summary"])
         self.assertIn("by_status", data["summary"])
         self.assertIsInstance(data["findings"], list)
-        if data["findings"]:
-            finding = data["findings"][0]
-            for key in ("id", "title", "status", "category", "evidence", "evidence_by_scope", "details", "recommendation"):
-                self.assertIn(key, finding)
-            self.assertIn("active_docs", finding["evidence_by_scope"])
+        finding = next(item for item in data["findings"] if item["id"] == "doc-count-agents")
+        for key in ("id", "title", "status", "category", "evidence", "evidence_by_scope", "details", "recommendation"):
+            self.assertIn(key, finding)
+        self.assertIn("active_docs", finding["evidence_by_scope"])
 
 
 class TestVerifyDjangoSettings(VerifyTestCase):
@@ -96,7 +95,7 @@ class TestVerifyDjangoSettings(VerifyTestCase):
 
 class TestVerifyDocCounts(VerifyTestCase):
     def test_docs_only_count_claim(self):
-        _write(self.project / "README.md", "We have 74 agents and a small team.\n")
+        _write(self.project / "README.md", "- agents: 74\n")
         rc, out = _capture(_args(self.project))
         self.assertEqual(rc, 0)
         self.assertIn("DOC_ONLY", out)
@@ -104,8 +103,8 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("74", out)
 
     def test_conflicting_count_claims(self):
-        _write(self.project / "README.md", "We have 74 agents.\n")
-        _write(self.project / "docs" / "NOTES.md", "Actually we have 75 agents.\n")
+        _write(self.project / "README.md", "- agents: 74\n")
+        _write(self.project / "docs" / "NOTES.md", "- agents: 75\n")
         rc, out = _capture(_args(self.project))
         self.assertEqual(rc, 0)
         self.assertIn("CONFLICT", out)
@@ -113,8 +112,8 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("75", out)
 
     def test_archived_docs_do_not_create_primary_conflict_by_default(self):
-        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "We have 74 agents.\n")
-        _write(self.project / "docs" / "archive" / "SESSION_002.md", "We have 75 agents.\n")
+        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "- agents: 74\n")
+        _write(self.project / "docs" / "archive" / "SESSION_002.md", "- agents: 75\n")
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
@@ -133,8 +132,8 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("Django settings module", out)
 
     def test_include_archive_brings_historical_evidence_into_scoring(self):
-        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "We have 74 agents.\n")
-        _write(self.project / "docs" / "archive" / "SESSION_002.md", "We have 75 agents.\n")
+        _write(self.project / "docs" / "handoffs" / "SESSION_001.md", "- agents: 74\n")
+        _write(self.project / "docs" / "archive" / "SESSION_002.md", "- agents: 75\n")
         rc, out = _capture(_args(self.project, json_=True, include_archive=True))
         self.assertEqual(rc, 0)
         data = json.loads(out)
@@ -145,18 +144,47 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertIn("75", finding["details"])
 
     def test_human_report_truncates_long_evidence_lists(self):
-        _write(self.project / "README.md", "We have 74 agents.\n")
+        _write(self.project / "README.md", "- agents: 74\n")
         for idx in range(1, 9):
-            _write(self.project / "docs" / "notes" / f"NOTE_{idx}.md", f"We have {74 + idx} agents.\n")
+            _write(self.project / "docs" / "notes" / f"NOTE_{idx}.md", f"- agents: {74 + idx}\n")
         rc, out = _capture(_args(self.project))
         self.assertEqual(rc, 0)
         self.assertIn("Primary evidence:", out)
         self.assertIn("+", out)
         self.assertIn("more primary matches", out)
 
+    def test_incidental_numeric_phrases_do_not_create_count_claims(self):
+        _write(self.project / "README.md", "We shipped 74 agents in 2026 and moved on.\n")
+        _write(self.project / "docs" / "NOTES.md", "A filename like report_75.md is not a count claim.\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertFalse(any(item["id"].startswith("doc-count-") for item in data["findings"]))
+
+    def test_headings_bullets_and_tables_create_count_claims(self):
+        _write(self.project / "README.md", "## Agents: 74\n")
+        _write(self.project / "docs" / "notes.md", "- spiders: 3\n")
+        _write(self.project / "docs" / "table.md", "| apis | 5 |\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        ids = {item["id"] for item in data["findings"] if item["id"].startswith("doc-count-")}
+        self.assertIn("doc-count-agents", ids)
+        self.assertIn("doc-count-spiders", ids)
+        self.assertIn("doc-count-apis", ids)
+
+    def test_years_and_large_ids_are_ignored(self):
+        _write(self.project / "README.md", "## Agents: 2026\n")
+        _write(self.project / "docs" / "notes.md", "- spiders: 12345\n")
+        _write(self.project / "docs" / "table.md", "| apis | 000 |\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertFalse(any(item["id"].startswith("doc-count-") for item in data["findings"]))
+
     def test_verification_report_is_ignored_as_input(self):
-        _write(self.project / "README.md", "We have 74 agents.\n")
-        _write(self.project / "docs" / "verification" / "VERIFY_REPORT.md", "Actually we have 75 agents.\n")
+        _write(self.project / "README.md", "- agents: 74\n")
+        _write(self.project / "docs" / "verification" / "VERIFY_REPORT.md", "- agents: 75\n")
         rc, out = _capture(_args(self.project))
         self.assertEqual(rc, 0)
         self.assertIn("DOC_ONLY", out)
@@ -188,7 +216,7 @@ class TestVerifyWriteMode(VerifyTestCase):
             "# Footer\n",
             encoding="utf-8",
         )
-        _write(self.project / "README.md", "We have 74 agents.\n")
+        _write(self.project / "README.md", "- agents: 74\n")
         rc, _ = _capture(_args(self.project, write=True))
         self.assertEqual(rc, 0)
         body = report.read_text(encoding="utf-8")
@@ -199,6 +227,31 @@ class TestVerifyWriteMode(VerifyTestCase):
         self.assertIn(END_MARKER, body)
         self.assertNotIn("old block", body)
         self.assertIn("Verification Report", body)
+
+
+class TestVerifyCeleryOwnership(VerifyTestCase):
+    def test_generic_celery_task_files_are_not_ownership_evidence(self):
+        _write(
+            self.project / "app" / "tasks.py",
+            "from celery import shared_task\n\n@shared_task\ndef ping():\n    return 1\n",
+        )
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "celery-beat-schedule")
+        self.assertEqual(finding["status"], "UNKNOWN")
+
+    def test_direct_beat_schedule_config_is_ownership_evidence(self):
+        _write(
+            self.project / "app" / "celery.py",
+            "from celery import Celery\n\napp = Celery('demo')\napp.conf.beat_schedule = {'ping': {'task': 'app.tasks.ping', 'schedule': 10}}\n",
+        )
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        finding = next(item for item in data["findings"] if item["id"] == "celery-beat-schedule")
+        self.assertEqual(finding["status"], "VERIFIED")
+        self.assertIn("app/celery.py", finding["details"])
 
 
 if __name__ == "__main__":

@@ -56,16 +56,20 @@ _TRACKED_ARTIFACT_PREFIXES = (
     "build/",
     "node_modules/",
 )
-_DOC_COUNT_PATTERNS = {
-    "agents": re.compile(r"\b(\d+)\s+agents?\b", re.IGNORECASE),
-    "spiders": re.compile(r"\b(\d+)\s+spiders?\b", re.IGNORECASE),
-    "apis": re.compile(r"\b(\d+)\s+apis?\b", re.IGNORECASE),
-    "frontend pages": re.compile(r"\b(\d+)\s+frontend\s+pages?\b", re.IGNORECASE),
+_DOC_COUNT_LABEL_PATTERNS = {
+    "agents": r"agents?",
+    "spiders": r"spiders?",
+    "apis": r"apis?",
+    "frontend pages": r"frontend\s+pages?",
 }
-_DJANGO_SETTINGS_RE = re.compile(r"DJANGO_SETTINGS_MODULE", re.IGNORECASE)
-_BEAT_RE = re.compile(
-    r"(?i)\b(beat_schedule|celery beat|celery beat schedule|CELERY_BEAT_SCHEDULE|CELERY_BEAT_SCHEDULER|app\.conf\.beat_schedule)\b"
+_DOC_COUNT_CONTEXT_RE = re.compile(
+    r"(?i)(?:^\s*#{1,6}\s*|^\s*[-*+]\s*|^\s*\|\s*|(?:\b(?:total|registered|current|count|agents|spiders|apis|frontend pages)\s*:))"
 )
+_DJANGO_SETTINGS_RE = re.compile(r"DJANGO_SETTINGS_MODULE", re.IGNORECASE)
+_CELERY_OWNER_RE = re.compile(
+    r"(?i)\b(beat_schedule\s*=|CELERY_BEAT_SCHEDULE|CELERY_BEAT_SCHEDULER|app\.conf\.beat_schedule|PeriodicTask|sync_celery_schedules)\b"
+)
+_CELERY_DOC_RE = re.compile(r"(?i)\b(celery beat|celery beat schedule|beat_schedule|CELERY_BEAT_SCHEDULE|CELERY_BEAT_SCHEDULER|PeriodicTask|sync_celery_schedules|app\.conf\.beat_schedule)\b")
 _PATH_OR_MODULE_RE = re.compile(
     r"(?P<path>[A-Za-z0-9_./-]+\.(?:py|pyi|toml|yaml|yml|json|md))|(?P<module>\b[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w+)+\b)"
 )
@@ -365,15 +369,14 @@ def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bo
         if not text:
             continue
         for line_no, line in enumerate(text.splitlines(), start=1):
-            if _BEAT_RE.search(line):
+            if _CELERY_DOC_RE.search(line):
                 rel = _rel(project, path, line_no)
                 scope = _scope_for_path(path)
                 evidence_by_scope[scope].add(rel)
                 if scope in _ACTIVE_SCOPES:
                     docs_sources_by_scope[scope].update(_extract_sources_from_line(line))
-                if path.suffix == ".py":
-                    if "beat_schedule" in line or "CELERY_BEAT_SCHEDULE" in line or "app.conf.beat_schedule" in line:
-                        schedule_sources.add(_normalize_source(path))
+                if path.suffix == ".py" and _is_celery_schedule_owner_line(line):
+                    schedule_sources.add(_normalize_source(path))
                     if "CELERY_BEAT_SCHEDULER" in line:
                         scheduler_sources.add(_normalize_source(path))
 
@@ -531,7 +534,7 @@ def _verify_tracked_artifacts(project: Path) -> list[Finding]:
 
 def _verify_doc_count_claims(project: Path, doc_files: list[Path], *, include_archive: bool = False) -> list[Finding]:
     findings: list[Finding] = []
-    for label, pattern in _DOC_COUNT_PATTERNS.items():
+    for label in _DOC_COUNT_LABEL_PATTERNS:
         values_by_scope: dict[str, dict[str, set[str]]] = {scope: {} for scope in _EVIDENCE_SCOPE_ORDER}
         evidence_by_scope = _new_scope_evidence_map()
         for path in doc_files:
@@ -539,14 +542,13 @@ def _verify_doc_count_claims(project: Path, doc_files: list[Path], *, include_ar
             if not text:
                 continue
             for line_no, line in enumerate(text.splitlines(), start=1):
-                match = pattern.search(line)
-                if not match:
+                if not _is_doc_count_claim_line(line, label):
                     continue
-                value = match.group(1)
-                rel = _rel(project, path, line_no)
-                scope = _scope_for_path(path)
-                evidence_by_scope[scope].add(rel)
-                values_by_scope[scope].setdefault(value, set()).add(rel)
+                for value in _extract_doc_count_values(line, label):
+                    rel = _rel(project, path, line_no)
+                    scope = _scope_for_path(path)
+                    evidence_by_scope[scope].add(rel)
+                    values_by_scope[scope].setdefault(value, set()).add(rel)
         if not any(values_by_scope[scope] for scope in _EVIDENCE_SCOPE_ORDER):
             continue
         active_values = _scope_value_set(values_by_scope, _ACTIVE_SCOPES)
@@ -702,6 +704,10 @@ def _extract_sources_from_line(line: str) -> set[str]:
     return sources
 
 
+def _is_celery_schedule_owner_line(line: str) -> bool:
+    return bool(_CELERY_OWNER_RE.search(line))
+
+
 def _normalize_source(path: Path) -> str:
     return path.as_posix()
 
@@ -809,6 +815,50 @@ def _is_deploy_template(path: Path) -> bool:
         "k8s",
     )
     return any(marker in lowered for marker in markers)
+
+
+def _is_doc_count_claim_line(line: str, label: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if not _DOC_COUNT_CONTEXT_RE.search(stripped):
+        return False
+    label_re = _DOC_COUNT_LABEL_PATTERNS[label]
+    if re.search(rf"(?i)\b{label_re}\b", stripped):
+        return True
+    return False
+
+
+def _extract_doc_count_values(line: str, label: str) -> set[str]:
+    stripped = line.strip()
+    values: set[str] = set()
+    if not stripped:
+        return values
+    label_re = _DOC_COUNT_LABEL_PATTERNS[label]
+    patterns = (
+        rf"(?i)\b(?:total|registered|current|count|{label_re})\b\s*[:|\-]?\s*(\d{{1,3}})\b",
+        rf"(?i)\b(\d{{1,3}})\b\s*[:|\-]?\s*\b{label_re}\b",
+        rf"(?i)\|\s*(?:total|registered|current|count|{label_re})\s*\|\s*(\d{{1,3}})\s*\|",
+        rf"(?i)\|\s*(\d{{1,3}})\s*\|\s*(?:total|registered|current|count|{label_re})\s*\|",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, stripped):
+            value = match.group(1)
+            if _is_valid_doc_count_value(value):
+                values.add(value)
+    return values
+
+
+def _is_valid_doc_count_value(value: str) -> bool:
+    if not value or value == "000":
+        return False
+    if not value.isdigit():
+        return False
+    if len(value) > 3:
+        return False
+    if int(value) == 0:
+        return False
+    return True
 
 
 def _make_finding(
