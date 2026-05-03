@@ -25,19 +25,20 @@ if str(REPO_ROOT) not in sys.path:
 from cli.inspect import run_inspect  # noqa: E402
 
 
-def _inspect_args(path, *, json_out=False, depth=2):
+def _inspect_args(path, *, json_out=False, depth=2, scope=None):
     return argparse.Namespace(
         command="inspect",
         path=str(path),
         json=json_out,
         depth=depth,
+        scope=scope,
     )
 
 
-def _run_capture(path, *, json_out=False) -> tuple[int, str]:
+def _run_capture(path, *, json_out=False, scope=None) -> tuple[int, str]:
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = run_inspect(_inspect_args(path, json_out=json_out))
+        rc = run_inspect(_inspect_args(path, json_out=json_out, scope=scope))
     return rc, buf.getvalue()
 
 
@@ -146,6 +147,13 @@ class TestEmptyDirectory(_CwdSandbox):
         self.assertEqual(rc, 0)
         self.assertIn("(not a git repo)", out)
 
+    def test_json_includes_null_scope_by_default(self):
+        rc, out = _run_capture(self.tmpdir, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertIn("scope", data)
+        self.assertIsNone(data["scope"])
+
 
 # ---------------------------------------------------------------------------
 # Django probe
@@ -178,6 +186,45 @@ class TestDjangoDetection(_CwdSandbox):
         _, out = _run_capture(self.tmpdir)
         self.assertIn("manage.py", out)
         self.assertIn("django-cli", out)
+
+
+class TestScopedInspect(_CwdSandbox):
+    def setUp(self):
+        super().setUp()
+        (self.tmpdir / "manage.py").write_text("print('root')\n", encoding="utf-8")
+        core = self.tmpdir / "core"
+        core.mkdir()
+        (core / "settings.py").write_text("INSTALLED_APPS = ['core']\n", encoding="utf-8")
+        (core / "urls.py").write_text("from django.urls import path\nurlpatterns = [path('x', view)]\n", encoding="utf-8")
+        frontend = self.tmpdir / "frontend"
+        frontend.mkdir()
+        (frontend / "package.json").write_text('{"dependencies":{"next":"14.0.0"}}\n', encoding="utf-8")
+        (frontend / "next.config.js").write_text("module.exports = {};\n", encoding="utf-8")
+
+    def test_default_behavior_does_not_show_scope_label(self):
+        rc, out = _run_capture(self.tmpdir)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("Scope:", out)
+
+    def test_core_scope_narrows_output(self):
+        rc, out = _run_capture(self.tmpdir, scope="core")
+        self.assertEqual(rc, 0)
+        self.assertIn("Scope:          core", out)
+        self.assertIn("core/", out)
+        self.assertNotIn("frontend/", out)
+        self.assertNotIn("nextjs", out.lower())
+
+        rc, out = _run_capture(self.tmpdir, json_out=True, scope="core")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["scope"], "core")
+
+    def test_invalid_scope_returns_clear_error(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_inspect(_inspect_args(self.tmpdir, scope="bogus"))
+        self.assertEqual(rc, 2)
+        self.assertIn("unknown inspect scope", buf.getvalue().lower())
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +382,7 @@ class TestJsonOutputShape(_CwdSandbox):
         expected = {
             "repo",
             "path",
+            "scope",
             "head",
             "counts",
             "primary_stack",

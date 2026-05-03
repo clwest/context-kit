@@ -86,6 +86,17 @@ _STATIC_DIR_SEGMENTS = ("static", "public", "assets")
 # Threshold (bytes) for flagging a static asset as "oversized".
 _OVERSIZED_ASSET_BYTES = 5 * 1024 * 1024  # 5 MB
 
+_INSPECT_SCOPES = (
+    "core",
+    "celery",
+    "agents",
+    "spiders",
+    "docs-rag",
+    "frontend",
+    "deployment",
+    "tests",
+)
+
 # How many hot files to include in the report by default.
 _HOT_FILES_TOP_N = 5
 
@@ -195,6 +206,7 @@ class Recommendation:
 class InspectionResult:
     repo: str
     path: str
+    scope: str | None
     head: dict | None  # {"sha": ..., "branch": ...}
     counts: dict  # {"tracked_files": int, "total_bytes": int}
     primary_stack: dict  # {"languages": [...], "frameworks": [...], "confidence": str, "manifests": [...]}
@@ -219,7 +231,12 @@ def run_inspect(args: argparse.Namespace) -> int:
         print(f"context-kit: {project} is not a directory.")
         return 2
 
-    result = _inspect(project, depth=getattr(args, "depth", 2))
+    scope = getattr(args, "scope", None)
+    if scope is not None and scope not in _INSPECT_SCOPES:
+        print(f"context-kit: unknown inspect scope `{scope}`. Valid scopes: {', '.join(_INSPECT_SCOPES)}.")
+        return 2
+
+    result = _inspect(project, depth=getattr(args, "depth", 2), scope=scope)
 
     if getattr(args, "json", False):
         print(json.dumps(_to_json(result), indent=2, default=str))
@@ -233,26 +250,28 @@ def run_inspect(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _inspect(project: Path, *, depth: int) -> InspectionResult:
+def _inspect(project: Path, *, depth: int, scope: str | None = None) -> InspectionResult:
     files, _ = _collect_files(project)
+    if scope is not None:
+        files = _filter_inspect_scope_files(project, files, scope)
     sized = _with_sizes(files)
     total_bytes = sum(s for _, s in sized)
 
     head = _git_head(project)
-    root_manifests = _detect_manifests_at(project)
+    root_manifests = _detect_manifests_at(project) if scope is None else _detect_manifests_from_files(files)
     primary_stack = _classify_stack(root_manifests)
 
-    workspaces = _detect_workspaces(project, depth=depth)
+    workspaces = [] if scope is not None else _detect_workspaces(project, depth=depth)
 
-    root_framework = _probe_frameworks(project, sized)
+    root_framework = _probe_frameworks(project, sized) if scope is None else _probe_frameworks_scoped(project, sized, set(files))
 
     subsystems = _build_subsystems(project, sized, workspaces)
 
-    entry_points = _detect_entry_points(project)
+    entry_points = _detect_entry_points(project, files if scope is not None else None)
     hot_files = _build_hot_files(sized, project)
-    risks = _check_risks(project, sized)
-    stale_docs = _check_stale_docs(project)
-    doc_intel = _inspect_documentation_intelligence(project)
+    risks = _check_risks(project, sized, files if scope is not None else None)
+    stale_docs = _check_stale_docs(project, files if scope is not None else None)
+    doc_intel = _inspect_documentation_intelligence(project, files if scope is not None else None)
     recommendations = _build_recommendations(
         project=project,
         risks=risks,
@@ -278,6 +297,7 @@ def _inspect(project: Path, *, depth: int) -> InspectionResult:
         stale_docs=stale_docs,
         documentation_intelligence=doc_intel,
         recommendations=recommendations,
+        scope=scope,
     )
 
 
@@ -321,6 +341,14 @@ def _detect_manifests_at(directory: Path) -> list[str]:
     found: list[str] = []
     for name in _MANIFESTS:
         if (directory / name).is_file():
+            found.append(name)
+    return found
+
+
+def _detect_manifests_from_files(files: list[Path]) -> list[str]:
+    found: list[str] = []
+    for name in _MANIFESTS:
+        if any(path.name == name for path in files):
             found.append(name)
     return found
 
@@ -423,6 +451,16 @@ def _probe_frameworks(scope: Path, sized: list[tuple[Path, int]]) -> FrameworkSi
     return fs
 
 
+def _probe_frameworks_scoped(scope: Path, sized: list[tuple[Path, int]], allowed_paths: set[Path]) -> FrameworkSignals:
+    fs = FrameworkSignals()
+    allowed = [(p, s) for p, s in sized if p in allowed_paths]
+    if any(p.name == "manage.py" for p, _ in allowed):
+        fs.django = _probe_django(scope, allowed)
+    if any(p.name in {"next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs"} for p, _ in allowed):
+        fs.nextjs = _probe_nextjs_from_files(scope, [p for p, _ in allowed])
+    return fs
+
+
 def _has_any(directory: Path, names: list[str]) -> bool:
     return any((directory / n).is_file() for n in names)
 
@@ -491,6 +529,25 @@ def _probe_nextjs(scope: Path) -> dict:
         "route_files": route_files,
         "api_routes": api_routes,
     }
+
+
+def _probe_nextjs_from_files(scope: Path, files: list[Path]) -> dict:
+    route_files = 0
+    api_routes = 0
+    for path in files:
+        try:
+            rel = path.relative_to(scope)
+        except ValueError:
+            rel = path
+        parts = rel.parts
+        parents = parts[:-1]
+        if path.name in ("page.tsx", "page.ts", "page.jsx", "page.js"):
+            if "app" in parents or "pages" in parents:
+                route_files += 1
+        elif path.name in ("route.ts", "route.tsx", "route.js"):
+            if "app" in parents or "api" in parents or "pages" in parents:
+                api_routes += 1
+    return {"route_files": route_files, "api_routes": api_routes}
 
 
 def _count_regex_in_files(files: list[Path], pattern: re.Pattern) -> int:
@@ -632,11 +689,16 @@ def _subsystem_note(stack: dict, fs: FrameworkSignals) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _detect_entry_points(project: Path) -> list[dict]:
+def _detect_entry_points(project: Path, files: list[Path] | None = None) -> list[dict]:
     out: list[dict] = []
+    selected = None if files is None else {p.resolve() for p in files}
     for name, kind in _ENTRY_POINT_HINTS.items():
-        if (project / name).is_file():
-            out.append({"path": name, "kind": kind})
+        candidate = project / name
+        if not candidate.is_file():
+            continue
+        if selected is not None and candidate.resolve() not in selected:
+            continue
+        out.append({"path": name, "kind": kind})
     return out
 
 
@@ -665,14 +727,15 @@ def _build_hot_files(sized: list[tuple[Path, int]], project: Path) -> list[HotFi
 def _check_risks(
     project: Path,
     sized: list[tuple[Path, int]],
+    files: list[Path] | None = None,
 ) -> list[Risk]:
     risks: list[Risk] = []
 
     risks.extend(_risk_tracked_venv(project, sized))
     risks.extend(_risk_tracked_env_file(project, sized))
-    risks.extend(_risk_multiple_env_templates(project))
+    risks.extend(_risk_multiple_env_templates(project, files))
     risks.extend(_risk_oversized_static_assets(project, sized))
-    risks.extend(_risk_tracked_build_artifacts(project))
+    risks.extend(_risk_tracked_build_artifacts(project, files))
 
     return risks
 
@@ -719,11 +782,14 @@ def _risk_tracked_env_file(project: Path, sized: list[tuple[Path, int]]) -> list
     return []
 
 
-def _risk_multiple_env_templates(project: Path) -> list[Risk]:
+def _risk_multiple_env_templates(project: Path, files: list[Path] | None = None) -> list[Risk]:
     templates: list[str] = []
+    selected = None if files is None else {p.resolve() for p in files}
     try:
         for child in project.iterdir():
             if child.is_file() and child.name.startswith(".env.") and child.name not in (".env.local",):
+                if selected is not None and child.resolve() not in selected:
+                    continue
                 templates.append(child.name)
     except OSError:
         return []
@@ -767,7 +833,7 @@ def _risk_oversized_static_assets(project: Path, sized: list[tuple[Path, int]]) 
     ]
 
 
-def _risk_tracked_build_artifacts(project: Path) -> list[Risk]:
+def _risk_tracked_build_artifacts(project: Path, files: list[Path] | None = None) -> list[Risk]:
     """Detect when build / cache / vendor directories are tracked in git.
 
     Can't reuse the ``sized`` list — ``cli.hotpath._collect_files`` filters
@@ -778,12 +844,18 @@ def _risk_tracked_build_artifacts(project: Path) -> list[Risk]:
     that just checks for directory existence."""
     found: dict[str, int] = {}
 
+    scoped = None if files is None else {p.resolve() for p in files}
+
     if (project / ".git").exists():
         # `git ls-files` skips gitignored paths, so any hits here are
         # tracked content under one of the suspect directory names.
         out_text = _git_run(project, ["ls-files"])
         if out_text is not None:
             for line in out_text.splitlines():
+                if scoped is not None:
+                    candidate = (project / line).resolve()
+                    if candidate not in scoped:
+                        continue
                 parts = Path(line).parts
                 for part in parts[:-1]:
                     if part in _TRACKED_BUILD_NAMES:
@@ -794,18 +866,26 @@ def _risk_tracked_build_artifacts(project: Path) -> list[Risk]:
         # project tree without applying the IGNORED_DIR_NAMES filter
         # (because that filter would skip the very dirs we're looking
         # for).
-        for root, dirs, _ in os.walk(project):
-            root_parts = Path(root).parts
-            # Don't descend into VCS dirs.
-            if ".git" in root_parts:
-                dirs[:] = []
-                continue
-            for name in list(dirs):
-                if name in _TRACKED_BUILD_NAMES:
-                    full = Path(root) / name
-                    file_count = sum(1 for _ in full.rglob("*") if _.is_file())
-                    if file_count > 0:
-                        found[name] = found.get(name, 0) + file_count
+        if files is not None:
+            for path in files:
+                parts = path.parts
+                for part in parts[:-1]:
+                    if part in _TRACKED_BUILD_NAMES:
+                        found[part] = found.get(part, 0) + 1
+                        break
+        else:
+            for root, dirs, _ in os.walk(project):
+                root_parts = Path(root).parts
+                # Don't descend into VCS dirs.
+                if ".git" in root_parts:
+                    dirs[:] = []
+                    continue
+                for name in list(dirs):
+                    if name in _TRACKED_BUILD_NAMES:
+                        full = Path(root) / name
+                        file_count = sum(1 for _ in full.rglob("*") if _.is_file())
+                        if file_count > 0:
+                            found[name] = found.get(name, 0) + file_count
 
     out: list[Risk] = []
     for name, count in sorted(found.items()):
@@ -825,20 +905,23 @@ def _risk_tracked_build_artifacts(project: Path) -> list[Risk]:
 # ---------------------------------------------------------------------------
 
 
-def _check_stale_docs(project: Path) -> list[StaleDoc]:
+def _check_stale_docs(project: Path, files: list[Path] | None = None) -> list[StaleDoc]:
     """Header-date grep on Markdown files at top-level + under docs/.
     Conservative: only flags docs whose self-reported date is parseable
     as ISO YYYY-MM-DD and is older than ``_STALE_DOC_AGE_DAYS``."""
-    candidates: list[Path] = []
-    for parent in (project, project / "docs"):
-        if not parent.is_dir():
-            continue
-        try:
-            for child in parent.iterdir():
-                if child.is_file() and child.suffix == ".md":
-                    candidates.append(child)
-        except OSError:
-            continue
+    if files is None:
+        candidates: list[Path] = []
+        for parent in (project, project / "docs"):
+            if not parent.is_dir():
+                continue
+            try:
+                for child in parent.iterdir():
+                    if child.is_file() and child.suffix == ".md":
+                        candidates.append(child)
+            except OSError:
+                continue
+    else:
+        candidates = [path for path in files if path.suffix == ".md" and (path.name.endswith(".md"))]
 
     today = datetime.now(timezone.utc).date()
     stale: list[StaleDoc] = []
@@ -907,7 +990,7 @@ _DOC_INTEL_SCALE_HIGH_HANDOFFS = 50
 _DOC_INTEL_HANDOFF_SIGNAL_MIN = 5
 
 
-def _inspect_documentation_intelligence(project: Path) -> DocumentationIntelligence:
+def _inspect_documentation_intelligence(project: Path, files: list[Path] | None = None) -> DocumentationIntelligence:
     """Probe ``docs/`` and ``.rag/`` for evidence that the repo treats
     documentation as active context / memory infrastructure (embedded,
     retrieved, or injected at runtime) rather than passive reference
@@ -917,71 +1000,76 @@ def _inspect_documentation_intelligence(project: Path) -> DocumentationIntellige
     """
     docs_dir = project / "docs"
 
-    markdown_count = 0
-    if docs_dir.is_dir():
-        for _, dirs, files in os.walk(docs_dir):
-            # Skip ignored dirs (mostly belt-and-suspenders for vendored
-            # docs that drag a node_modules/ along).
-            dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
-            markdown_count += sum(1 for n in files if n.endswith(".md"))
+    if files is None:
+        markdown_count = 0
+        if docs_dir.is_dir():
+            for _, dirs, doc_files in os.walk(docs_dir):
+                dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
+                markdown_count += sum(1 for n in doc_files if n.endswith(".md"))
 
-    handoffs_dir = docs_dir / "handoffs"
-    handoff_count = 0
-    if handoffs_dir.is_dir():
-        try:
-            handoff_count = sum(
-                1 for p in handoffs_dir.glob("SESSION_*.md") if p.is_file()
-            )
-        except OSError:
-            handoff_count = 0
+        handoffs_dir = docs_dir / "handoffs"
+        handoff_count = 0
+        if handoffs_dir.is_dir():
+            try:
+                handoff_count = sum(1 for p in handoffs_dir.glob("SESSION_*.md") if p.is_file())
+            except OSError:
+                handoff_count = 0
 
-    # Anchor docs: any *_WHAT_IT_IS.md or *_INVENTORY.md in docs/ root.
-    anchor_docs: list[str] = []
-    if docs_dir.is_dir():
-        try:
-            for path in sorted(docs_dir.glob("*_WHAT_IT_IS.md")):
-                if path.is_file():
-                    anchor_docs.append(str(path.relative_to(project)))
-            for path in sorted(docs_dir.glob("*_INVENTORY.md")):
-                if path.is_file():
-                    anchor_docs.append(str(path.relative_to(project)))
-        except OSError:
-            pass
+        anchor_docs: list[str] = []
+        if docs_dir.is_dir():
+            try:
+                for path in sorted(docs_dir.glob("*_WHAT_IT_IS.md")):
+                    if path.is_file():
+                        anchor_docs.append(str(path.relative_to(project)))
+                for path in sorted(docs_dir.glob("*_INVENTORY.md")):
+                    if path.is_file():
+                        anchor_docs.append(str(path.relative_to(project)))
+            except OSError:
+                pass
 
-    # Audit / cleanup folders directly under docs/.
-    audit_folders: list[str] = []
-    if docs_dir.is_dir():
-        try:
-            for child in sorted(docs_dir.iterdir()):
-                if not child.is_dir():
-                    continue
-                if any(pat in child.name.lower() for pat in _AUDIT_FOLDER_PATTERNS):
-                    audit_folders.append(str(child.relative_to(project)))
-        except OSError:
-            pass
+        audit_folders: list[str] = []
+        if docs_dir.is_dir():
+            try:
+                for child in sorted(docs_dir.iterdir()):
+                    if not child.is_dir():
+                        continue
+                    if any(pat in child.name.lower() for pat in _AUDIT_FOLDER_PATTERNS):
+                        audit_folders.append(str(child.relative_to(project)))
+            except OSError:
+                pass
 
-    # Process docs (the canonical context-kit name + a couple variants).
-    process_docs_present = (
-        (docs_dir / "docs-pattern").is_dir()
-        or (docs_dir / "process").is_dir()
-        or (docs_dir / "patterns").is_dir()
-    )
+        process_docs_present = (
+            (docs_dir / "docs-pattern").is_dir()
+            or (docs_dir / "process").is_dir()
+            or (docs_dir / "patterns").is_dir()
+        )
 
-    # RAG corpus: a top-level .rag/ directory with content.
-    rag_dir = project / ".rag"
-    rag_corpus_present = False
-    rag_corpus_paths: list[str] = []
-    if rag_dir.is_dir():
-        try:
-            for child in sorted(rag_dir.iterdir()):
-                if child.is_file() and (
-                    child.name in _RAG_CORPUS_FILENAMES
-                    or child.suffix in (".jsonl", ".json")
-                ):
-                    rag_corpus_paths.append(str(child.relative_to(project)))
-            rag_corpus_present = bool(rag_corpus_paths)
-        except OSError:
-            pass
+        rag_dir = project / ".rag"
+        rag_corpus_present = False
+        rag_corpus_paths: list[str] = []
+        if rag_dir.is_dir():
+            try:
+                for child in sorted(rag_dir.iterdir()):
+                    if child.is_file() and (
+                        child.name in _RAG_CORPUS_FILENAMES
+                        or child.suffix in (".jsonl", ".json")
+                    ):
+                        rag_corpus_paths.append(str(child.relative_to(project)))
+                rag_corpus_present = bool(rag_corpus_paths)
+            except OSError:
+                pass
+    else:
+        markdown_files = [path for path in files if path.suffix.lower() == ".md" and ("docs" in path.parts or path.parent == project)]
+        markdown_count = len(markdown_files)
+        handoff_count = sum(1 for p in markdown_files if "handoffs" in p.parts and p.name.startswith("SESSION_"))
+        anchor_docs = [str(p.relative_to(project)) for p in markdown_files if p.name.endswith(("_WHAT_IT_IS.md", "_INVENTORY.md"))]
+        audit_folders = sorted({str(p.parent.relative_to(project)) for p in markdown_files if any(pat in p.parent.name.lower() for pat in _AUDIT_FOLDER_PATTERNS)})
+        process_docs_present = any(
+            any(part in {"docs-pattern", "process", "patterns"} for part in p.parts)
+            for p in files
+        )
+        rag_corpus_paths = [str(p.relative_to(project)) for p in files if p.parts and p.parts[0] == ".rag" and p.is_file() and (p.name in _RAG_CORPUS_FILENAMES or p.suffix in (".jsonl", ".json"))]
+        rag_corpus_present = bool(rag_corpus_paths)
 
     strength = _classify_doc_intel(
         markdown_count=markdown_count,
@@ -1002,6 +1090,70 @@ def _inspect_documentation_intelligence(project: Path) -> DocumentationIntellige
         rag_corpus_paths=rag_corpus_paths,
         strength=strength,
     )
+
+
+def _filter_inspect_scope_files(project: Path, files: list[Path], scope: str) -> list[Path]:
+    selected: list[Path] = []
+    for path in files:
+        if _inspect_scope_matches(project, path, scope):
+            selected.append(path)
+    return selected
+
+
+def _inspect_scope_matches(project: Path, path: Path, scope: str) -> bool:
+    try:
+        rel = path.relative_to(project).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+    lowered = rel.lower()
+    name = path.name
+
+    if scope == "core":
+        return lowered.startswith("core/")
+
+    if scope == "frontend":
+        return lowered.startswith("frontend/")
+
+    if scope == "tests":
+        return lowered.startswith("tests/") or lowered.startswith("core/tests/")
+
+    if scope == "deployment":
+        if name in {"Dockerfile", "Procfile"}:
+            return True
+        if lowered in {".env.example", ".env.railway"} or lowered.startswith("railway/"):
+            return True
+        return "deploy" in lowered or "deployment" in lowered or "railway" in lowered
+
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        text = ""
+    lower_text = text.lower()
+
+    if scope == "celery":
+        return (
+            lowered in {"procfile", "core/celery.py", "core/schedulers.py"}
+            or (lowered.startswith("core/tasks") and path.suffix == ".py")
+            or "celery" in lower_text
+            or "periodictask" in lower_text
+        )
+
+    if scope == "agents":
+        return lowered.startswith("core/agents/") or "agent_map" in lower_text or "agent registry" in lower_text
+
+    if scope == "spiders":
+        return lowered.startswith("ai_core/spiders/") or "spider registry" in lower_text or "spiderdata" in lower_text
+
+    if scope == "docs-rag":
+        return (
+            lowered.startswith("docs/")
+            or lowered.startswith(".rag/")
+            or "rag" in lower_text
+            or "corpus" in lower_text
+            or "context" in lower_text
+        )
+
+    return False
 
 
 def _classify_doc_intel(
@@ -1247,6 +1399,8 @@ def _render_text(r: InspectionResult) -> str:
     lines.append("=== CONTEXT-KIT INSPECT ===")
     lines.append(f"Repo:           {r.repo}")
     lines.append(f"Path:           {r.path}")
+    if r.scope is not None:
+        lines.append(f"Scope:          {r.scope}")
     if r.head:
         lines.append(f"HEAD:           {r.head['sha']} (branch: {r.head['branch']})")
     else:
@@ -1386,6 +1540,7 @@ def _to_json(r: InspectionResult) -> dict:
     return {
         "repo": r.repo,
         "path": r.path,
+        "scope": r.scope,
         "head": r.head,
         "counts": r.counts,
         "primary_stack": r.primary_stack,

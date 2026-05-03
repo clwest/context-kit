@@ -437,6 +437,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=2,
         help="Directory walk depth for monorepo / workspace child detection (default: 2)",
     )
+    inspect.add_argument(
+        "--scope",
+        help="Restrict inspection to a named scope (core, celery, agents, spiders, docs-rag, frontend, deployment, tests)",
+    )
 
     # verify
     verify = sub.add_parser(
@@ -561,6 +565,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--short",
         action="store_true",
         help="Print the compact startup prompt instead of the full prompt.",
+    )
+    codex.add_argument(
+        "--print-prompt",
+        action="store_true",
+        help="Print the generated startup prompt before launching Codex.",
     )
     codex_mode = codex.add_mutually_exclusive_group()
     codex_mode.add_argument(
