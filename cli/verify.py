@@ -62,12 +62,18 @@ _DOC_COUNT_LABEL_PATTERNS = {
     "apis": r"apis?",
     "frontend pages": r"frontend\s+pages?",
 }
+_DOC_COUNT_STRONG_LABELS = {
+    "agents": r"(?:total|registered|current|count)\s+agents?|agents?\s+count",
+    "spiders": r"(?:total|registered|current|count)\s+spiders?|spiders?\s+count",
+    "apis": r"(?:total|registered|current|count)\s+apis?|apis?\s+count",
+    "frontend pages": r"(?:total|registered|current|count)\s+frontend\s+pages?|frontend\s+pages?\s+count",
+}
 _DOC_COUNT_CONTEXT_RE = re.compile(
     r"(?i)(?:^\s*#{1,6}\s*|^\s*[-*+]\s*|^\s*\|\s*|(?:\b(?:total|registered|current|count|agents|spiders|apis|frontend pages)\s*:))"
 )
 _DJANGO_SETTINGS_RE = re.compile(r"DJANGO_SETTINGS_MODULE", re.IGNORECASE)
 _CELERY_OWNER_RE = re.compile(
-    r"(?i)\b(beat_schedule\s*=|CELERY_BEAT_SCHEDULE|CELERY_BEAT_SCHEDULER|app\.conf\.beat_schedule|PeriodicTask|sync_celery_schedules)\b"
+    r"(?i)(?:beat_schedule\s*=|app\.conf\.beat_schedule|CELERY_BEAT_SCHEDULE|CELERY_BEAT_SCHEDULER|PeriodicTask\.objects|sync_celery_schedules)"
 )
 _CELERY_DOC_RE = re.compile(r"(?i)\b(celery beat|celery beat schedule|beat_schedule|CELERY_BEAT_SCHEDULE|CELERY_BEAT_SCHEDULER|PeriodicTask|sync_celery_schedules|app\.conf\.beat_schedule)\b")
 _PATH_OR_MODULE_RE = re.compile(
@@ -372,13 +378,17 @@ def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bo
             if _CELERY_DOC_RE.search(line):
                 rel = _rel(project, path, line_no)
                 scope = _scope_for_path(path)
-                evidence_by_scope[scope].add(rel)
-                if scope in _ACTIVE_SCOPES:
-                    docs_sources_by_scope[scope].update(_extract_sources_from_line(line))
                 if path.suffix == ".py" and _is_celery_schedule_owner_line(line):
+                    evidence_by_scope[scope].add(rel)
+                    if scope in _ACTIVE_SCOPES:
+                        docs_sources_by_scope[scope].update(_extract_sources_from_line(line))
                     schedule_sources.add(_normalize_source(path))
-                    if "CELERY_BEAT_SCHEDULER" in line:
-                        scheduler_sources.add(_normalize_source(path))
+                elif path.suffix != ".py":
+                    evidence_by_scope[scope].add(rel)
+                    if scope in _ACTIVE_SCOPES:
+                        docs_sources_by_scope[scope].update(_extract_sources_from_line(line))
+                if path.suffix == ".py" and "CELERY_BEAT_SCHEDULER" in line and _is_celery_schedule_owner_line(line):
+                    scheduler_sources.add(_normalize_source(path))
 
     evidence = _flatten_scope_evidence(evidence_by_scope)
     if not evidence and not schedule_sources and not scheduler_sources:
@@ -821,6 +831,8 @@ def _is_doc_count_claim_line(line: str, label: str) -> bool:
     stripped = line.strip()
     if not stripped:
         return False
+    if re.match(r"^\s*\d+(?:\.\d+)*[.)]\s+", stripped):
+        return False
     if not _DOC_COUNT_CONTEXT_RE.search(stripped):
         return False
     label_re = _DOC_COUNT_LABEL_PATTERNS[label]
@@ -835,16 +847,26 @@ def _extract_doc_count_values(line: str, label: str) -> set[str]:
     if not stripped:
         return values
     label_re = _DOC_COUNT_LABEL_PATTERNS[label]
-    patterns = (
-        rf"(?i)\b(?:total|registered|current|count|{label_re})\b\s*[:|\-]?\s*(\d{{1,3}})\b",
-        rf"(?i)\b(\d{{1,3}})\b\s*[:|\-]?\s*\b{label_re}\b",
+    strong_label_re = _DOC_COUNT_STRONG_LABELS[label]
+    strong_patterns = (
+        rf"(?i)\b(?:{strong_label_re})\b\s*[:|\-]?\s*(\d{{1,3}})\b",
+        rf"(?i)\b(\d{{1,3}})\b\s*[:|\-]?\s*\b{strong_label_re}\b",
         rf"(?i)\|\s*(?:total|registered|current|count|{label_re})\s*\|\s*(\d{{1,3}})\s*\|",
         rf"(?i)\|\s*(\d{{1,3}})\s*\|\s*(?:total|registered|current|count|{label_re})\s*\|",
     )
-    for pattern in patterns:
+    weak_patterns = (
+        rf"(?i)\b{label_re}\b\s*[:|\-]?\s*(\d{{1,3}})\b",
+        rf"(?i)\b(\d{{1,3}})\b\s*[:|\-]?\s*\b{label_re}\b",
+    )
+    for pattern in strong_patterns:
         for match in re.finditer(pattern, stripped):
             value = match.group(1)
             if _is_valid_doc_count_value(value):
+                values.add(value)
+    for pattern in weak_patterns:
+        for match in re.finditer(pattern, stripped):
+            value = match.group(1)
+            if _is_valid_doc_count_value(value) and int(value) >= 10:
                 values.add(value)
     return values
 
@@ -856,7 +878,7 @@ def _is_valid_doc_count_value(value: str) -> bool:
         return False
     if len(value) > 3:
         return False
-    if int(value) == 0:
+    if value != "0" and value.startswith("0"):
         return False
     return True
 

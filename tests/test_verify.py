@@ -161,9 +161,31 @@ class TestVerifyDocCounts(VerifyTestCase):
         data = json.loads(out)
         self.assertFalse(any(item["id"].startswith("doc-count-") for item in data["findings"]))
 
+    def test_numbered_prefixes_and_padded_numbers_are_ignored(self):
+        _write(self.project / "README.md", "1. agents: 74\n")
+        _write(self.project / "docs" / "NOTES.md", "- spiders: 01\n")
+        _write(self.project / "docs" / "MORE.md", "| apis | 002 |\n")
+        _write(self.project / "docs" / "STILL_MORE.md", "024 frontend pages are mentioned here.\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertFalse(any(item["id"].startswith("doc-count-") for item in data["findings"]))
+
+    def test_small_values_need_strong_labels(self):
+        _write(self.project / "README.md", "- agents: 3\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertFalse(any(item["id"].startswith("doc-count-") for item in data["findings"]))
+        _write(self.project / "docs" / "strong.md", "### Total Agents: 3\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(any(item["id"] == "doc-count-agents" for item in data["findings"]))
+
     def test_headings_bullets_and_tables_create_count_claims(self):
         _write(self.project / "README.md", "## Agents: 74\n")
-        _write(self.project / "docs" / "notes.md", "- spiders: 3\n")
+        _write(self.project / "docs" / "notes.md", "- total spiders: 3\n")
         _write(self.project / "docs" / "table.md", "| apis | 5 |\n")
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
@@ -181,6 +203,16 @@ class TestVerifyDocCounts(VerifyTestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertFalse(any(item["id"].startswith("doc-count-") for item in data["findings"]))
+
+    def test_strong_labels_allow_small_values(self):
+        _write(self.project / "README.md", "### Total Agents: 3\n")
+        _write(self.project / "docs" / "counts.md", "| total spiders | 4 |\n")
+        rc, out = _capture(_args(self.project, json_=True))
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        ids = {item["id"] for item in data["findings"] if item["id"].startswith("doc-count-")}
+        self.assertIn("doc-count-agents", ids)
+        self.assertIn("doc-count-spiders", ids)
 
     def test_verification_report_is_ignored_as_input(self):
         _write(self.project / "README.md", "- agents: 74\n")
@@ -233,7 +265,7 @@ class TestVerifyCeleryOwnership(VerifyTestCase):
     def test_generic_celery_task_files_are_not_ownership_evidence(self):
         _write(
             self.project / "app" / "tasks.py",
-            "from celery import shared_task\n\n@shared_task\ndef ping():\n    return 1\n",
+            "from celery import shared_task\n\n# PeriodicTask appears in a comment only.\n@shared_task\ndef ping():\n    return 1\n",
         )
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
@@ -244,7 +276,7 @@ class TestVerifyCeleryOwnership(VerifyTestCase):
     def test_direct_beat_schedule_config_is_ownership_evidence(self):
         _write(
             self.project / "app" / "celery.py",
-            "from celery import Celery\n\napp = Celery('demo')\napp.conf.beat_schedule = {'ping': {'task': 'app.tasks.ping', 'schedule': 10}}\n",
+            "from celery import Celery\n\napp = Celery('demo')\napp.conf.beat_schedule = {'ping': {'task': 'app.tasks.ping', 'schedule': 10}}\nPeriodicTask.objects.get_or_create(name='ping')\n",
         )
         rc, out = _capture(_args(self.project, json_=True))
         self.assertEqual(rc, 0)
