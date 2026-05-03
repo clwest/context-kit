@@ -218,6 +218,8 @@ class InspectionResult:
     stale_docs: list[StaleDoc]
     documentation_intelligence: DocumentationIntelligence
     recommendations: list[Recommendation]
+    include_related: bool = False
+    include_history: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +242,7 @@ def run_inspect(args: argparse.Namespace) -> int:
         project,
         depth=getattr(args, "depth", 2),
         scope=scope,
+        include_related=getattr(args, "include_related", False),
         include_history=getattr(args, "include_history", False),
     )
 
@@ -255,10 +258,23 @@ def run_inspect(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _inspect(project: Path, *, depth: int, scope: str | None = None, include_history: bool = False) -> InspectionResult:
+def _inspect(
+    project: Path,
+    *,
+    depth: int,
+    scope: str | None = None,
+    include_related: bool = False,
+    include_history: bool = False,
+) -> InspectionResult:
     files, _ = _collect_files(project)
     if scope is not None:
-        files = _filter_inspect_scope_files(project, files, scope, include_history=include_history)
+        files = _filter_inspect_scope_files(
+            project,
+            files,
+            scope,
+            include_related=include_related,
+            include_history=include_history,
+        )
     files = [path for path in files if _inspect_file_is_live(path, include_history=include_history)]
     sized = _with_sizes(files)
     total_bytes = sum(s for _, s in sized)
@@ -304,6 +320,8 @@ def _inspect(project: Path, *, depth: int, scope: str | None = None, include_his
         documentation_intelligence=doc_intel,
         recommendations=recommendations,
         scope=scope,
+        include_related=include_related if scope is not None else False,
+        include_history=include_history if scope is not None else False,
     )
 
 
@@ -1098,10 +1116,23 @@ def _inspect_documentation_intelligence(project: Path, files: list[Path] | None 
     )
 
 
-def _filter_inspect_scope_files(project: Path, files: list[Path], scope: str, *, include_history: bool = False) -> list[Path]:
+def _filter_inspect_scope_files(
+    project: Path,
+    files: list[Path],
+    scope: str,
+    *,
+    include_related: bool = False,
+    include_history: bool = False,
+) -> list[Path]:
     selected: list[Path] = []
     for path in files:
-        if _inspect_scope_matches(project, path, scope, include_history=include_history):
+        if _inspect_scope_matches(
+            project,
+            path,
+            scope,
+            include_related=include_related,
+            include_history=include_history,
+        ):
             selected.append(path)
     return selected
 
@@ -1135,7 +1166,14 @@ def _is_verification_output(path: Path) -> bool:
     return "docs/verification/" in lowered or lowered.endswith("docs/verification/verify_report.md")
 
 
-def _inspect_scope_matches(project: Path, path: Path, scope: str, *, include_history: bool = False) -> bool:
+def _inspect_scope_matches(
+    project: Path,
+    path: Path,
+    scope: str,
+    *,
+    include_related: bool = False,
+    include_history: bool = False,
+) -> bool:
     try:
         rel = path.relative_to(project).as_posix()
     except ValueError:
@@ -1163,7 +1201,7 @@ def _inspect_scope_matches(project: Path, path: Path, scope: str, *, include_his
             return True
         if lowered in {".env.example", ".env.railway"} or lowered.startswith("railway/"):
             return True
-        return "deploy" in lowered or "deployment" in lowered or "railway" in lowered
+        return include_related and ("deploy" in lowered or "deployment" in lowered or "railway" in lowered)
 
     if scope == "celery":
         if lowered in {"procfile", "core/celery.py", "core/schedulers.py"}:
@@ -1174,13 +1212,20 @@ def _inspect_scope_matches(project: Path, path: Path, scope: str, *, include_his
             return True
         if lowered == "docs/topics/celery-workers.md":
             return True
-        if include_history and role in {"historical", "external"}:
+        if include_related:
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 text = ""
             lower_text = text.lower()
-            return "celery" in lower_text or "periodictask" in lower_text
+            return "celery" in lower_text or "periodictask" in lower_text or "beat_schedule" in lower_text
+        if include_history:
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                text = ""
+            lower_text = text.lower()
+            return "celery" in lower_text or "periodictask" in lower_text or "beat_schedule" in lower_text
         return False
 
     try:
@@ -1190,19 +1235,39 @@ def _inspect_scope_matches(project: Path, path: Path, scope: str, *, include_his
     lower_text = text.lower()
 
     if scope == "agents":
-        return lowered.startswith("core/agents/") or "agent_map" in lower_text or "agent registry" in lower_text
+        if lowered.startswith("core/agents/") or lowered.startswith("agents/"):
+            return True
+        if lowered in {"docs/topics/agent-system.md", "docs/agents.md"}:
+            return True
+        if include_related:
+            return "agent_map" in lower_text or "agent registry" in lower_text or "persistence" in lower_text
+        if include_history:
+            return "agent_map" in lower_text or "agent registry" in lower_text
+        return False
 
     if scope == "spiders":
-        return lowered.startswith("ai_core/spiders/") or "spider registry" in lower_text or "spiderdata" in lower_text
+        if lowered.startswith("ai_core/spiders/") or lowered.startswith("spiders/"):
+            return True
+        if lowered in {"docs/topics/spider-network.md", "docs/spiders.md"}:
+            return True
+        if include_related:
+            if lowered.startswith("frontend/"):
+                return True
+            return "spider registry" in lower_text or "spiderdata" in lower_text or "frontend" in lower_text
+        if include_history:
+            return "spider registry" in lower_text or "spiderdata" in lower_text
+        return False
 
     if scope == "docs-rag":
-        return (
-            lowered.startswith("docs/")
-            or lowered.startswith(".rag/")
-            or "rag" in lower_text
-            or "corpus" in lower_text
-            or "context" in lower_text
-        )
+        if lowered.startswith("docs/") or lowered.startswith(".rag/"):
+            if any(seg in lowered for seg in ("static/", "assets/", "mobile/", "images/")):
+                return include_related
+            return True
+        if include_related:
+            return "rag" in lower_text or "corpus" in lower_text or "context" in lower_text or "index" in lowered
+        if include_history:
+            return "rag" in lower_text or "corpus" in lower_text or "context" in lower_text
+        return False
 
     return False
 
@@ -1452,6 +1517,7 @@ def _render_text(r: InspectionResult) -> str:
     lines.append(f"Path:           {r.path}")
     if r.scope is not None:
         lines.append(f"Scope:          {r.scope}")
+        lines.append(f"Scope mode:     {'related' if r.include_related else 'strict'}")
     if r.head:
         lines.append(f"HEAD:           {r.head['sha']} (branch: {r.head['branch']})")
     else:
@@ -1592,6 +1658,8 @@ def _to_json(r: InspectionResult) -> dict:
         "repo": r.repo,
         "path": r.path,
         "scope": r.scope,
+        "include_related": r.include_related,
+        "include_history": r.include_history,
         "head": r.head,
         "counts": r.counts,
         "primary_stack": r.primary_stack,

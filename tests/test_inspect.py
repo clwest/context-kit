@@ -25,21 +25,22 @@ if str(REPO_ROOT) not in sys.path:
 from cli.inspect import run_inspect  # noqa: E402
 
 
-def _inspect_args(path, *, json_out=False, depth=2, scope=None, include_history=False):
+def _inspect_args(path, *, json_out=False, depth=2, scope=None, include_related=False, include_history=False):
     return argparse.Namespace(
         command="inspect",
         path=str(path),
         json=json_out,
         depth=depth,
         scope=scope,
+        include_related=include_related,
         include_history=include_history,
     )
 
 
-def _run_capture(path, *, json_out=False, scope=None, include_history=False) -> tuple[int, str]:
+def _run_capture(path, *, json_out=False, scope=None, include_related=False, include_history=False) -> tuple[int, str]:
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = run_inspect(_inspect_args(path, json_out=json_out, scope=scope, include_history=include_history))
+        rc = run_inspect(_inspect_args(path, json_out=json_out, scope=scope, include_related=include_related, include_history=include_history))
     return rc, buf.getvalue()
 
 
@@ -154,6 +155,10 @@ class TestEmptyDirectory(_CwdSandbox):
         data = json.loads(out)
         self.assertIn("scope", data)
         self.assertIsNone(data["scope"])
+        self.assertIn("include_related", data)
+        self.assertIn("include_history", data)
+        self.assertFalse(data["include_related"])
+        self.assertFalse(data["include_history"])
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +216,7 @@ class TestScopedInspect(_CwdSandbox):
         rc, out = _run_capture(self.tmpdir, scope="core")
         self.assertEqual(rc, 0)
         self.assertIn("Scope:          core", out)
+        self.assertIn("Scope mode:     strict", out)
         self.assertIn("core/", out)
         self.assertNotIn("frontend/", out)
         self.assertNotIn("nextjs", out.lower())
@@ -219,6 +225,8 @@ class TestScopedInspect(_CwdSandbox):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["scope"], "core")
+        self.assertFalse(data["include_related"])
+        self.assertFalse(data["include_history"])
 
     def test_invalid_scope_returns_clear_error(self):
         buf = io.StringIO()
@@ -281,6 +289,84 @@ class TestCeleryScopeSelection(_CwdSandbox):
         data = json.loads(out)
         by_path = {s["path"]: s for s in data["subsystems"]}
         self.assertEqual(by_path["docs/"]["files"], 3)
+
+
+class TestStrictVsRelatedScopes(_CwdSandbox):
+    def setUp(self):
+        super().setUp()
+        docs = self.tmpdir / "docs"
+        (docs / "topics").mkdir(parents=True)
+        (docs / "topics" / "agent-system.md").write_text("# agents\n", encoding="utf-8")
+        (docs / "topics" / "spider-network.md").write_text("# spiders\n", encoding="utf-8")
+        (docs / "topics" / "celery-workers.md").write_text("# celery\n", encoding="utf-8")
+        (docs / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
+        (docs / "SPIDERS.md").write_text("# spiders\n", encoding="utf-8")
+        (docs / "notes.md").write_text("# rag index\n", encoding="utf-8")
+        (docs / "images").mkdir()
+        (docs / "images" / "diagram.png").write_bytes(b"png")
+        (docs / "mobile").mkdir()
+        (docs / "mobile" / "asset.png").write_bytes(b"png")
+        (self.tmpdir / ".rag").mkdir()
+        (self.tmpdir / ".rag" / "agent-context.json").write_text('{"agent_map": true}\n', encoding="utf-8")
+        (self.tmpdir / "core").mkdir()
+        (self.tmpdir / "core" / "agents").mkdir(parents=True)
+        (self.tmpdir / "core" / "agents" / "registry.py").write_text("AGENT_MAP = {}\n", encoding="utf-8")
+        (self.tmpdir / "ai_core").mkdir()
+        (self.tmpdir / "ai_core" / "spiders").mkdir(parents=True)
+        (self.tmpdir / "ai_core" / "spiders" / "registry.py").write_text("SpiderData = {}\n", encoding="utf-8")
+        (self.tmpdir / "frontend").mkdir()
+        (self.tmpdir / "frontend" / "links.md").write_text("spider link\n", encoding="utf-8")
+
+    def test_docs_rag_excludes_images_by_default(self):
+        rc, out = _run_capture(self.tmpdir, json_out=True, scope="docs-rag")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["scope"], "docs-rag")
+        self.assertFalse(data["include_related"])
+        hot_paths = [item["path"] for item in data["hot_files"]]
+        self.assertIn("docs/notes.md", hot_paths)
+        self.assertIn(".rag/agent-context.json", hot_paths)
+        self.assertNotIn("docs/images/diagram.png", hot_paths)
+        self.assertNotIn("docs/mobile/asset.png", hot_paths)
+        by_path = {s["path"]: s for s in data["subsystems"]}
+        self.assertIn("docs/", by_path)
+        self.assertIn(".rag/", by_path)
+
+    def test_agents_default_excludes_related_rag(self):
+        rc, out = _run_capture(self.tmpdir, json_out=True, scope="agents")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        hot_paths = [item["path"] for item in data["hot_files"]]
+        self.assertIn("core/agents/registry.py", hot_paths)
+        self.assertIn("docs/AGENTS.md", hot_paths)
+        self.assertNotIn(".rag/agent-context.json", hot_paths)
+        by_path = {s["path"]: s for s in data["subsystems"]}
+        self.assertNotIn(".rag/", by_path)
+
+    def test_agents_include_related_can_pull_rag(self):
+        rc, out = _run_capture(self.tmpdir, json_out=True, scope="agents", include_related=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["include_related"])
+        by_path = {s["path"]: s for s in data["subsystems"]}
+        self.assertIn(".rag/", by_path)
+
+    def test_spiders_default_excludes_frontend(self):
+        rc, out = _run_capture(self.tmpdir, json_out=True, scope="spiders")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        hot_paths = [item["path"] for item in data["hot_files"]]
+        self.assertIn("ai_core/spiders/registry.py", hot_paths)
+        self.assertNotIn("frontend/links.md", hot_paths)
+        by_path = {s["path"]: s for s in data["subsystems"]}
+        self.assertNotIn("frontend/", by_path)
+
+    def test_spiders_include_related_can_pull_frontend(self):
+        rc, out = _run_capture(self.tmpdir, json_out=True, scope="spiders", include_related=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        by_path = {s["path"]: s for s in data["subsystems"]}
+        self.assertIn("frontend/", by_path)
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +525,8 @@ class TestJsonOutputShape(_CwdSandbox):
             "repo",
             "path",
             "scope",
+            "include_related",
+            "include_history",
             "head",
             "counts",
             "primary_stack",

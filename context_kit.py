@@ -446,6 +446,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include historical/external docs in scoped inspection",
     )
+    inspect.add_argument(
+        "--include-related",
+        action="store_true",
+        help="Include broader related paths for the selected scope",
+    )
 
     # verify
     verify = sub.add_parser(
