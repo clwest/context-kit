@@ -25,20 +25,21 @@ if str(REPO_ROOT) not in sys.path:
 from cli.inspect import run_inspect  # noqa: E402
 
 
-def _inspect_args(path, *, json_out=False, depth=2, scope=None):
+def _inspect_args(path, *, json_out=False, depth=2, scope=None, include_history=False):
     return argparse.Namespace(
         command="inspect",
         path=str(path),
         json=json_out,
         depth=depth,
         scope=scope,
+        include_history=include_history,
     )
 
 
-def _run_capture(path, *, json_out=False, scope=None) -> tuple[int, str]:
+def _run_capture(path, *, json_out=False, scope=None, include_history=False) -> tuple[int, str]:
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = run_inspect(_inspect_args(path, json_out=json_out, scope=scope))
+        rc = run_inspect(_inspect_args(path, json_out=json_out, scope=scope, include_history=include_history))
     return rc, buf.getvalue()
 
 
@@ -225,6 +226,61 @@ class TestScopedInspect(_CwdSandbox):
             rc = run_inspect(_inspect_args(self.tmpdir, scope="bogus"))
         self.assertEqual(rc, 2)
         self.assertIn("unknown inspect scope", buf.getvalue().lower())
+
+
+class TestCeleryScopeSelection(_CwdSandbox):
+    def setUp(self):
+        super().setUp()
+        core = self.tmpdir / "core"
+        core.mkdir()
+        (core / "celery.py").write_text(
+            "from celery import Celery\napp = Celery('demo')\napp.conf.beat_schedule = {'ping': {'task': 'core.tasks.ping', 'schedule': 10}}\n",
+            encoding="utf-8",
+        )
+        (core / "tasks.py").write_text(
+            "@shared_task\ndef ping(): return 1\n",
+            encoding="utf-8",
+        )
+        (core / "schedulers.py").write_text("class Scheduler: pass\n", encoding="utf-8")
+        (core / "management").mkdir()
+        (core / "management" / "commands").mkdir(parents=True)
+        (core / "management" / "commands" / "repair_celery.py").write_text(
+            "def handle(): pass\n",
+            encoding="utf-8",
+        )
+        (self.tmpdir / "Procfile").write_text("worker: celery -A core.celery worker\n", encoding="utf-8")
+        docs = self.tmpdir / "docs"
+        (docs / "topics").mkdir(parents=True)
+        (docs / "topics" / "celery-workers.md").write_text("# Celery workers\n", encoding="utf-8")
+        (docs / "external-project-docs").mkdir(parents=True)
+        (docs / "external-project-docs" / "celery.md").write_text("Celery notes from elsewhere\n", encoding="utf-8")
+        (docs / "archive").mkdir(parents=True)
+        (docs / "archive" / "old-celery.md").write_text("Legacy celery details\n", encoding="utf-8")
+        (docs / "verification").mkdir(parents=True)
+        (docs / "verification" / "VERIFY_REPORT.md").write_text("Celery report\n", encoding="utf-8")
+
+    def test_celery_scope_excludes_external_project_docs_by_default(self):
+        rc, out = _run_capture(self.tmpdir, json_out=True, scope="celery")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["scope"], "celery")
+        by_path = {s["path"]: s for s in data["subsystems"]}
+        self.assertIn("core/", by_path)
+        self.assertIn("docs/", by_path)
+        self.assertEqual(by_path["docs/"]["files"], 1)
+        self.assertEqual(by_path["core/"]["files"], 4)
+        hot_paths = [item["path"] for item in data["hot_files"]]
+        self.assertIn("core/celery.py", hot_paths)
+        self.assertNotIn("docs/external-project-docs/celery.md", hot_paths)
+        self.assertNotIn("docs/archive/old-celery.md", hot_paths)
+        self.assertNotIn("docs/verification/VERIFY_REPORT.md", hot_paths)
+
+    def test_celery_scope_can_include_history_when_requested(self):
+        rc, out = _run_capture(self.tmpdir, json_out=True, scope="celery", include_history=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        by_path = {s["path"]: s for s in data["subsystems"]}
+        self.assertEqual(by_path["docs/"]["files"], 3)
 
 
 # ---------------------------------------------------------------------------

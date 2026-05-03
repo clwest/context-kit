@@ -441,6 +441,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--scope",
         help="Restrict inspection to a named scope (core, celery, agents, spiders, docs-rag, frontend, deployment, tests)",
     )
+    inspect.add_argument(
+        "--include-history",
+        action="store_true",
+        help="Include historical/external docs in scoped inspection",
+    )
 
     # verify
     verify = sub.add_parser(

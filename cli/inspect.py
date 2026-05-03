@@ -236,7 +236,12 @@ def run_inspect(args: argparse.Namespace) -> int:
         print(f"context-kit: unknown inspect scope `{scope}`. Valid scopes: {', '.join(_INSPECT_SCOPES)}.")
         return 2
 
-    result = _inspect(project, depth=getattr(args, "depth", 2), scope=scope)
+    result = _inspect(
+        project,
+        depth=getattr(args, "depth", 2),
+        scope=scope,
+        include_history=getattr(args, "include_history", False),
+    )
 
     if getattr(args, "json", False):
         print(json.dumps(_to_json(result), indent=2, default=str))
@@ -250,10 +255,11 @@ def run_inspect(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _inspect(project: Path, *, depth: int, scope: str | None = None) -> InspectionResult:
+def _inspect(project: Path, *, depth: int, scope: str | None = None, include_history: bool = False) -> InspectionResult:
     files, _ = _collect_files(project)
     if scope is not None:
-        files = _filter_inspect_scope_files(project, files, scope)
+        files = _filter_inspect_scope_files(project, files, scope, include_history=include_history)
+    files = [path for path in files if _inspect_file_is_live(path, include_history=include_history)]
     sized = _with_sizes(files)
     total_bytes = sum(s for _, s in sized)
 
@@ -1092,21 +1098,56 @@ def _inspect_documentation_intelligence(project: Path, files: list[Path] | None 
     )
 
 
-def _filter_inspect_scope_files(project: Path, files: list[Path], scope: str) -> list[Path]:
+def _filter_inspect_scope_files(project: Path, files: list[Path], scope: str, *, include_history: bool = False) -> list[Path]:
     selected: list[Path] = []
     for path in files:
-        if _inspect_scope_matches(project, path, scope):
+        if _inspect_scope_matches(project, path, scope, include_history=include_history):
             selected.append(path)
     return selected
 
 
-def _inspect_scope_matches(project: Path, path: Path, scope: str) -> bool:
+def _inspect_file_is_live(path: Path, *, include_history: bool = False) -> bool:
+    role = _inspect_path_role(path)
+    if role == "generated":
+        return False
+    if include_history:
+        return True
+    return role == "active"
+
+
+def _inspect_path_role(path: Path) -> str:
+    rel = path.as_posix()
+    lowered = rel.lower()
+    if _is_verification_output(path):
+        return "generated"
+    history_markers = {"archive", "archives", "historical", "history", "legacy", "old", "handoff", "handoffs", "session", "sessions", "case-studies", "case_studies"}
+    external_markers = {"external", "externals", "reference", "references", "third-party", "third_party", "vendor", "imported", "imported-reference"}
+    parts = set(Path(rel).parts)
+    if parts & history_markers or any(token in lowered for token in ("session_", "handoff", "case-study", "case_study", "old-session", "old_sessions")):
+        return "historical"
+    if parts & external_markers or any(token in lowered for token in ("external-project-docs", "external-docs", "imported-reference", "reference", "references")):
+        return "external"
+    return "active"
+
+
+def _is_verification_output(path: Path) -> bool:
+    lowered = path.as_posix().lower()
+    return "docs/verification/" in lowered or lowered.endswith("docs/verification/verify_report.md")
+
+
+def _inspect_scope_matches(project: Path, path: Path, scope: str, *, include_history: bool = False) -> bool:
     try:
         rel = path.relative_to(project).as_posix()
     except ValueError:
         rel = path.as_posix()
     lowered = rel.lower()
     name = path.name
+    role = _inspect_path_role(path)
+
+    if role == "generated":
+        return False
+    if role in {"historical", "external"} and not include_history:
+        return False
 
     if scope == "core":
         return lowered.startswith("core/")
@@ -1124,19 +1165,29 @@ def _inspect_scope_matches(project: Path, path: Path, scope: str) -> bool:
             return True
         return "deploy" in lowered or "deployment" in lowered or "railway" in lowered
 
+    if scope == "celery":
+        if lowered in {"procfile", "core/celery.py", "core/schedulers.py"}:
+            return True
+        if lowered.startswith("core/tasks") and path.suffix == ".py":
+            return True
+        if lowered.startswith("core/management/commands/") and "celery" in name.lower():
+            return True
+        if lowered == "docs/topics/celery-workers.md":
+            return True
+        if include_history and role in {"historical", "external"}:
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                text = ""
+            lower_text = text.lower()
+            return "celery" in lower_text or "periodictask" in lower_text
+        return False
+
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         text = ""
     lower_text = text.lower()
-
-    if scope == "celery":
-        return (
-            lowered in {"procfile", "core/celery.py", "core/schedulers.py"}
-            or (lowered.startswith("core/tasks") and path.suffix == ".py")
-            or "celery" in lower_text
-            or "periodictask" in lower_text
-        )
 
     if scope == "agents":
         return lowered.startswith("core/agents/") or "agent_map" in lower_text or "agent registry" in lower_text
