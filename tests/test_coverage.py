@@ -144,7 +144,7 @@ class TestCoverageJsonShape(_GitRepo):
         _write(self.project / "docs" / "initiatives" / "initiative-a" / "plan.md", "# plan\n")
         _write(self.project / "docs" / "code-review" / "outputs" / "review.txt", "review\n")
         _write(self.project / "docs" / "agents" / "overview.md", "# agents\n")
-        _write(self.project / "docs" / "mystery" / "note.md", "# unknown\n")
+        _write(self.project / "docs" / "mystery" / "file.bin", b"\x00\x01")
         self._add_all()
 
         rc, out = _run(self.project, json_out=True)
@@ -154,6 +154,78 @@ class TestCoverageJsonShape(_GitRepo):
         self.assertEqual(by_class["docs-active"]["files"], 3)
         self.assertEqual(by_class["generated/artifact"]["files"], 2)
         self.assertEqual(by_class["unknown"]["files"], 1)
+
+    def test_docs_plans_is_active(self):
+        _write(self.project / "docs" / "plans" / "PLAN.md", "# plan\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["docs-active"]["files"], 1)
+
+    def test_docs_architecture_is_active(self):
+        _write(self.project / "docs" / "architecture" / "MAP.md", "# map\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["docs-active"]["files"], 1)
+
+    def test_docs_integrations_is_active(self):
+        _write(self.project / "docs" / "integrations" / "API.md", "# api\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["docs-active"]["files"], 1)
+
+    def test_docs_archive_is_historical(self):
+        _write(self.project / "docs" / "archive" / "OLD.md", "# old\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["docs-historical"]["files"], 1)
+
+    def test_docs_ops_json_is_classified(self):
+        _write(self.project / "docs" / "ops" / "integration_inventory_2026-01-28.json", "{\"ok\": true}\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["docs-active"]["files"], 1)
+
+    def test_docs_initiatives_yaml_is_classified(self):
+        _write(self.project / "docs" / "initiatives" / "foo" / "synthesis_template.yaml", "name: foo\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["docs-active"]["files"], 1)
+
+    def test_docs_gitkeep_is_classified(self):
+        _write(self.project / "docs" / "agents" / ".gitkeep", "")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["docs-active"]["files"], 1)
+
+    def test_random_bin_stays_unknown(self):
+        _write(self.project / "random.bin", b"\x00\x01")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["by_classification"]["unknown"]["files"], 1)
 
 
 class TestCoverageScope(_GitRepo):

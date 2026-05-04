@@ -235,8 +235,6 @@ def _classify_file(path: Path) -> str:
         return "tests"
     if _is_docs_artifact_subfolder(path):
         return "generated/artifact"
-    if _is_docs_known_subfolder(path):
-        return "docs-active"
     if _is_docs_historical(path, role):
         return "docs-historical"
     if _is_docs_active(path, role):
@@ -297,35 +295,32 @@ def _is_docs_historical(path: Path, role: str) -> bool:
 
 
 def _is_docs_active(path: Path, role: str) -> bool:
-    if path.suffix.lower() in _DOC_SUFFIXES:
-        tail = _docs_tail(path)
-        if tail is None:
-            return role == "active"
-        if tail[:1] == ["ops"]:
-            return True
-        if tail[:1] == ["initiatives"]:
-            return True
-        if tail[:1] == ["agents"]:
-            return True
-        if tail[:1] == ["topics"]:
-            return True
-        if len(tail) == 1:
-            return True
-        return False
-    return False
-
-
-def _is_docs_known_subfolder(path: Path) -> bool:
     tail = _docs_tail(path)
     if tail is None:
         return False
-    if tail[:1] == ["ops"]:
+    if tail[:1] == ["archive"]:
+        return False
+    if tail[:2] == ["discord", "snapshots"]:
+        return False
+    if tail[:2] == ["code-review", "outputs"]:
+        return False
+    if path.name == ".gitkeep":
         return True
-    if tail[:1] == ["initiatives"]:
+    suffix = path.suffix.lower()
+    if suffix in _DOC_SUFFIXES:
         return True
-    if tail[:1] == ["agents"]:
+    if tail[:1] == ["ops"] and suffix == ".json":
+        return not _is_docs_artifact_filename(path.name)
+    if tail[:1] == ["initiatives"] and suffix in {".yaml", ".yml"}:
+        return True
+    if suffix in {".yaml", ".yml"} and tail[:1] in (["ops"], ["agents"], ["topics"], ["plans"], ["architecture"], ["integrations"]):
         return True
     return False
+
+
+def _is_docs_artifact_filename(name: str) -> bool:
+    lowered = name.lower()
+    return any(token in lowered for token in ("report", "output", "snapshot", "generated"))
 
 
 def _is_docs_artifact_subfolder(path: Path) -> bool:
