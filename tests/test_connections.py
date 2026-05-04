@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from cli.connections import run_connections  # noqa: E402
+from cli.connections import classify_route_role, run_connections  # noqa: E402
 
 
 def _args(project: Path, *, json_out: bool = False, scope: str | None = None) -> argparse.Namespace:
@@ -109,7 +109,56 @@ class TestConnectionsSignals(_GitRepo):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         finding = next(item for item in data["findings"] if item["category"] == "orphaned_route")
-        self.assertEqual(finding["severity"], "medium")
+        self.assertEqual(finding["severity"], "advisory")
+        self.assertEqual(finding["route_role"], "health")
+
+    def test_orphan_route_roles_adjust_severity_and_json_shape(self):
+        _write(
+            self.project / "core" / "urls.py",
+            "from django.urls import path\nurlpatterns = [\n"
+            "    path('admin/panel/', view),\n"
+            "    path('healthz/', view),\n"
+            "    path('metrics/', view),\n"
+            "    path('api/internal/reports/', view),\n"
+            "    path('docs/api/', view),\n"
+            "    path('api/users/', view),\n"
+            "    path('status/', view),\n"
+            "]\n",
+        )
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        findings = {item["id"]: item for item in data["findings"] if item["category"] == "orphaned_route"}
+        self.assertEqual(findings["orphaned-route:/admin/panel/"]["route_role"], "admin")
+        self.assertEqual(findings["orphaned-route:/admin/panel/"]["severity"], "advisory")
+        self.assertEqual(findings["orphaned-route:/healthz/"]["route_role"], "health")
+        self.assertEqual(findings["orphaned-route:/healthz/"]["severity"], "advisory")
+        self.assertEqual(findings["orphaned-route:/metrics/"]["route_role"], "monitoring")
+        self.assertEqual(findings["orphaned-route:/metrics/"]["severity"], "advisory")
+        self.assertEqual(findings["orphaned-route:/api/internal/reports/"]["route_role"], "internal_api")
+        self.assertEqual(findings["orphaned-route:/api/internal/reports/"]["severity"], "advisory")
+        self.assertEqual(findings["orphaned-route:/docs/api/"]["route_role"], "docs")
+        self.assertEqual(findings["orphaned-route:/docs/api/"]["severity"], "advisory")
+        self.assertEqual(findings["orphaned-route:/api/users/"]["route_role"], "public_api")
+        self.assertEqual(findings["orphaned-route:/api/users/"]["severity"], "medium")
+        self.assertEqual(findings["orphaned-route:/status/"]["route_role"], "unknown")
+        self.assertEqual(findings["orphaned-route:/status/"]["severity"], "medium")
+
+    def test_classify_route_role(self):
+        cases = {
+            "/admin/panel/": "admin",
+            "/healthz/": "health",
+            "/metrics/": "monitoring",
+            "/api/internal/reports/": "internal_api",
+            "/docs/api/": "docs",
+            "/api/users/": "public_api",
+            "/status/": "unknown",
+        }
+        for path, expected in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(classify_route_role(path), expected)
 
     def test_detects_celery_task_reference_missing_definition(self):
         _write(self.project / "frontend" / "src" / "tasks.ts", "celery.send_task('core.tasks.missing')\n")

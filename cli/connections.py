@@ -68,6 +68,7 @@ class ConnectionFinding:
     evidence: list[str] = field(default_factory=list)
     details: str = ""
     recommendation: str = ""
+    route_role: str = "unknown"
 
 
 @dataclass
@@ -154,15 +155,18 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
         if matched_refs:
             backend_matches[route_text].extend(matched_refs)
         else:
+            route_role = classify_route_role(route_text)
+            severity = "advisory" if route_role in {"admin", "health", "monitoring", "internal_api", "docs"} else "medium"
             findings.append(
                 ConnectionFinding(
                     id=f"orphaned-route:{route_text}",
                     title="Orphaned backend route",
-                    severity="medium",
+                    severity=severity,
                     category="orphaned_route",
                     evidence=[f"{route['file']}: {route_text}"],
                     details=f"No frontend/mobile reference matched backend route `{route_text}`.",
                     recommendation="Either wire a client to this route or confirm it is intentionally backend-only.",
+                    route_role=route_role,
                 )
             )
 
@@ -498,6 +502,28 @@ def _looks_like_agent_reference(name: str, known_agent_names: set[str]) -> bool:
 
 def _looks_like_spider_reference(name: str, known_spider_names: set[str]) -> bool:
     return name in known_spider_names or bool(_SPIDER_NAME_RE.fullmatch(name))
+
+
+def classify_route_role(path: str) -> str:
+    normalized = _normalize_endpoint(path).lower()
+    parts = [part for part in normalized.strip("/").split("/") if part]
+    if not parts:
+        return "unknown"
+
+    head = parts[0]
+    if head == "docs" or any(part in {"docs", "swagger", "redoc", "openapi"} for part in parts):
+        return "docs"
+    if head == "admin" or "admin" in parts:
+        return "admin"
+    if head in {"health", "healthz", "livez", "readyz", "ping", "heartbeat"} or any(part in {"health", "healthz", "livez", "readyz", "ping", "heartbeat"} for part in parts):
+        return "health"
+    if head in {"metrics", "monitoring", "prometheus", "stats"} or any(part in {"metrics", "monitoring", "prometheus", "stats"} for part in parts):
+        return "monitoring"
+    if head == "internal" or "internal" in parts or (head == "api" and len(parts) > 1 and parts[1] == "internal"):
+        return "internal_api"
+    if head == "api" or "api" in parts:
+        return "public_api"
+    return "unknown"
 
 
 def _connection_scope_matches(project: Path, path: Path, scope: str) -> bool:
