@@ -479,6 +479,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Restrict coverage to a named inspect scope (core, celery, agents, spiders, docs-rag, frontend, deployment, tests)",
     )
 
+    # behavior
+    behavior = sub.add_parser(
+        "behavior",
+        help="Map behavioral risk surfaces in tracked files",
+        description=(
+            "Walk tracked files and identify files that look behaviorally risky "
+            "using simple text probes: orchestration files, task/scheduler "
+            "entrypoints, registries, dynamic imports, dispatch/router code, "
+            "database writes, API calls, filesystem writes, subprocess/shell "
+            "execution, broad exception swallowing, and TODO/FIXME markers. "
+            "Read-only by default; this is a risk map, not proof."
+        ),
+    )
+    behavior.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Project root to inspect (default: current working directory)",
+    )
+    behavior.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON to stdout",
+    )
+    behavior.add_argument(
+        "--scope",
+        help="Restrict behavior scanning to a named inspect scope (core, celery, agents, spiders, docs-rag)",
+    )
+
     # verify
     verify = sub.add_parser(
         "verify",
@@ -742,6 +771,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "coverage":
         from cli.coverage import run_coverage
         return run_coverage(args)
+
+    if args.command == "behavior":
+        from cli.behavior import run_behavior
+        return run_behavior(args)
 
     if args.command == "verify":
         from cli.verify import run_verify
