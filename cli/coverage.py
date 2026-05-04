@@ -233,6 +233,10 @@ def _classify_file(path: Path) -> str:
         return "generated/artifact"
     if _is_test_file(path):
         return "tests"
+    if _is_docs_artifact_subfolder(path):
+        return "generated/artifact"
+    if _is_docs_known_subfolder(path):
+        return "docs-active"
     if _is_docs_historical(path, role):
         return "docs-historical"
     if _is_docs_active(path, role):
@@ -286,17 +290,62 @@ def _is_test_file(path: Path) -> bool:
 
 
 def _is_docs_historical(path: Path, role: str) -> bool:
-    lowered = path.as_posix().lower()
     if role in {"historical", "external"}:
         return True
-    return lowered.startswith("docs/archive/") or lowered.startswith("archive/")
+    tail = _docs_tail(path)
+    return tail is not None and tail[:1] == ["archive"]
 
 
 def _is_docs_active(path: Path, role: str) -> bool:
-    lowered = path.as_posix().lower()
     if path.suffix.lower() in _DOC_SUFFIXES:
-        return role == "active" or lowered.startswith("docs/")
+        tail = _docs_tail(path)
+        if tail is None:
+            return role == "active"
+        if tail[:1] == ["ops"]:
+            return True
+        if tail[:1] == ["initiatives"]:
+            return True
+        if tail[:1] == ["agents"]:
+            return True
+        if tail[:1] == ["topics"]:
+            return True
+        if len(tail) == 1:
+            return True
+        return False
     return False
+
+
+def _is_docs_known_subfolder(path: Path) -> bool:
+    tail = _docs_tail(path)
+    if tail is None:
+        return False
+    if tail[:1] == ["ops"]:
+        return True
+    if tail[:1] == ["initiatives"]:
+        return True
+    if tail[:1] == ["agents"]:
+        return True
+    return False
+
+
+def _is_docs_artifact_subfolder(path: Path) -> bool:
+    tail = _docs_tail(path)
+    if tail is None:
+        return False
+    if tail[:2] == ["discord", "snapshots"]:
+        return True
+    if tail[:2] == ["code-review", "outputs"]:
+        return True
+    return False
+
+
+def _docs_tail(path: Path) -> list[str] | None:
+    parts = [part.lower() for part in path.parts]
+    try:
+        idx = parts.index("docs")
+    except ValueError:
+        return None
+    return parts[idx + 1 :]
 
 
 def _is_config_deployment(path: Path) -> bool:

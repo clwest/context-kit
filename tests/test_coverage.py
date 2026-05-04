@@ -138,6 +138,23 @@ class TestCoverageJsonShape(_GitRepo):
         data = json.loads(out)
         self.assertEqual(data["by_classification"]["unknown"]["files"], 1)
 
+    def test_known_docs_subfolders_are_classified(self):
+        _write(self.project / "docs" / "discord" / "snapshots" / "snapshot.json", "{}\n")
+        _write(self.project / "docs" / "ops" / "runbook.md", "# runbook\n")
+        _write(self.project / "docs" / "initiatives" / "initiative-a" / "plan.md", "# plan\n")
+        _write(self.project / "docs" / "code-review" / "outputs" / "review.txt", "review\n")
+        _write(self.project / "docs" / "agents" / "overview.md", "# agents\n")
+        _write(self.project / "docs" / "mystery" / "note.md", "# unknown\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        by_class = data["by_classification"]
+        self.assertEqual(by_class["docs-active"]["files"], 3)
+        self.assertEqual(by_class["generated/artifact"]["files"], 2)
+        self.assertEqual(by_class["unknown"]["files"], 1)
+
 
 class TestCoverageScope(_GitRepo):
     def setUp(self):
