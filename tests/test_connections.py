@@ -126,7 +126,7 @@ class TestConnectionsSignals(_GitRepo):
         _write(
             self.project / "core" / "agents" / "registry.py",
             "AGENT_MAP = {'alpha': object()}\n"
-            "AGENT_MAP.get('beta')\n",
+            "AGENT_MAP.get('GhostAgent')\n",
         )
         self._add_all()
 
@@ -136,6 +136,104 @@ class TestConnectionsSignals(_GitRepo):
         self.assertEqual(data["summary"]["agent_refs_missing_entry"], 1)
         finding = next(item for item in data["findings"] if item["id"].startswith("agent-missing:"))
         self.assertEqual(finding["severity"], "high")
+
+    def test_registered_agents_and_config_keys_do_not_create_missing_refs(self):
+        _write(
+            self.project / "core" / "agents" / "routing_config.py",
+            "from .content import ContentWriterAgent\n"
+            "from .social import SocialMediaAgent\n"
+            "AGENT_MAP = {'content_writer': ContentWriterAgent, 'social_media': SocialMediaAgent}\n",
+        )
+        _write(
+            self.project / "core" / "agents" / "__init__.py",
+            "from .routing_config import AGENT_MAP\n"
+            "from .content import ContentWriterAgent\n"
+            "from .social import SocialMediaAgent\n",
+        )
+        _write(
+            self.project / "core" / "agent_usage.py",
+            "AGENT_MAP.get('ContentWriterAgent')\n"
+            "AGENT_MAP.get('SocialMediaAgent')\n"
+            "AGENT_MAP.get('owner')\n"
+            "AGENT_MAP.get('priority')\n"
+            "AGENT_MAP.get('merge')\n"
+            "AGENT_MAP.get('hold_hours')\n",
+        )
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["agent_refs_missing_entry"], 0)
+        self.assertFalse(any(item["id"].startswith("agent-missing:") for item in data["findings"]))
+
+    def test_existing_ats_endpoint_is_not_missing(self):
+        _write(self.project / "core" / "urls.py", "from django.urls import path\nurlpatterns = [path('api/ats/', view)]\n")
+        _write(self.project / "frontend" / "src" / "app.tsx", "fetch('/api/ats/')\n")
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["missing_backend_endpoints"], 0)
+        self.assertFalse(any(item["id"].startswith("missing-target:/api/ats") for item in data["findings"]))
+
+    def test_beat_setup_reference_to_existing_task_is_not_missing(self):
+        _write(
+            self.project / "core" / "tasks.py",
+            "from celery import shared_task\n\n"
+            "@shared_task\ndef workspace_autopilot_conductor():\n    return 1\n",
+        )
+        _write(
+            self.project / "core" / "celery.py",
+            "from celery import Celery\n"
+            "app = Celery('demo')\n"
+            "app.conf.beat_schedule = {'workspace_autopilot_conductor': {'task': 'core.tasks.workspace_autopilot_conductor', 'schedule': 10}}\n"
+            "PeriodicTask.objects.create(name='Workspace Autopilot Conductor', task='core.tasks.workspace_autopilot_conductor')\n",
+        )
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["task_refs_missing_definition"], 0)
+        self.assertFalse(any(item["id"].startswith("task-missing:") for item in data["findings"]))
+
+    def test_demo_and_testing_sources_are_ignored(self):
+        _write(self.project / "core" / "urls.py", "from django.urls import path\nurlpatterns = [path('api/ping/', view)]\n")
+        _write(self.project / "frontend" / "src" / "app.tsx", "fetch('/api/ping/')\n")
+        _write(
+            self.project / "mobile" / "src" / "demo" / "demoData.ts",
+            "fetch('/api/missing-demo/')\nAGENT_MAP.get('merge')\n",
+        )
+        _write(
+            self.project / "scripts" / "testing" / "smoke.ts",
+            "fetch('/api/missing-testing/')\nAGENT_MAP.get('owner')\n",
+        )
+        _write(
+            self.project / "docs" / "notes.md",
+            "fetch('/api/missing-docs/')\nAGENT_MAP.get('priority')\n",
+        )
+        _write(
+            self.project / "archive" / "old.md",
+            "fetch('/api/missing-archive/')\n",
+        )
+        _write(
+            self.project / "external-project-docs" / "ref.md",
+            "fetch('/api/missing-external/')\n",
+        )
+        _write(
+            self.project / ".rag" / "snippet.md",
+            "fetch('/api/missing-rag/')\n",
+        )
+        self._add_all()
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["missing_backend_endpoints"], 0)
+        self.assertEqual(data["summary"]["agent_refs_missing_entry"], 0)
+        self.assertEqual(data["summary"]["task_refs_missing_definition"], 0)
 
 
 class TestConnectionsScope(_GitRepo):

@@ -22,12 +22,28 @@ _CONNECTION_SCOPES = ("backend", "frontend", "mobile", "agents", "spiders", "cel
 _DISCLAIMER = "This is a wiring audit, not a correctness proof."
 _SEVERITY_ORDER = ("high", "medium", "advisory")
 
+_IGNORED_CONNECTION_PREFIXES = (
+    "docs/",
+    "archive/",
+    "external-project-docs/",
+    ".rag/",
+    "tests/",
+    "scripts/testing/",
+    "mobile/src/demo/",
+)
+
 _BACKEND_PREFIXES = ("core/", "backend/", "app/", "api/")
 _FRONTEND_PREFIXES = ("frontend/", "web/", "client/", "ui/")
 _MOBILE_PREFIXES = ("mobile/", "android/", "ios/", "react-native/", "react_native/")
 _AGENT_PREFIXES = ("core/agents/", "agents/")
 _SPIDER_PREFIXES = ("ai_core/spiders/", "spiders/")
 _CELERY_PREFIXES = ("core/celery.py", "core/tasks", "core/schedulers.py")
+
+_AGENT_NAME_RE = re.compile(r"^[A-Z][A-Za-z0-9]*Agent$")
+_AGENT_NAME_SCAN_RE = re.compile(r"\b[A-Z][A-Za-z0-9]*Agent\b")
+_SPIDER_NAME_RE = re.compile(r"^(?:[A-Z][A-Za-z0-9]*Spider|SpiderData)$")
+_SPIDER_NAME_SCAN_RE = re.compile(r"\b(?:[A-Z][A-Za-z0-9]*Spider|SpiderData)\b")
+_TASK_NAME_SEGMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _ROUTE_RE = re.compile(r"""(?i)\b(?:path|re_path|url)\s*\(\s*(?:r)?(['"])(?P<route>.+?)\1""")
 _FETCH_RE = re.compile(r"(?i)\b(fetch|axios\.(?:get|post|put|patch|delete|request)|client\.(?:get|post|put|patch|delete|request)|http(?:Client)?\.(?:get|post|put|patch|delete|request)|apiClient\.(?:get|post|put|patch|delete|request)|requests\.(?:get|post|put|patch|delete|request)|send_task|signature)\s*\(")
@@ -96,11 +112,11 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
     frontend_endpoints: list[dict] = []
     mobile_endpoints: list[dict] = []
     task_defs: dict[str, str] = {}
-    task_refs: list[dict] = []
-    agent_defs: dict[str, str] = {}
-    agent_refs: list[dict] = []
-    spider_defs: dict[str, str] = {}
-    spider_refs: list[dict] = []
+    raw_task_refs: list[dict] = []
+    agent_known_names: set[str] = set()
+    raw_agent_refs: list[dict] = []
+    spider_known_names: set[str] = set()
+    raw_spider_refs: list[dict] = []
     dynamic_refs: list[dict] = []
 
     for path, _size in sized:
@@ -110,6 +126,8 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
             continue
 
         rel = _rel(project, path)
+        if not _is_connection_source(rel):
+            continue
         backend_routes.extend(_extract_backend_routes(rel, text))
         frontend_refs = _extract_endpoint_refs(rel, text, kind="frontend")
         mobile_refs = _extract_endpoint_refs(rel, text, kind="mobile")
@@ -117,11 +135,15 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
         mobile_endpoints.extend(mobile_refs)
         dynamic_refs.extend([ref for ref in frontend_refs + mobile_refs if ref["endpoint"] == "<dynamic>"])
         task_defs.update(_extract_task_defs(rel, text))
-        task_refs.extend(_extract_task_refs(rel, text))
-        agent_defs.update(_extract_registry_defs(rel, text, kind="agents"))
-        agent_refs.extend(_extract_registry_refs(rel, text, kind="agents"))
-        spider_defs.update(_extract_registry_defs(rel, text, kind="spiders"))
-        spider_refs.extend(_extract_registry_refs(rel, text, kind="spiders"))
+        raw_task_refs.extend(_extract_task_refs(rel, text))
+        agent_known_names.update(_extract_known_registry_names(rel, text, kind="agents"))
+        raw_agent_refs.extend(_extract_registry_refs(rel, text, kind="agents"))
+        spider_known_names.update(_extract_known_registry_names(rel, text, kind="spiders"))
+        raw_spider_refs.extend(_extract_registry_refs(rel, text, kind="spiders"))
+
+    task_refs = [ref for ref in raw_task_refs if _looks_like_task_reference(ref["name"], task_defs.keys())]
+    agent_refs = [ref for ref in raw_agent_refs if _looks_like_agent_reference(ref["name"], agent_known_names)]
+    spider_refs = [ref for ref in raw_spider_refs if _looks_like_spider_reference(ref["name"], spider_known_names)]
 
     findings: list[ConnectionFinding] = []
 
@@ -199,7 +221,7 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
         )
 
     for ref in agent_refs:
-        if ref["name"] in agent_defs:
+        if ref["name"] in agent_known_names:
             continue
         findings.append(
             ConnectionFinding(
@@ -214,7 +236,7 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
         )
 
     for ref in spider_refs:
-        if ref["name"] in spider_defs:
+        if ref["name"] in spider_known_names:
             continue
         findings.append(
             ConnectionFinding(
@@ -344,34 +366,6 @@ def _extract_task_refs(file_path: str, text: str) -> list[dict]:
     return out
 
 
-def _extract_registry_defs(file_path: str, text: str, *, kind: str) -> dict[str, str]:
-    names = _agent_registry_names() if kind == "agents" else _spider_registry_names()
-    defs: dict[str, str] = {}
-    lines = text.splitlines()
-    capture = False
-    current_name = None
-    brace_depth = 0
-    for line in lines:
-        if not capture:
-            m = _REGISTRY_DEF_LINE_RE.search(line)
-            if not m or m.group("name") not in names:
-                continue
-            capture = True
-            current_name = m.group("name")
-            brace_depth = line.count("{") - line.count("}")
-            defs.update(_extract_string_dict_keys(line, file_path))
-            if brace_depth <= 0:
-                capture = False
-                current_name = None
-            continue
-        defs.update(_extract_string_dict_keys(line, file_path))
-        brace_depth += line.count("{") - line.count("}")
-        if brace_depth <= 0:
-            capture = False
-            current_name = None
-    return defs
-
-
 def _extract_registry_refs(file_path: str, text: str, *, kind: str) -> list[dict]:
     out: list[dict] = []
     names = _agent_registry_names() if kind == "agents" else _spider_registry_names()
@@ -380,6 +374,40 @@ def _extract_registry_refs(file_path: str, text: str, *, kind: str) -> list[dict
         for match in pattern.finditer(line):
             out.append({"file": file_path, "line": line_no, "name": match.group("key"), "evidence": f"{line_no}: {line.strip()}"})
     return out
+
+
+def _extract_known_registry_names(file_path: str, text: str, *, kind: str) -> set[str]:
+    lowered = file_path.lower()
+    if kind == "agents" and not (lowered.startswith(_AGENT_PREFIXES) or "agent" in lowered):
+        return set()
+    if kind == "spiders" and not (lowered.startswith(_SPIDER_PREFIXES) or "spider" in lowered):
+        return set()
+
+    scan_pattern = _AGENT_NAME_SCAN_RE if kind == "agents" else _SPIDER_NAME_SCAN_RE
+    registry_names = _agent_registry_names() if kind == "agents" else _spider_registry_names()
+    names: set[str] = set()
+    capture = False
+    brace_depth = 0
+    for line in text.splitlines():
+        if capture:
+            names.update(match.group(0) for match in scan_pattern.finditer(line))
+            brace_depth += line.count("{") - line.count("}")
+            if brace_depth <= 0:
+                capture = False
+            continue
+
+        match = _REGISTRY_DEF_LINE_RE.search(line)
+        if match and match.group("name") in registry_names:
+            capture = True
+            brace_depth = line.count("{") - line.count("}")
+            names.update(match.group(0) for match in scan_pattern.finditer(line))
+            if brace_depth <= 0:
+                capture = False
+            continue
+
+        if "__all__" in line or re.search(r"(?i)^\s*from\s+.+\s+import\s+", line):
+            names.update(match.group(0) for match in scan_pattern.finditer(line))
+    return names
 
 
 def _extract_string_dict_keys(line: str, file_path: str) -> dict[str, str]:
@@ -392,18 +420,21 @@ def _extract_string_dict_keys(line: str, file_path: str) -> dict[str, str]:
 def _route_matches(route: str, endpoint: str) -> bool:
     if endpoint == "<dynamic>":
         return False
-    a = _normalize_endpoint(route)
-    b = _normalize_endpoint(endpoint)
+    a = _normalize_endpoint(route).rstrip("/")
+    b = _normalize_endpoint(endpoint).rstrip("/")
     if not a or not b:
         return False
     if a == b:
         return True
-    return a.startswith(b.rstrip("/") + "/") or b.startswith(a.rstrip("/") + "/")
+    if a == "/":
+        return b == "/"
+    if b == "/":
+        return a == "/"
+    return a.startswith(b + "/") or b.startswith(a + "/")
 
 
 def _normalize_route(route: str) -> str:
     route = route.strip()
-    route = route.lstrip("r").strip()
     if route.startswith("^"):
         route = route[1:]
     if route.endswith("$"):
@@ -442,6 +473,31 @@ def _normalize_endpoint(endpoint: str) -> str:
 
 def _looks_like_endpoint(url: str) -> bool:
     return url.startswith("/") or url.startswith("http://") or url.startswith("https://")
+
+
+def _is_connection_source(rel_path: str) -> bool:
+    lowered = rel_path.lower()
+    return not lowered.startswith(_IGNORED_CONNECTION_PREFIXES)
+
+
+def _looks_like_task_reference(name: str, known_task_names: set[str]) -> bool:
+    if name in known_task_names:
+        return True
+    if not name or any(ch.isspace() for ch in name):
+        return False
+    if name.startswith(("http://", "https://")):
+        return False
+    if "." in name:
+        return all(_TASK_NAME_SEGMENT_RE.fullmatch(part) for part in name.split("."))
+    return "_" in name
+
+
+def _looks_like_agent_reference(name: str, known_agent_names: set[str]) -> bool:
+    return name in known_agent_names or bool(_AGENT_NAME_RE.fullmatch(name))
+
+
+def _looks_like_spider_reference(name: str, known_spider_names: set[str]) -> bool:
+    return name in known_spider_names or bool(_SPIDER_NAME_RE.fullmatch(name))
 
 
 def _connection_scope_matches(project: Path, path: Path, scope: str) -> bool:
