@@ -47,13 +47,14 @@ _TASK_NAME_SEGMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _ROUTE_RE = re.compile(r"""(?i)\b(?:path|re_path|url)\s*\(\s*(?:r)?(['"])(?P<route>.+?)\1""")
 _FETCH_RE = re.compile(r"(?i)\b(fetch|axios\.(?:get|post|put|patch|delete|request)|client\.(?:get|post|put|patch|delete|request)|http(?:Client)?\.(?:get|post|put|patch|delete|request)|apiClient\.(?:get|post|put|patch|delete|request)|requests\.(?:get|post|put|patch|delete|request)|send_task|signature)\s*\(")
-_URL_LITERAL_RE = re.compile(r"""(['"])(?P<url>/(?:[^'"]+)|https?://[^'"]+)\1""")
+_URL_LITERAL_RE = re.compile(r"""(['"])(?P<url>(?:https?://[^'"]+|/?api/[^'"]+|/(?:[^'"]+)))\1""")
 _TASK_DEF_DECORATOR_RE = re.compile(r"(?i)@(?:shared_task|app\.task|celery(?:_app)?\.task)\b")
 _TASK_DEF_NAME_RE = re.compile(r"(?i)name\s*=\s*['\"](?P<name>[^'\"]+)['\"]")
 _DEF_RE = re.compile(r"(?i)^\s*def\s+(?P<name>[A-Za-z_]\w*)\s*\(")
 _TASK_REF_RE = re.compile(r"""(?i)\b(?:send_task|signature)\s*\(\s*['"](?P<name>[^'"]+)['"]|task\s*:\s*['"](?P<task>[^'"]+)['"]""")
 _REGISTRY_DEF_LINE_RE = re.compile(r"(?i)^\s*(?P<name>AGENT_MAP|agent_map|AGENT_REGISTRY|registry|REGISTRY|SpiderData|SPIDER_MAP|spider_map|spider_registry)\s*=\s*\{(?P<body>.*)$")
 _REGISTRY_REF_RE = re.compile(r"(?i)\b(?P<name>AGENT_MAP|agent_map|AGENT_REGISTRY|registry|REGISTRY|SpiderData|SPIDER_MAP|spider_map|spider_registry)\s*(?:\.get\s*\(\s*|\[\s*)(['\"])(?P<key>[^'\"]+)\2")
+_ROUTER_REGISTER_RE = re.compile(r"""(?i)\b(?:[A-Za-z_]\w*\.)?register\s*\(\s*(?:prefix\s*=\s*)?(?:r)?(['"])(?P<route>[^'"]+)\1""")
 _MAIN_RE = re.compile(r"(?i)\bdef\s+main\s*\(")
 _HANDLE_RE = re.compile(r"(?i)\bdef\s+handle\s*\(")
 _DISPATCH_RE = re.compile(r"(?i)\bdef\s+(?:dispatch|route|router|controller)\w*\s*\(")
@@ -104,11 +105,13 @@ def run_connections(args: argparse.Namespace) -> int:
 
 
 def collect_connections(project: Path, *, scope: str | None = None) -> ConnectionReport:
-    files = _collect_files(project)[0]
+    all_files = _collect_files(project)[0]
+    scoped_files = all_files
     if scope is not None:
-        files = [path for path in files if _connection_scope_matches(project, path, scope)]
+        scoped_files = [path for path in all_files if _connection_scope_matches(project, path, scope)]
 
-    sized = _with_sizes(files)
+    sized = _with_sizes(scoped_files)
+    backend_sized = _with_sizes(all_files)
     backend_routes: list[dict] = []
     frontend_endpoints: list[dict] = []
     mobile_endpoints: list[dict] = []
@@ -120,7 +123,7 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
     raw_spider_refs: list[dict] = []
     dynamic_refs: list[dict] = []
 
-    for path, _size in sized:
+    for path, _size in backend_sized:
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
@@ -130,6 +133,16 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
         if not _is_connection_source(rel):
             continue
         backend_routes.extend(_extract_backend_routes(rel, text))
+
+    for path, _size in sized:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        rel = _rel(project, path)
+        if not _is_connection_source(rel):
+            continue
         frontend_refs = _extract_endpoint_refs(rel, text, kind="frontend")
         mobile_refs = _extract_endpoint_refs(rel, text, kind="mobile")
         frontend_endpoints.extend(frontend_refs)
@@ -154,7 +167,7 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
         matched_refs = [ref for ref in frontend_endpoints + mobile_endpoints if _route_matches(route_text, ref["endpoint"])]
         if matched_refs:
             backend_matches[route_text].extend(matched_refs)
-        else:
+        elif scope != "frontend":
             route_role = classify_route_role(route_text)
             severity = "advisory" if route_role in {"admin", "health", "monitoring", "internal_api", "docs"} else "medium"
             findings.append(
@@ -283,17 +296,22 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
 
 
 def _extract_backend_routes(file_path: str, text: str) -> list[dict]:
-    if not file_path.endswith("urls.py"):
+    if not file_path.endswith(".py"):
         return []
     out: list[dict] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
-        match = _ROUTE_RE.search(line)
-        if not match:
-            continue
-        route = _normalize_route(match.group("route"))
-        if not route:
-            continue
-        out.append({"file": file_path, "line": line_no, "route": route, "evidence": f"{line_no}: {line.strip()}"})
+        if file_path.endswith("urls.py"):
+            match = _ROUTE_RE.search(line)
+            if match:
+                route = _normalize_route(match.group("route"))
+                if route:
+                    out.append({"file": file_path, "line": line_no, "route": route, "evidence": f"{line_no}: {line.strip()}"})
+
+        match = _ROUTER_REGISTER_RE.search(line)
+        if match:
+            route = _normalize_route(match.group("route"))
+            if route:
+                out.append({"file": file_path, "line": line_no, "route": route, "evidence": f"{line_no}: {line.strip()}"})
     return out
 
 
@@ -476,7 +494,7 @@ def _normalize_endpoint(endpoint: str) -> str:
 
 
 def _looks_like_endpoint(url: str) -> bool:
-    return url.startswith("/") or url.startswith("http://") or url.startswith("https://")
+    return url.startswith("/") or url.startswith("api/") or url.startswith("http://") or url.startswith("https://")
 
 
 def _is_connection_source(rel_path: str) -> bool:

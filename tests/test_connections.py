@@ -16,7 +16,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from cli.connections import classify_route_role, run_connections  # noqa: E402
+from cli.connections import (  # noqa: E402
+    _extract_backend_routes,
+    _extract_endpoint_refs,
+    _route_matches,
+    collect_connections,
+    classify_route_role,
+    run_connections,
+)
 
 
 def _args(project: Path, *, json_out: bool = False, scope: str | None = None) -> argparse.Namespace:
@@ -89,6 +96,63 @@ class TestConnectionsSignals(_GitRepo):
         data = json.loads(out)
         self.assertEqual(data["summary"]["missing_backend_endpoints"], 0)
         self.assertEqual(data["summary"]["orphaned_backend_routes"], 0)
+
+    def test_detects_normalized_frontend_calls_against_django_routes(self):
+        _write(
+            self.project / "core" / "urls.py",
+            "from django.urls import path\n"
+            "urlpatterns = [\n"
+            "    path('api/ats/analyze/', ATSAnalyzeView.as_view(), name='ats-analyze'),\n"
+            "    path('api/ats/generate-summary/', ATSGenerateSummaryView.as_view(), name='ats-generate-summary'),\n"
+            "    path('api/autonomous/skill-gaps/', skill_gap_api, name='skill-gaps'),\n"
+            "    path('api/autonomous/viral-predictions/', viral_predictions_api, name='viral-predictions'),\n"
+            "    path('api/bpaas/create-from-packet/', create_from_packet, name='bpaas-create-from-packet'),\n"
+            "]\n",
+        )
+        _write(
+            self.project / "frontend" / "src" / "app.tsx",
+            "fetch('/api/ats/analyze/', { method: 'POST' })\n"
+            "fetch('/api/ats/generate-summary/', { method: 'POST' })\n"
+            "fetch('/api/autonomous/skill-gaps/?limit=50', { credentials: 'include' })\n"
+            "fetch('/api/autonomous/viral-predictions/?limit=50', { credentials: 'include' })\n"
+            "fetch('/api/bpaas/create-from-packet/', { method: 'POST' })\n",
+        )
+        self._add_all()
+
+        backend_routes = _extract_backend_routes("core/urls.py", (self.project / "core" / "urls.py").read_text(encoding="utf-8"))
+        frontend_refs = _extract_endpoint_refs(
+            "frontend/src/app.tsx",
+            (self.project / "frontend" / "src" / "app.tsx").read_text(encoding="utf-8"),
+            kind="frontend",
+        )
+        self.assertEqual([route["route"] for route in backend_routes], [
+            "/api/ats/analyze/",
+            "/api/ats/generate-summary/",
+            "/api/autonomous/skill-gaps/",
+            "/api/autonomous/viral-predictions/",
+            "/api/bpaas/create-from-packet/",
+        ])
+        self.assertEqual([ref["endpoint"] for ref in frontend_refs], [
+            "/api/ats/analyze",
+            "/api/ats/generate-summary",
+            "/api/autonomous/skill-gaps",
+            "/api/autonomous/viral-predictions",
+            "/api/bpaas/create-from-packet",
+        ])
+        self.assertTrue(all(_route_matches(route["route"], ref["endpoint"]) for route, ref in zip(backend_routes, frontend_refs)))
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["missing_backend_endpoints"], 0)
+        for endpoint in (
+            "/api/ats/analyze",
+            "/api/ats/generate-summary",
+            "/api/autonomous/skill-gaps",
+            "/api/autonomous/viral-predictions",
+            "/api/bpaas/create-from-packet",
+        ):
+            self.assertFalse(any(item["id"] == f"missing-target:{endpoint}" for item in data["findings"]))
 
     def test_detects_frontend_api_call_missing_route(self):
         _write(self.project / "frontend" / "src" / "app.tsx", "fetch('/api/missing/')\n")
@@ -297,8 +361,32 @@ class TestConnectionsScope(_GitRepo):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["scope"], "frontend")
-        self.assertEqual(data["summary"]["backend_routes"], 0)
+        self.assertEqual(data["summary"]["backend_routes"], 1)
         self.assertEqual(data["summary"]["frontend_endpoints"], 1)
+        self.assertEqual(data["summary"]["missing_backend_endpoints"], 0)
+
+    def test_frontend_scope_keeps_backend_routes_for_matching(self):
+        _write(
+            self.project / "core" / "urls.py",
+            "from django.urls import path\nurlpatterns = [path('api/ats/analyze/', ATSAnalyzeView.as_view(), name='ats-analyze')]\n",
+        )
+        _write(
+            self.project / "frontend" / "src" / "app.tsx",
+            "fetch('/api/ats/analyze/', { method: 'POST' })\n",
+        )
+        self._add_all()
+
+        report = collect_connections(self.project, scope="frontend")
+        self.assertEqual([route["route"] for route in report.backend_routes], ["/api/ats/analyze/"])
+        self.assertEqual([ref["endpoint"] for ref in report.frontend_endpoints], ["/api/ats/analyze"])
+        self.assertFalse(any(item.category == "missing_target" and item.title == "Missing backend endpoint" for item in report.findings))
+
+        rc, out = _run(self.project, json_out=True, scope="frontend")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["backend_routes"], 1)
+        self.assertEqual(data["summary"]["missing_backend_endpoints"], 0)
+        self.assertFalse(any(item["id"] == "missing-target:/api/ats/analyze" for item in data["findings"]))
 
     def test_invalid_scope_errors_clearly(self):
         rc, out = _run(self.project, scope="bogus")
