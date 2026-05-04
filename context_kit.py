@@ -508,6 +508,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Restrict behavior scanning to a named inspect scope (core, celery, agents, spiders, docs-rag)",
     )
 
+    # connections
+    connections = sub.add_parser(
+        "connections",
+        help="Audit wiring between backend routes, frontend/mobile clients, tasks, agents, and spiders",
+        description=(
+            "Walk tracked files and look for connection surfaces: Django urls.py "
+            "routes, DRF views/viewsets, serializers, frontend/mobile API calls, "
+            "Celery task references, management commands, agent maps, and spider "
+            "registries. This is a wiring audit, not a correctness proof."
+        ),
+    )
+    connections.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Project root to inspect (default: current working directory)",
+    )
+    connections.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON to stdout",
+    )
+    connections.add_argument(
+        "--scope",
+        help="Restrict connection scanning to a named subsystem (backend, frontend, mobile, agents, spiders, celery)",
+    )
+
     # verify
     verify = sub.add_parser(
         "verify",
@@ -775,6 +802,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "behavior":
         from cli.behavior import run_behavior
         return run_behavior(args)
+
+    if args.command == "connections":
+        from cli.connections import run_connections
+        return run_connections(args)
 
     if args.command == "verify":
         from cli.verify import run_verify
