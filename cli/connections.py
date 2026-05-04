@@ -45,7 +45,7 @@ _SPIDER_NAME_RE = re.compile(r"^(?:[A-Z][A-Za-z0-9]*Spider|SpiderData)$")
 _SPIDER_NAME_SCAN_RE = re.compile(r"\b(?:[A-Z][A-Za-z0-9]*Spider|SpiderData)\b")
 _TASK_NAME_SEGMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-_ROUTE_RE = re.compile(r"""(?i)\b(?:path|re_path|url)\s*\(\s*(?:r)?(['"])(?P<route>.+?)\1""")
+_ROUTE_RE = re.compile(r"""(?i)\b(?:path|re_path|url)\s*\(\s*(?:r)?(['"])(?P<route>[^'"]*)\1""")
 _FETCH_RE = re.compile(r"(?i)\b(fetch|axios\.(?:get|post|put|patch|delete|request)|client\.(?:get|post|put|patch|delete|request)|http(?:Client)?\.(?:get|post|put|patch|delete|request)|apiClient\.(?:get|post|put|patch|delete|request)|requests\.(?:get|post|put|patch|delete|request)|send_task|signature)\s*\(")
 _URL_LITERAL_RE = re.compile(r"""(['"])(?P<url>(?:https?://[^'"]+|/?api/[^'"]+|/(?:[^'"]+)))\1""")
 _TASK_DEF_DECORATOR_RE = re.compile(r"(?i)@(?:shared_task|app\.task|celery(?:_app)?\.task)\b")
@@ -160,6 +160,7 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
     spider_refs = [ref for ref in raw_spider_refs if _looks_like_spider_reference(ref["name"], spider_known_names)]
 
     findings: list[ConnectionFinding] = []
+    emit_orphan_backend_routes = scope in (None, "backend")
 
     backend_matches = defaultdict(list)
     for route in backend_routes:
@@ -167,7 +168,7 @@ def collect_connections(project: Path, *, scope: str | None = None) -> Connectio
         matched_refs = [ref for ref in frontend_endpoints + mobile_endpoints if _route_matches(route_text, ref["endpoint"])]
         if matched_refs:
             backend_matches[route_text].extend(matched_refs)
-        elif scope != "frontend":
+        elif emit_orphan_backend_routes:
             route_role = classify_route_role(route_text)
             severity = "advisory" if route_role in {"admin", "health", "monitoring", "internal_api", "docs"} else "medium"
             findings.append(
@@ -303,14 +304,16 @@ def _extract_backend_routes(file_path: str, text: str) -> list[dict]:
         if file_path.endswith("urls.py"):
             match = _ROUTE_RE.search(line)
             if match:
-                route = _normalize_route(match.group("route"))
-                if route:
+                raw_route = match.group("route")
+                route = _normalize_route(raw_route)
+                if _is_valid_backend_route(raw_route, route):
                     out.append({"file": file_path, "line": line_no, "route": route, "evidence": f"{line_no}: {line.strip()}"})
 
         match = _ROUTER_REGISTER_RE.search(line)
         if match:
-            route = _normalize_route(match.group("route"))
-            if route:
+            raw_route = match.group("route")
+            route = _normalize_route(raw_route)
+            if _is_valid_backend_route(raw_route, route):
                 out.append({"file": file_path, "line": line_no, "route": route, "evidence": f"{line_no}: {line.strip()}"})
     return out
 
@@ -475,6 +478,30 @@ def _normalize_route(route: str) -> str:
     if route != "/" and not route.endswith("/"):
         route += "/"
     return route
+
+
+def _is_valid_backend_route(raw_route: str, normalized_route: str) -> bool:
+    raw = raw_route.strip()
+    normalized = normalized_route.strip()
+    if not normalized:
+        return False
+    if normalized == "/":
+        return raw == "" or raw == "/"
+    if any(token in raw for token in ("include", ".as_view", ",", "'", '"')):
+        return False
+    if any(ch in normalized for ch in ("'", '"', ",", " ", "\t", "\n", "\r")):
+        return False
+    if normalized.count("(") != normalized.count(")"):
+        return False
+    if normalized.count("[") != normalized.count("]"):
+        return False
+    if normalized.count("{") != normalized.count("}"):
+        return False
+    if any(token in normalized for token in ("//", "/,", "/'", '/"')):
+        return False
+    if normalized != "/" and not normalized.startswith("/"):
+        return False
+    return True
 
 
 def _normalize_endpoint(endpoint: str) -> str:

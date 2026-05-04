@@ -379,14 +379,65 @@ class TestConnectionsScope(_GitRepo):
         report = collect_connections(self.project, scope="frontend")
         self.assertEqual([route["route"] for route in report.backend_routes], ["/api/ats/analyze/"])
         self.assertEqual([ref["endpoint"] for ref in report.frontend_endpoints], ["/api/ats/analyze"])
+        self.assertEqual(report.summary["orphaned_backend_routes"], 0)
         self.assertFalse(any(item.category == "missing_target" and item.title == "Missing backend endpoint" for item in report.findings))
+        self.assertFalse(any(item.category == "orphaned_route" for item in report.findings))
 
         rc, out = _run(self.project, json_out=True, scope="frontend")
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["summary"]["backend_routes"], 1)
+        self.assertEqual(data["summary"]["orphaned_backend_routes"], 0)
         self.assertEqual(data["summary"]["missing_backend_endpoints"], 0)
+        self.assertFalse(any(item["category"] == "orphaned_route" for item in data["findings"]))
         self.assertFalse(any(item["id"] == "missing-target:/api/ats/analyze" for item in data["findings"]))
+
+    def test_agents_scope_keeps_clean_backend_routes(self):
+        _write(
+            self.project / "core" / "urls.py",
+            "from django.urls import include, path, re_path\n"
+            "urlpatterns = [\n"
+            "    path('', include('core.urls_unified')),\n"
+            "    path('', lambda request: render(request, 'home.html'), name='home'),\n"
+            "    path('api/foo/', include('core.api.urls')),\n"
+            "    path('dashboard/', TruthDashboardView.as_view(), name='dashboard'),\n"
+            "    re_path(r'^(?!api/|admin/|media/|static/|ws/|health/)(?!.*\\\\.\\\\w{1,10}(?:/|$)).*$', react_app, name='react-app'),\n"
+            "]\n",
+        )
+        self._add_all()
+
+        report = collect_connections(self.project, scope="agents")
+        routes = [item["route"] for item in report.backend_routes]
+        self.assertIn("/", routes)
+        self.assertIn("/api/foo/", routes)
+        self.assertIn("/dashboard/", routes)
+        self.assertEqual(report.summary["orphaned_backend_routes"], 0)
+        self.assertFalse(any(item.category == "orphaned_route" for item in report.findings))
+        self.assertFalse(any("include" in route or ".as_view" in route for route in routes))
+        self.assertFalse(any(any(ch in route for ch in ("'", '"', ",")) for route in routes))
+
+        rc, out = _run(self.project, json_out=True, scope="agents")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["backend_routes"], 4)
+        self.assertEqual(data["summary"]["orphaned_backend_routes"], 0)
+        self.assertFalse(any(item["category"] == "orphaned_route" for item in data["findings"]))
+
+    def test_backend_scope_still_emits_orphan_routes(self):
+        _write(self.project / "core" / "urls.py", "from django.urls import path\nurlpatterns = [path('api/ping/', view)]\n")
+        self._add_all()
+
+        report = collect_connections(self.project, scope="backend")
+        self.assertEqual(report.summary["backend_routes"], 1)
+        self.assertEqual(report.summary["orphaned_backend_routes"], 1)
+        self.assertTrue(any(item.category == "orphaned_route" for item in report.findings))
+
+        rc, out = _run(self.project, json_out=True, scope="backend")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["backend_routes"], 1)
+        self.assertEqual(data["summary"]["orphaned_backend_routes"], 1)
+        self.assertTrue(any(item["category"] == "orphaned_route" for item in data["findings"]))
 
     def test_invalid_scope_errors_clearly(self):
         rc, out = _run(self.project, scope="bogus")
