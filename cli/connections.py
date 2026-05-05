@@ -55,6 +55,7 @@ _TASK_REF_RE = re.compile(r"""(?i)\b(?:send_task|signature)\s*\(\s*['"](?P<name>
 _REGISTRY_DEF_LINE_RE = re.compile(r"(?i)^\s*(?P<name>AGENT_MAP|agent_map|AGENT_REGISTRY|registry|REGISTRY|SpiderData|SPIDER_MAP|spider_map|spider_registry)\s*=\s*\{(?P<body>.*)$")
 _REGISTRY_REF_RE = re.compile(r"(?i)\b(?P<name>AGENT_MAP|agent_map|AGENT_REGISTRY|registry|REGISTRY|SpiderData|SPIDER_MAP|spider_map|spider_registry)\s*(?:\.get\s*\(\s*|\[\s*)(['\"])(?P<key>[^'\"]+)\2")
 _ROUTER_REGISTER_RE = re.compile(r"""(?i)\b(?:[A-Za-z_]\w*\.)?register\s*\(\s*(?:prefix\s*=\s*)?(?:r)?(['"])(?P<route>[^'"]+)\1""")
+_FASTAPI_ROUTE_DECORATOR_RE = re.compile(r"""(?i)^\s*@(?:[A-Za-z_]\w*\.)?(?:get|post|put|patch|delete)\s*\(\s*(?:r)?(['"])(?P<route>[^'"]*)\1""")
 _MAIN_RE = re.compile(r"(?i)\bdef\s+main\s*\(")
 _HANDLE_RE = re.compile(r"(?i)\bdef\s+handle\s*\(")
 _DISPATCH_RE = re.compile(r"(?i)\bdef\s+(?:dispatch|route|router|controller)\w*\s*\(")
@@ -310,6 +311,13 @@ def _extract_backend_routes(file_path: str, text: str) -> list[dict]:
                     out.append({"file": file_path, "line": line_no, "route": route, "evidence": f"{line_no}: {line.strip()}"})
 
         match = _ROUTER_REGISTER_RE.search(line)
+        if match:
+            raw_route = match.group("route")
+            route = _normalize_route(raw_route)
+            if _is_valid_backend_route(raw_route, route):
+                out.append({"file": file_path, "line": line_no, "route": route, "evidence": f"{line_no}: {line.strip()}"})
+
+        match = _FASTAPI_ROUTE_DECORATOR_RE.search(line)
         if match:
             raw_route = match.group("route")
             route = _normalize_route(raw_route)

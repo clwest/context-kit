@@ -154,6 +154,42 @@ class TestConnectionsSignals(_GitRepo):
         ):
             self.assertFalse(any(item["id"] == f"missing-target:{endpoint}" for item in data["findings"]))
 
+    def test_detects_fastapi_routes_and_matches_frontend_calls(self):
+        _write(
+            self.project / "backend" / "app" / "main.py",
+            "from fastapi import FastAPI\n"
+            "app = FastAPI()\n"
+            "@app.post('/api/auth/login')\n"
+            "def login():\n"
+            "    return {'ok': True}\n",
+        )
+        _write(
+            self.project / "frontend" / "src" / "app.tsx",
+            "fetch('/api/auth/login', { method: 'POST' })\n",
+        )
+        self._add_all()
+
+        backend_routes = _extract_backend_routes("backend/app/main.py", (self.project / "backend" / "app" / "main.py").read_text(encoding="utf-8"))
+        self.assertEqual([route["route"] for route in backend_routes], ["/api/auth/login/"])
+
+        rc, out = _run(self.project, json_out=True)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["backend_routes"], 1)
+        self.assertEqual(data["summary"]["missing_backend_endpoints"], 0)
+        self.assertFalse(any(item["id"] == "missing-target:/api/auth/login" for item in data["findings"]))
+
+    def test_extracts_fastapi_router_decorators(self):
+        text = (
+            "from fastapi import APIRouter\n"
+            "router = APIRouter()\n"
+            "@router.get('/api/auth/me')\n"
+            "def me():\n"
+            "    return {'user': 'me'}\n"
+        )
+        routes = _extract_backend_routes("backend/app/main.py", text)
+        self.assertEqual([route["route"] for route in routes], ["/api/auth/me/"])
+
     def test_detects_frontend_api_call_missing_route(self):
         _write(self.project / "frontend" / "src" / "app.tsx", "fetch('/api/missing/')\n")
         self._add_all()
