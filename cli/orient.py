@@ -84,6 +84,39 @@ def render_orient(project: Path, *, short: bool = False) -> str:
     return "\n\n".join(s for s in sections if s)
 
 
+def render_chat_orient(project: Path) -> str:
+    """Return a compact orientation block for chat prompts.
+
+    Chat should keep the high-signal project rules but avoid dumping the
+    full inventory preview when it would add boilerplate instead of
+    grounding. The block is intentionally shorter than ``render_orient``.
+    """
+    sections: list[str] = []
+    sections.append("## PROJECT ORIENTATION")
+    sections.append("")
+    sections.append(_section_source_of_truth(project))
+
+    what, inventory = _find_anchor_docs(project)
+    if what:
+        sections.append("## WHAT_IT_IS PREVIEW")
+        sections.append(f"### {what.relative_to(project)}\n\n" + _preview(what))
+
+    if inventory and not _is_low_signal_inventory(inventory):
+        sections.append("## INVENTORY PREVIEW")
+        sections.append(f"### {inventory.relative_to(project)}\n\n" + _preview(inventory))
+
+    latest_handoff = _section_latest_handoff(project)
+    if latest_handoff:
+        sections.append(latest_handoff)
+
+    next_pointer = _short_next_task_pointer(project)
+    if next_pointer:
+        sections.append("## ACTIVE NEXT TASK SUMMARY")
+        sections.append(next_pointer)
+
+    return "\n\n".join(s for s in sections if s)
+
+
 def _render_short(project: Path) -> str:
     """Compact orient: source-of-truth order, session-start doc,
     latest handoff, next-task pointer, doctor warning summary.

@@ -150,6 +150,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Append machine-derived inspect output to the system message",
     )
+    chat.add_argument(
+        "--debug-prompt",
+        action="store_true",
+        help="Print the resolved system prompt details before contacting Ollama",
+    )
+    chat.add_argument(
+        "--prompt-soft-threshold",
+        type=int,
+        default=20000,
+        help="Warn when the assembled system prompt exceeds this many characters (default: 20000)",
+    )
 
     # hotpath
     hotpath = sub.add_parser(

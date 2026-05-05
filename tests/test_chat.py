@@ -33,13 +33,23 @@ def _init_args(name, target):
     )
 
 
-def _chat_args(project=None, prompt=None, *, model="llama3", include_inspect=False):
+def _chat_args(
+    project=None,
+    prompt=None,
+    *,
+    model="llama3",
+    include_inspect=False,
+    debug_prompt=False,
+    prompt_soft_threshold=20000,
+):
     return argparse.Namespace(
         command="chat",
         project=str(project) if project is not None else None,
         model=model,
         prompt=prompt,
         include_inspect=include_inspect,
+        debug_prompt=debug_prompt,
+        prompt_soft_threshold=prompt_soft_threshold,
     )
 
 
@@ -69,6 +79,14 @@ class TestChatSmoke(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
+    def _mark_inventory_low_signal(self, project: Path) -> None:
+        inventory_files = sorted(project.glob("docs/*_INVENTORY.md"))
+        self.assertTrue(inventory_files)
+        inventory_files[0].write_text(
+            inventory_files[0].read_text(encoding="utf-8") + "\n<!-- context-kit:inventory:low-signal -->\n",
+            encoding="utf-8",
+        )
+
     def test_posts_orientation_and_prompt_to_ollama(self):
         captured: dict = {}
 
@@ -96,7 +114,8 @@ class TestChatSmoke(unittest.TestCase):
         self.assertEqual(len(payload["messages"]), 2)
         self.assertEqual(payload["messages"][0]["role"], "system")
         self.assertTrue(payload["messages"][0]["content"].startswith(CHAT_BEHAVIOR_PREAMBLE))
-        self.assertIn("# context-kit orient", payload["messages"][0]["content"])
+        self.assertIn("## PROJECT IDENTITY SUMMARY", payload["messages"][0]["content"])
+        self.assertIn("## PROJECT ORIENTATION", payload["messages"][0]["content"])
         self.assertIn("docs/CHAT_APP_WHAT_IT_IS.md", payload["messages"][0]["content"])
         self.assertIn(
             'When the user asks "what are we doing/testing/discussing right now", answer from the recent chat messages first.',
@@ -125,6 +144,7 @@ class TestChatSmoke(unittest.TestCase):
         self.assertIn("context-kit chat started. Type /exit to quit.", buf.getvalue())
         self.assertEqual(len(captured_payloads), 2)
         self.assertTrue(captured_payloads[0]["messages"][0]["content"].startswith(CHAT_BEHAVIOR_PREAMBLE))
+        self.assertIn("## PROJECT ORIENTATION", captured_payloads[0]["messages"][0]["content"])
         self.assertIn("docs/CHAT_APP_WHAT_IT_IS.md", captured_payloads[0]["messages"][0]["content"])
         self.assertEqual(captured_payloads[0]["messages"][1], {"role": "user", "content": "Hello"})
         self.assertEqual(
@@ -244,7 +264,9 @@ class TestChatSmoke(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         system_message = captured["payload"]["messages"][0]["content"]
-        self.assertIn("MACHINE-DERIVED REPO INSPECTION", system_message)
+        self.assertIn("## PROJECT IDENTITY SUMMARY", system_message)
+        self.assertIn("## MACHINE-DERIVED REPO INSPECTION", system_message)
+        self.assertIn("## PROJECT ORIENTATION", system_message)
         self.assertIn("Project identity", system_message)
         self.assertIn("docs/CHAT_APP_WHAT_IT_IS.md", system_message)
 
@@ -263,3 +285,104 @@ class TestChatSmoke(unittest.TestCase):
         self.assertEqual(rc, 0)
         system_message = captured["payload"]["messages"][0]["content"]
         self.assertNotIn("MACHINE-DERIVED REPO INSPECTION", system_message)
+
+    def test_debug_prompt_prints_counts_and_system_prompt(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        stdout = io.StringIO()
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(stdout):
+                rc = run_chat(_chat_args(self.project, ["Explain", "context-kit"], debug_prompt=True))
+
+        self.assertEqual(rc, 0)
+        output = stdout.getvalue()
+        self.assertIn("Resolved project path:", output)
+        self.assertIn("--include-inspect enabled: no", output)
+        self.assertIn("Inspection text generated: no", output)
+        self.assertIn("Inventory preview skipped:", output)
+        self.assertIn("Character counts:", output)
+        self.assertIn("chat preamble:", output)
+        self.assertIn("project identity summary:", output)
+        self.assertIn("orientation:", output)
+        self.assertIn("inspection:", output)
+        self.assertIn("total system prompt:", output)
+        self.assertIn("=== CHAT PREAMBLE ===", output)
+        self.assertIn("=== PROJECT IDENTITY SUMMARY ===", output)
+        self.assertIn("=== MACHINE-DERIVED REPO INSPECTION ===", output)
+        self.assertIn("=== PROJECT ORIENTATION ===", output)
+        self.assertIn("inspection not included", output)
+        self.assertNotIn("chat>", output)
+        self.assertIn("ok", output)
+        self.assertIn(CHAT_BEHAVIOR_PREAMBLE, output)
+
+    def test_debug_prompt_with_inspect_includes_machine_inspection(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        stdout = io.StringIO()
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(stdout):
+                rc = run_chat(_chat_args(self.other_project, ["What", "is", "this?"], include_inspect=True, debug_prompt=True))
+
+        self.assertEqual(rc, 0)
+        output = stdout.getvalue()
+        self.assertIn("--include-inspect enabled: yes", output)
+        self.assertIn("Inspection text generated: yes", output)
+        self.assertIn("Inventory preview skipped:", output)
+        self.assertIn("=== MACHINE-DERIVED REPO INSPECTION ===", output)
+        self.assertIn("=== PROJECT ORIENTATION ===", output)
+        self.assertIn("docs/OTHER_CHAT_APP_WHAT_IT_IS.md", output)
+        self.assertIn(str(self.other_project), output)
+
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertIn("## PROJECT IDENTITY SUMMARY", system_message)
+        self.assertIn("## MACHINE-DERIVED REPO INSPECTION", system_message)
+        self.assertIn("## PROJECT ORIENTATION", system_message)
+        self.assertIn("docs/OTHER_CHAT_APP_WHAT_IT_IS.md", system_message)
+        self.assertNotIn("docs/CHAT_APP_WHAT_IT_IS.md", system_message)
+
+    def test_low_signal_inventory_is_compressed_and_skipped(self):
+        self._mark_inventory_low_signal(self.project)
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        stdout = io.StringIO()
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(stdout):
+                rc = run_chat(_chat_args(self.project, ["What", "is", "this?"], include_inspect=True, debug_prompt=True))
+
+        self.assertEqual(rc, 0)
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertNotIn("## INVENTORY PREVIEW", system_message)
+        self.assertIn("## PROJECT ORIENTATION", system_message)
+        self.assertIn("## WHAT_IT_IS PREVIEW", system_message)
+        self.assertIn("docs/CHAT_APP_WHAT_IT_IS.md", system_message)
+        self.assertLess(system_message.index("## MACHINE-DERIVED REPO INSPECTION"), system_message.index("## PROJECT ORIENTATION"))
+        self.assertIn("Inventory preview skipped: yes", stdout.getvalue())
+
+    def test_prompt_soft_threshold_warns(self):
+        stderr = io.StringIO()
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stderr(stderr):
+                rc = run_chat(_chat_args(self.project, ["Hello"], prompt_soft_threshold=1))
+
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: chat system prompt is", stderr.getvalue())
