@@ -36,14 +36,8 @@ HELP_TEXT = (
 
 
 def run_chat(args: argparse.Namespace) -> int:
-    project = Path(args.project).resolve() if getattr(args, "project", None) else Path.cwd().resolve()
-    if not _looks_like_context_kit_project(project):
-        print(
-            f"context-kit: {project} doesn't look like a context-kit project.\n"
-            f"  Expected to find '00-START-NEXT-SESSION.md' or 'docs/docs-pattern/' here.\n"
-            f"  Run from inside a project scaffolded with `context-kit init`,\n"
-            f"  or pass --project PATH.",
-        )
+    project = _resolve_project_path(getattr(args, "project", None))
+    if project is None:
         return 2
 
     orientation = render_orient(project, short=False)
@@ -59,7 +53,7 @@ def run_chat(args: argparse.Namespace) -> int:
         )
         return 2
 
-    return _run_interactive_session(system_message, orientation, args)
+    return _run_interactive_session(system_message, project, args)
 
 
 def _run_one_shot(prompt: str, system_message: str, args: argparse.Namespace) -> int:
@@ -77,8 +71,7 @@ def _run_one_shot(prompt: str, system_message: str, args: argparse.Namespace) ->
     return 0
 
 
-def _run_interactive_session(system_message: str, orientation: str, args: argparse.Namespace) -> int:
-    project = Path(args.project).resolve() if getattr(args, "project", None) else Path.cwd().resolve()
+def _run_interactive_session(system_message: str, project: Path, args: argparse.Namespace) -> int:
     messages: list[dict[str, str]] = [{"role": "system", "content": system_message}]
     print(STARTUP_LINE)
     while True:
@@ -132,3 +125,20 @@ def _resolve_one_shot_prompt(args: argparse.Namespace) -> str | None:
 
 def _looks_like_context_kit_project(project: Path) -> bool:
     return (project / "00-START-NEXT-SESSION.md").is_file() or (project / "docs" / "docs-pattern").is_dir()
+
+
+def _resolve_project_path(project_value: str | None) -> Path | None:
+    project = Path(project_value).expanduser().resolve() if project_value else Path.cwd().resolve()
+    if not project.exists():
+        sys.stderr.write(f"error: --project path does not exist: {project}\n")
+        return None
+    if not project.is_dir():
+        sys.stderr.write(f"error: --project path is not a directory: {project}\n")
+        return None
+    if not _looks_like_context_kit_project(project):
+        sys.stderr.write(
+            f"error: --project path does not look like a context-kit project: {project}\n"
+            "  Expected to find '00-START-NEXT-SESSION.md' or 'docs/docs-pattern/' here.\n"
+        )
+        return None
+    return project

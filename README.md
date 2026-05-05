@@ -203,6 +203,7 @@ Commands:
   recommend-stack PATH Suggest a beginner-friendly v0 stack from an idea file
   adopt [PATH]         Retrofit context-kit onto an EXISTING project (dry-run by default)
   audit                Print a structured audit prompt for an AI agent
+  audit-response       Heuristically audit a saved chat response against the current orientation
   fix                  Print docs/audit/CLEANUP_PLAN.md as an actionable outline
   exec                 Render docs/audit/CLEANUP_PLAN.md as an AI execution prompt
   inspect              Print a deterministic system map for any repo

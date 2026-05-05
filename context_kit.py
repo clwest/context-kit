@@ -408,6 +408,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scaffold docs/audit/ with empty AUDIT_V1.md + CLEANUP_PLAN.md",
     )
 
+    # audit-response
+    audit_response = sub.add_parser(
+        "audit-response",
+        help="Heuristically audit a chat response against the current orientation",
+        description=(
+            "Read a saved chat response, compare its claim-like sentences to "
+            "the current project orientation, and emit a markdown groundedness "
+            "audit. First version is a structured manual scaffold, not an LLM."
+        ),
+    )
+    audit_response.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    audit_response.add_argument(
+        "--input",
+        required=True,
+        help="Path to the saved model response text file",
+    )
+    audit_response.add_argument(
+        "--output",
+        default=None,
+        help="Optional path to write the markdown audit report",
+    )
+
     # fix
     fix = sub.add_parser(
         "fix",
@@ -813,6 +839,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "audit":
         from cli.audit import run_audit
         return run_audit(args)
+
+    if args.command == "audit-response":
+        from cli.audit_response import run_audit_response
+        return run_audit_response(args)
 
     if args.command == "fix":
         from cli.fix import run_fix

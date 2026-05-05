@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,10 +33,10 @@ def _init_args(name, target):
     )
 
 
-def _chat_args(project, prompt=None, *, model="llama3"):
+def _chat_args(project=None, prompt=None, *, model="llama3"):
     return argparse.Namespace(
         command="chat",
-        project=str(project),
+        project=str(project) if project is not None else None,
         model=model,
         prompt=prompt,
     )
@@ -60,7 +61,9 @@ class TestChatSmoke(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmpdir = Path(self._tmp.name)
         self.project = self.tmpdir / "chat-app"
+        self.other_project = self.tmpdir / "other-chat-app"
         run_init(_init_args("Chat App", self.project))
+        run_init(_init_args("Other Chat App", self.other_project))
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -176,3 +179,52 @@ class TestChatSmoke(unittest.TestCase):
         input_mock.assert_called_once()
         urlopen_mock.assert_not_called()
         self.assertIn("context-kit chat started. Type /exit to quit.", buf.getvalue())
+
+    def test_project_flag_uses_target_orientation(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(_chat_args(self.other_project, ["What", "is", "this?"]))
+
+        self.assertEqual(rc, 0)
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertIn("Other Chat App", system_message)
+        self.assertIn("docs/OTHER_CHAT_APP_WHAT_IT_IS.md", system_message)
+        self.assertNotIn("docs/CHAT_APP_WHAT_IT_IS.md", system_message)
+
+    def test_omitted_project_preserves_current_cwd_behavior(self):
+        prev_cwd = Path.cwd()
+        os.chdir(self.project)
+        try:
+            captured: dict = {}
+
+            def fake_urlopen(req, timeout=None):
+                del timeout
+                captured["payload"] = json.loads(req.data.decode("utf-8"))
+                return _FakeResponse({"message": {"content": "ok"}})
+
+            with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+                with redirect_stdout(io.StringIO()):
+                    rc = run_chat(_chat_args(None, ["What", "is", "this?"]))
+        finally:
+            os.chdir(prev_cwd)
+
+        self.assertEqual(rc, 0)
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertIn("Chat App", system_message)
+        self.assertIn("docs/CHAT_APP_WHAT_IT_IS.md", system_message)
+
+    def test_invalid_project_returns_clear_error(self):
+        bad_project = self.tmpdir / "missing-project"
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            rc = run_chat(_chat_args(bad_project, ["Hello"]))
+
+        self.assertEqual(rc, 2)
+        self.assertIn("error: --project path does not exist", stderr.getvalue())
