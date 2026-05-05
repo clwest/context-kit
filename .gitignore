@@ -53,4 +53,8 @@ tmp/
 # Engagement telemetry (private)
 metrics/
 
+# Local context-kit runtime state and generated verification reports
+.context-kit/
+docs/verification/
+
 .env

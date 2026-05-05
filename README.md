@@ -30,11 +30,13 @@ Plus `inventory --check` for CI drift detection, `hotpath` for
 file-size budget warnings, **`adopt`** for retrofitting
 context-kit onto an *existing* project (the five-command loop above
 assumes you're starting fresh; `adopt` is the entry point when you
-already have code), and **`refactor track`** for reporting progress
+already have code), and **`refactor`** for reporting progress
 on multi-PR module-extraction work (split a monolith file into
 sibling modules across many PRs and watch the percentage tick up).
 For a smoother Codex startup, use `context-kit codex --mode=execute --short`.
-That opens Codex interactively by default; add `--exec` for one-shot automation.
+That opens Codex interactively by default, copies the startup prompt,
+and tells you to paste it as the first Codex message. Add `--exec` for
+one-shot automation.
 All read-only by default. All exit cleanly for an agent to parse.
 
 Think `create-next-app`, but for the memory layer around your code.
@@ -175,20 +177,26 @@ context-kit COMMAND [options]
 
 Commands:
   init NAME            Scaffold a new project with the context-kit pattern
-  adopt [PATH]         Retrofit context-kit onto an EXISTING project (dry-run by default)
-  seed PATH            Turn a structured idea file into project context (5 files)
-  recommend-stack PATH Suggest a beginner-friendly v0 stack from an idea file
   start                Launch the onboarding server for the current project
-  codex                Prepare and launch the Codex startup flow
   orient               Print the assembled session-start orientation report
   hotpath              Show the largest files most likely to dominate AI context
   inventory            Generate a runtime-derived inventory of the project
+  seed PATH            Turn a structured idea file into project context (5 files)
   doctor               Read-only environment + setup diagnostics
+  recommend-stack PATH Suggest a beginner-friendly v0 stack from an idea file
+  adopt [PATH]         Retrofit context-kit onto an EXISTING project (dry-run by default)
   audit                Print a structured audit prompt for an AI agent
   fix                  Print docs/audit/CLEANUP_PLAN.md as an actionable outline
   exec                 Render docs/audit/CLEANUP_PLAN.md as an AI execution prompt
   inspect              Print a deterministic system map for any repo
+  coverage             Map which tracked files are covered, skipped, or still unclassified
+  behavior             Map behavioral risk surfaces in tracked files
+  connections          Audit wiring between backend routes, frontend/mobile clients, tasks, agents, and spiders
   verify               Check whether key repo claims are verified, doc-only, conflicting, or unknown
+  translation-init     Print a structured prompt for an AI to populate the project's TRANSLATION_LAYER doc
+  codex                Prepare and launch the Codex startup flow
+  start-codex          Print a ready-to-copy Codex startup prompt for this project
+  refactor             Read-only helpers for multi-PR module-extraction refactors
 
 Run `python3 context_kit.py <command> --help` for per-command options.
 ```
@@ -287,6 +295,8 @@ It currently checks:
 |---|---|---|
 | *positional* `PATH` | `.` | Project root to verify |
 | `--json` | off | Emit machine-readable JSON |
+| `--include-archive` | off | Include archive and historical docs in primary scoring |
+| `--all-docs` | off | Scan all active docs for count claims instead of canonical docs only |
 | `--write` | off | Write or refresh `docs/verification/VERIFY_REPORT.md` |
 
 One short pass over the tree (~0.3s on a 7,900-file Django repo)
@@ -321,6 +331,9 @@ never parses code as an AST. Filename / regex probes only.
 | *positional* `PATH` | `.` | Project root to inspect |
 | `--json` | off | Emit machine-readable JSON with locked top-level keys (`repo`, `path`, `head`, `counts`, `primary_stack`, `subsystems`, `entry_points`, `framework_signals`, `hot_files`, `risks`, `stale_docs`, `documentation_intelligence`, `recommendations`) |
 | `--depth N` | `2` | Directory walk depth for monorepo / workspace detection. v1 uses depth-1 in practice; the flag is wired for future use |
+| `--scope SCOPE` | (none) | Restrict inspection to a named scope (`core`, `celery`, `agents`, `spiders`, `docs-rag`, `frontend`, `deployment`, `tests`) |
+| `--include-history` | off | Include historical/external docs in scoped inspection |
+| `--include-related` | off | Include broader related paths for the selected scope |
 
 #### Documentation Intelligence (v0.14.0)
 
@@ -588,6 +601,7 @@ my-app/
 │   └── server.py                     # onboarding server
 ├── 00-START-NEXT-SESSION.md         # first-session entry point
 ├── CLAUDE.md                         # AI session entry rules
+├── AGENTS.md                         # tool-neutral AI session entry rules
 └── docs/
     ├── MY_APP_WHAT_IT_IS.md          # narrative anchor (stub)
     ├── MY_APP_INVENTORY.md           # runtime anchor (stub)
