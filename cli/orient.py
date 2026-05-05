@@ -57,8 +57,16 @@ def run_orient(args: argparse.Namespace) -> int:
     # --short is opt-in via argparse; tolerate absence (e.g. when
     # callers construct Namespace by hand for tests / scripts).
     if getattr(args, "short", False):
-        print(_render_short(project).rstrip() + "\n")
+        print(render_orient(project, short=True).rstrip() + "\n")
         return 0
+
+    print(render_orient(project).rstrip() + "\n")
+    return 0
+
+
+def render_orient(project: Path, *, short: bool = False) -> str:
+    if short:
+        return _render_short(project)
 
     sections: list[str] = []
     sections.append(_section_header(project))
@@ -73,9 +81,7 @@ def run_orient(args: argparse.Namespace) -> int:
     sections.append(_section_latest_handoff(project))
     sections.append(_section_pattern_pointer(project))
     sections.append(_section_what_to_do_now())
-
-    print("\n\n".join(s for s in sections if s).rstrip() + "\n")
-    return 0
+    return "\n\n".join(s for s in sections if s)
 
 
 def _render_short(project: Path) -> str:

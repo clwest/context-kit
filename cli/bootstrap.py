@@ -32,6 +32,8 @@ RUNTIME_COPY = (
     ("context_kit.py", "context_kit.py"),
     ("cli/__init__.py", "cli/__init__.py"),
     ("cli/server.py", "cli/server.py"),
+    ("cli/chat.py", "cli/chat.py"),
+    ("cli/ollama.py", "cli/ollama.py"),
     ("cli/orient.py", "cli/orient.py"),
     ("cli/hotpath.py", "cli/hotpath.py"),
     ("cli/inventory.py", "cli/inventory.py"),

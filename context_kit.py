@@ -119,6 +119,33 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # chat
+    chat = sub.add_parser(
+        "chat",
+        help="Send the current orient prompt to local Ollama or start a REPL",
+        description=(
+            "Assemble the current project's context-kit orient prompt, send it "
+            "to a local Ollama model, and either print a one-shot response or "
+            "keep an interactive REPL open. Uses the existing session-start "
+            "orientation as the system message."
+        ),
+    )
+    chat.add_argument(
+        "prompt",
+        nargs="*",
+        help="Prompt text to send. If omitted in a terminal, starts interactive chat; if piped, reads stdin once.",
+    )
+    chat.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    chat.add_argument(
+        "--model",
+        default=None,
+        help="Ollama model name (default: OLLAMA_MODEL env var or llama3)",
+    )
+
     # hotpath
     hotpath = sub.add_parser(
         "hotpath",
@@ -754,6 +781,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "orient":
         from cli.orient import run_orient
         return run_orient(args)
+
+    if args.command == "chat":
+        from cli.chat import run_chat
+        return run_chat(args)
 
     if args.command == "hotpath":
         from cli.hotpath import run_hotpath

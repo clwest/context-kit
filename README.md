@@ -25,6 +25,7 @@ init  →  recommend-stack  →  seed  →  doctor  →  orient
 | **`context-kit seed idea.md`** | Turns the raw idea into Claude-ready context |
 | **`context-kit doctor`** | Catches environment / setup blockers before they bite |
 | **`context-kit orient`** | Loads the current context for the next AI session *(the bundled Claude Code skill calls this automatically)* |
+| **`context-kit chat`** | Sends the orient prompt plus your message to local Ollama |
 
 Plus `inventory --check` for CI drift detection, `hotpath` for
 file-size budget warnings, **`adopt`** for retrofitting
@@ -143,6 +144,21 @@ after the first few.
 For experienced builders: skip steps 3 and 5 unless you want them.
 The minimum loop is `init → seed → orient`.
 
+### Ollama chat
+
+`context-kit chat` talks to a local Ollama server at
+`http://localhost:11434` by default. It uses these environment
+variables:
+
+- `OLLAMA_BASE_URL` for the Ollama server URL
+- `OLLAMA_MODEL` for the default model name
+
+Example:
+
+```bash
+context-kit chat --model llama3 "What should I look at first?"
+```
+
 With the optional Python scaffold (drift verifier + index builder):
 
 ```bash
@@ -179,6 +195,7 @@ Commands:
   init NAME            Scaffold a new project with the context-kit pattern
   start                Launch the onboarding server for the current project
   orient               Print the assembled session-start orientation report
+  chat                 Send the orient prompt plus a user prompt to local Ollama
   hotpath              Show the largest files most likely to dominate AI context
   inventory            Generate a runtime-derived inventory of the project
   seed PATH            Turn a structured idea file into project context (5 files)
