@@ -109,12 +109,26 @@
   .severity-medium { border-left-color: var(--warn); }
   .severity-warning { border-left-color: var(--warn); }
   .severity-advisory, .severity-low { border-left-color: var(--border); }
+  .risk-badge {
+    display: inline-block;
+    padding: .2rem .55rem;
+    border-radius: 999px;
+    font-size: .78rem;
+    font-weight: 700;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+  }
+  .risk-low { background: rgba(110, 231, 183, .12); color: var(--accent); }
+  .risk-medium { background: rgba(251, 191, 36, .12); color: var(--warn); }
+  .risk-high { background: rgba(248, 113, 113, .12); color: var(--danger); }
+  details summary { list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>context-kit audit dashboard</h1>
+    <h1>AgentReality Audit Report</h1>
     <div class="tag">Read-only audit runner for inspect, coverage, behavior, connections, verify, and doctor.</div>
     <div class="tag">cwd: <code>{{PROJECT_ROOT}}</code></div>
   </header>
@@ -122,6 +136,10 @@
   <section>
     <h2>Executive Summary</h2>
     <div id="executiveSummaryCard" class="status">No audit has run yet.</div>
+    <div style="margin-top:.75rem">
+      <h3 style="margin:0 0 .35rem;font-size:1rem;">Summary</h3>
+      <div id="summaryCard" class="status">No audit has run yet.</div>
+    </div>
   </section>
 
   <section class="grid">
@@ -184,17 +202,6 @@
       <div id="status" class="status">Ready.</div>
     </div>
 
-    <div>
-      <h2 style="margin:.25rem 0 .5rem">Summary</h2>
-      <div id="summaryCard" class="status">No audit has run yet.</div>
-    </div>
-  </section>
-
-  <section>
-    <h2>Findings</h2>
-    <ul id="findingsList" class="findings">
-      <li class="muted">No findings yet.</li>
-    </ul>
   </section>
 
   <section>
@@ -214,6 +221,16 @@
     </ol>
     <h3 style="margin:.9rem 0 .35rem;font-size:1rem;">Codex prompt</h3>
     <pre id="fixPlanPrompt">Run an audit to generate a prompt.</pre>
+  </section>
+
+  <section>
+    <details>
+      <summary style="cursor:pointer;font-weight:600;">Supporting Findings</summary>
+      <div class="small muted" style="margin-top:.5rem">Secondary evidence and raw findings. Useful for implementation detail, but not the lead read.</div>
+      <ul id="findingsList" class="findings">
+        <li class="muted">No supporting findings yet.</li>
+      </ul>
+    </details>
   </section>
 </div>
 
@@ -310,6 +327,7 @@ function normalizeReport(report) {
 }
 
 function renderSummary(report) {
+  const view = report.translation || report;
   const summary = report.summary || {};
   const entries = Object.entries(summary);
   if (!entries.length) {
@@ -322,6 +340,7 @@ function renderSummary(report) {
   };
   const parts = [
     `<div><strong>${report.command}</strong>${report.audience ? ` · explain for ${escapeHtml(report.audience)}` : ""} · ${report.status} · ${report.generated_at || ""}</div>`,
+    view.summary ? `<div class="small" style="margin-top:.4rem"><strong>Audience summary:</strong> ${escapeHtml(view.summary.description || view.summary.recommendation || "")}</div>` : "",
     "<ul>",
   ];
   entries.forEach(([key, value]) => {
@@ -341,7 +360,8 @@ function renderExecutiveSummary(report) {
     audience: report.audience || "developer",
   };
   executiveSummaryCard.innerHTML = `
-    <div><strong>Risk Level:</strong> ${escapeHtml(exec.risk_level || "Low")}</div>
+    <div class="risk-badge risk-${escapeHtml(String(exec.risk_level || "Low").toLowerCase())}">${escapeHtml(exec.risk_level || "Low")}</div>
+    <div style="margin-top:.5rem"><strong>Risk Level:</strong> ${escapeHtml(exec.risk_level || "Low")}</div>
     <div><strong>Critical Issues:</strong> ${escapeHtml(exec.critical_count ?? 0)}</div>
     <div>${escapeHtml(exec.description || "")}</div>
     <div class="small"><strong>Recommendation:</strong> ${escapeHtml(exec.recommendation || "")}</div>
@@ -351,7 +371,7 @@ function renderExecutiveSummary(report) {
 function renderFindings(list) {
   findingsList.innerHTML = "";
   if (!list || !list.length) {
-    findingsList.innerHTML = '<li class="muted">No findings.</li>';
+    findingsList.innerHTML = '<li class="muted">No supporting findings.</li>';
     return;
   }
   list.forEach(item => {

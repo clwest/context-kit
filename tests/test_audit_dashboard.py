@@ -406,6 +406,54 @@ class TestAuditDispatch(unittest.TestCase):
         self.assertNotEqual(dev["translation"]["executive_summary"]["description"], founder["translation"]["executive_summary"]["description"])
         self.assertNotEqual(founder["translation"]["executive_summary"]["description"], business["translation"]["executive_summary"]["description"])
 
+    def test_summary_translation_includes_risk_level(self):
+        report = {
+            "command": "connections",
+            "scope": "frontend",
+            "findings": [
+                {
+                    "id": "missing-target:/api/demo",
+                    "title": "Missing backend endpoint",
+                    "severity": "high",
+                    "status": "high",
+                    "category": "missing_target",
+                    "details": "frontend/app.py: /api/demo",
+                    "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                    "recommendation": "Implement the endpoint.",
+                }
+            ],
+            "critical_issues": [
+                {
+                    "id": "missing-target:/api/demo",
+                    "title": "Missing backend endpoint",
+                    "severity": "high",
+                    "status": "high",
+                    "category": "missing_target",
+                    "details": "frontend/app.py: /api/demo",
+                    "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                    "recommendation": "Implement the endpoint.",
+                }
+            ],
+            "fix_plan": {
+                "summary": {"critical_count": 1, "command": "connections", "scope": "frontend"},
+                "steps": [
+                    {
+                        "step": 1,
+                        "title": "Missing backend endpoint",
+                        "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                        "action": "Implement the endpoint.",
+                        "evidence": "frontend/app.py: /api/demo",
+                    }
+                ],
+                "codex_prompt": "You are Codex helping fix the highest-priority issues from a read-only context-kit audit.\n",
+            },
+        }
+        translated = _audit_translate_report(report, "founder")
+        self.assertIn("executive_summary", translated["translation"])
+        self.assertEqual(translated["translation"]["executive_summary"]["risk_level"], "Medium")
+        self.assertIn("product risk summary", translated["translation"]["executive_summary"]["description"])
+        self.assertEqual(translated["risk_level"], "Medium")
+
 
 class TestLiveAuditServer(unittest.TestCase):
     @classmethod
@@ -455,15 +503,14 @@ class TestLiveAuditServer(unittest.TestCase):
     def test_audit_page_returns_200(self):
         status, body = self._get("/audit")
         self.assertEqual(status, 200)
-        self.assertIn("audit dashboard", body.lower())
+        self.assertIn("AgentReality Audit Report", body)
         self.assertIn("Executive Summary", body)
         self.assertIn("Risk Level", body)
-        self.assertIn("Summary", body)
-        self.assertIn("Findings", body)
         self.assertIn("Critical Issues", body)
         self.assertIn("Generate Fix Plan", body)
         self.assertIn("Run Full Audit", body)
         self.assertIn("Fix Plan", body)
+        self.assertIn("Supporting Findings", body)
 
     def test_audit_state_reports_supported_commands_and_scopes(self):
         status, body = self._get("/api/audit/state")
