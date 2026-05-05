@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 from cli.server import (  # noqa: E402
     _OnboardingHandler,
     _audit_fix_plan_markdown,
+    _audit_risk_level,
     _audit_run,
     _audit_fix_plan,
     _audit_impact,
@@ -257,6 +258,40 @@ class TestAuditDispatch(unittest.TestCase):
         self.assertIn("Codex Prompt", md)
         self.assertIn("frontend/app.py: /api/demo", md)
 
+    def test_risk_level_calculation_changes_with_signals(self):
+        low = {"command": "inspect", "findings": [], "critical_issues": []}
+        medium = {
+            "command": "inspect",
+            "findings": [
+                {
+                    "title": "Missing backend endpoint",
+                    "category": "missing_target",
+                    "details": "frontend/app.py: /api/demo",
+                    "impact": "High technical impact: the client references a backend route that the server does not expose.",
+                }
+            ],
+        }
+        high = {
+            "command": "verify",
+            "findings": [
+                {
+                    "title": "Deployment config failure",
+                    "category": "config",
+                    "details": "deployment/config.yaml: failure detected",
+                    "impact": "High technical impact: failure metadata suggests a broken or missing integration.",
+                },
+                {
+                    "title": "Fallback path degraded",
+                    "category": "runtime",
+                    "details": "fallback path degraded",
+                    "impact": "Medium technical impact: the current path looks degraded or may be masking a failure.",
+                },
+            ],
+        }
+        self.assertEqual(_audit_risk_level(low), "Low")
+        self.assertEqual(_audit_risk_level(medium), "Medium")
+        self.assertEqual(_audit_risk_level(high), "High")
+
     def test_audience_translation_exists_for_each_audience(self):
         report = {
             "command": "connections",
@@ -309,6 +344,8 @@ class TestAuditDispatch(unittest.TestCase):
                 self.assertEqual(translated["fix_plan"], report["fix_plan"])
                 self.assertEqual(translated["translation"]["audience"], audience)
                 self.assertEqual(translated["translation"]["summary"]["critical_count"], 1)
+                self.assertIn("executive_summary", translated["translation"])
+                self.assertIn("risk_level", translated["translation"]["executive_summary"])
                 self.assertIn("explanation", translated["translation"]["critical_issues"][0])
                 self.assertIn("codex_prompt", translated["translation"]["fix_plan"])
                 self.assertNotEqual(
@@ -366,6 +403,8 @@ class TestAuditDispatch(unittest.TestCase):
         self.assertEqual(dev["findings"], report["findings"])
         self.assertEqual(founder["findings"], report["findings"])
         self.assertEqual(business["findings"], report["findings"])
+        self.assertNotEqual(dev["translation"]["executive_summary"]["description"], founder["translation"]["executive_summary"]["description"])
+        self.assertNotEqual(founder["translation"]["executive_summary"]["description"], business["translation"]["executive_summary"]["description"])
 
 
 class TestLiveAuditServer(unittest.TestCase):
@@ -417,6 +456,8 @@ class TestLiveAuditServer(unittest.TestCase):
         status, body = self._get("/audit")
         self.assertEqual(status, 200)
         self.assertIn("audit dashboard", body.lower())
+        self.assertIn("Executive Summary", body)
+        self.assertIn("Risk Level", body)
         self.assertIn("Summary", body)
         self.assertIn("Findings", body)
         self.assertIn("Critical Issues", body)

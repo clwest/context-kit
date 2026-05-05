@@ -119,6 +119,11 @@
     <div class="tag">cwd: <code>{{PROJECT_ROOT}}</code></div>
   </header>
 
+  <section>
+    <h2>Executive Summary</h2>
+    <div id="executiveSummaryCard" class="status">No audit has run yet.</div>
+  </section>
+
   <section class="grid">
     <div>
       <label for="pathInput">Path</label>
@@ -221,6 +226,7 @@ const scopeWrap = document.getElementById("scopeWrap");
 const inspectOptions = document.getElementById("inspectOptions");
 const verifyOptions = document.getElementById("verifyOptions");
 const statusEl = document.getElementById("status");
+const executiveSummaryCard = document.getElementById("executiveSummaryCard");
 const summaryCard = document.getElementById("summaryCard");
 const findingsList = document.getElementById("findingsList");
 const criticalIssues = document.getElementById("criticalIssues");
@@ -323,6 +329,23 @@ function renderSummary(report) {
   });
   parts.push("</ul>");
   summaryCard.innerHTML = parts.join("");
+}
+
+function renderExecutiveSummary(report) {
+  const view = report.translation || report;
+  const exec = view.executive_summary || {
+    critical_count: (view.critical_issues || []).length,
+    risk_level: report.risk_level || "Low",
+    description: "No executive summary available.",
+    recommendation: "Monitor and address during normal maintenance.",
+    audience: report.audience || "developer",
+  };
+  executiveSummaryCard.innerHTML = `
+    <div><strong>Risk Level:</strong> ${escapeHtml(exec.risk_level || "Low")}</div>
+    <div><strong>Critical Issues:</strong> ${escapeHtml(exec.critical_count ?? 0)}</div>
+    <div>${escapeHtml(exec.description || "")}</div>
+    <div class="small"><strong>Recommendation:</strong> ${escapeHtml(exec.recommendation || "")}</div>
+  `;
 }
 
 function renderFindings(list) {
@@ -447,6 +470,7 @@ async function loadState() {
         if (report.audience) {
           audienceSelect.value = report.audience;
         }
+        renderExecutiveSummary(report);
         renderSummary(report);
         renderFindings(report.findings || []);
         renderCriticalIssues(report);
@@ -472,6 +496,7 @@ async function runAudit() {
   }
   const report = normalizeReport(data);
   currentReport = report;
+  renderExecutiveSummary(report);
   renderSummary(report);
   renderFindings(report.findings || []);
   renderCriticalIssues(report);
@@ -497,6 +522,7 @@ async function runFullAudit() {
   }
   const report = normalizeReport(data);
   currentReport = report;
+  renderExecutiveSummary(report);
   renderSummary(report);
   renderFindings(report.findings || []);
   renderCriticalIssues(report);

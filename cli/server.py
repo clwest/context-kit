@@ -770,6 +770,117 @@ def _audit_audience_tone(audience: str) -> str:
     }.get(audience, "technical")
 
 
+def _audit_findings_text(findings: list[dict]) -> str:
+    return " ".join(
+        " ".join(
+            str(finding.get(key, ""))
+            for key in ("category", "title", "details", "recommendation", "impact")
+        )
+        for finding in findings
+    ).lower()
+
+
+def _audit_detect_external_config_issues(findings: list[dict]) -> bool:
+    text = _audit_findings_text(findings)
+    return any(token in text for token in (
+        "config", "configuration", "env", "environment", "settings", "secrets", "credentials",
+        "deployment", "manifest", "docker", "kubernetes", "helm", "toml", "yaml", "yml", "json", "ini",
+    ))
+
+
+def _audit_detect_failure_or_degraded_states(findings: list[dict]) -> bool:
+    text = _audit_findings_text(findings)
+    return any(token in text for token in ("failure", "failed", "degraded", "degradation", "fallback", "broken"))
+
+
+def _audit_risk_level(report: dict) -> str:
+    findings = report.get("critical_issues") or _audit_critical_issues(report.get("findings", []), str(report.get("command", "")))
+    critical_count = len(findings)
+    external_config = _audit_detect_external_config_issues(findings)
+    degraded = _audit_detect_failure_or_degraded_states(findings)
+
+    if critical_count >= 3:
+        return "High"
+
+    score = 0
+    if critical_count >= 2:
+        score += 2
+    elif critical_count == 1:
+        score += 1
+
+    if external_config:
+        score += 1
+    if degraded:
+        score += 2
+
+    if score >= 3:
+        return "High"
+    if score >= 1:
+        return "Medium"
+    return "Low"
+
+
+def _audit_recommendation_for_risk(risk_level: str) -> str:
+    return {
+        "High": "Fix before production.",
+        "Medium": "Plan and address before the next release.",
+        "Low": "Monitor and address during normal maintenance.",
+    }.get(risk_level, "Monitor and address during normal maintenance.")
+
+
+def _audit_summary_description(audience: str, risk_level: str, critical_count: int, external_config: bool, degraded: bool) -> str:
+    if audience == "founder":
+        base = "This is a product risk summary."
+        if risk_level == "High":
+            risk_text = "The audit shows high product risk that could affect customers or delivery."
+        elif risk_level == "Medium":
+            risk_text = "The audit shows material product risk that should be handled before the next release."
+        else:
+            risk_text = "The audit shows limited product risk and mostly maintenance-level follow-up."
+    elif audience == "business":
+        base = "This is an operational risk summary."
+        if risk_level == "High":
+            risk_text = "The audit shows high operational risk that could affect reliability or support load."
+        elif risk_level == "Medium":
+            risk_text = "The audit shows material operational risk that should be resolved before the next release."
+        else:
+            risk_text = "The audit shows limited operational risk and mostly routine follow-up."
+    else:
+        base = "This is a technical risk summary."
+        if risk_level == "High":
+            risk_text = "The audit shows blocking technical gaps that should be fixed before production."
+        elif risk_level == "Medium":
+            risk_text = "The audit shows meaningful technical gaps that should be addressed soon."
+        else:
+            risk_text = "The audit shows limited technical risk and mostly cleanup work."
+
+    extras: list[str] = [f"{critical_count} critical issue(s)."]
+    if external_config:
+        extras.append("External config issues are present.")
+    if degraded:
+        extras.append("Failure or degraded states were detected.")
+    return f"{base} {risk_text} {' '.join(extras)}".strip()
+
+
+def _audit_executive_summary(report: dict, audience: str) -> dict:
+    findings = report.get("critical_issues") or _audit_critical_issues(report.get("findings", []), str(report.get("command", "")))
+    critical_count = len(findings)
+    risk_level = _audit_risk_level(report)
+    external_config = _audit_detect_external_config_issues(findings)
+    degraded = _audit_detect_failure_or_degraded_states(findings)
+    description = _audit_summary_description(audience, risk_level, critical_count, external_config, degraded)
+    return {
+        "critical_count": critical_count,
+        "risk_level": risk_level,
+        "description": description,
+        "recommendation": _audit_recommendation_for_risk(risk_level),
+        "audience": audience,
+        "tone": _audit_audience_tone(audience),
+        "external_config_issues": external_config,
+        "degraded_states": degraded,
+    }
+
+
 def _audit_translate_fix_prompt(report: dict, audience: str, critical: list[dict], steps: list[dict]) -> str:
     if audience == "founder":
         intro = "You are Codex helping resolve the highest-priority product and delivery risks from a read-only context-kit audit."
@@ -814,6 +925,7 @@ def _audit_translate_report(report: dict, audience: str | None) -> dict:
     normalized = _audit_normalize_audience(audience)
     critical = report.get("critical_issues") or _audit_critical_issues(report.get("findings", []), str(report.get("command", "")))
     fix_plan = report.get("fix_plan") or _audit_fix_plan(report)
+    executive_summary = _audit_executive_summary(report, normalized)
     translated_critical = [
         {
             **issue,
@@ -842,17 +954,21 @@ def _audit_translate_report(report: dict, audience: str | None) -> dict:
     }
     translation = {
         "audience": normalized,
+        "executive_summary": executive_summary,
         "critical_issues": translated_critical,
         "fix_plan": translated_fix_plan,
         "summary": {
             "critical_count": len(translated_critical),
             "audience": normalized,
             "tone": _audit_audience_tone(normalized),
+            "risk_level": executive_summary["risk_level"],
+            "recommendation": executive_summary["recommendation"],
         },
     }
     return {
         **report,
         "audience": normalized,
+        "risk_level": executive_summary["risk_level"],
         "translation": translation,
     }
 
@@ -1260,9 +1376,22 @@ def _audit_report_markdown(report: dict) -> str:
         f"- Status: `{report.get('status', '')}`",
         f"- Generated at: `{report.get('generated_at', '')}`",
         "",
+    ]
+    if translation.get("executive_summary"):
+        exec_summary = translation["executive_summary"]
+        lines.extend([
+            "## Executive Summary",
+            "",
+            f"- Risk Level: `{exec_summary.get('risk_level', '')}`",
+            f"- Critical Issues: `{exec_summary.get('critical_count', 0)}`",
+            f"- Recommendation: {exec_summary.get('recommendation', '')}",
+            f"- Summary: {exec_summary.get('description', '')}",
+            "",
+        ])
+    lines.extend([
         "## Summary",
         "",
-    ]
+    ])
     for line in _audit_summary_lines(report.get("summary", {}), str(report.get("command", ""))):
         lines.append(f"- {line}")
     lines.extend(["", "## Findings"])
@@ -1407,7 +1536,7 @@ class _OnboardingHandler(http.server.BaseHTTPRequestHandler):
             "supported_scopes": list(_audit_supported_scopes()),
             "last_run": {
                 key: last.get(key)
-                for key in ("command", "scope", "audience", "status", "generated_at", "summary")
+                for key in ("command", "scope", "audience", "risk_level", "status", "generated_at", "summary")
             } if isinstance(last, dict) else None,
         })
 
