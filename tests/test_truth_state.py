@@ -199,11 +199,17 @@ class TestStartCodex(TruthStateTestCase):
         self.assertTrue(args.exec)
         self.assertFalse(args.interactive)
 
+    def test_codex_command_parses_print_prompt_flag(self):
+        args = build_parser().parse_args(["codex", "--print-prompt"])
+        self.assertEqual(args.command, "codex")
+        self.assertTrue(args.print_prompt)
+
     def test_codex_default_launches_interactively(self):
         (self.project / "README.md").write_text("# Demo\n", encoding="utf-8")
         (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
         with patch("cli.start_codex.shutil.which", side_effect=lambda name: "/usr/bin/codex" if name == "codex" else None):
             with patch("cli.start_codex.subprocess.run") as run_mock:
+                run_mock.return_value = subprocess.CompletedProcess(args=["codex"], returncode=0)
                 with patch("cli.start_codex._copy_to_clipboard", return_value=True):
                     buf = io.StringIO()
                     with redirect_stdout(buf):
@@ -221,8 +227,14 @@ class TestStartCodex(TruthStateTestCase):
         run_mock.assert_called_once()
         called_args, called_kwargs = run_mock.call_args
         self.assertEqual(Path(called_args[0][0]).name, "codex")
+        self.assertIsInstance(called_args[0][1], str)
+        self.assertTrue(called_args[0][1].startswith("## CONTEXT-KIT SESSION START"))
         self.assertNotIn("input", called_kwargs)
-        self.assertIn("Codex is opening interactively. Paste the copied startup prompt as the first message.", buf.getvalue())
+        self.assertIn("NEXT STEP: paste the copied context-kit startup prompt into Codex.", buf.getvalue())
+        self.assertIn("Do not type a task first.", buf.getvalue())
+        self.assertIn("The prompt is already on your clipboard.", buf.getvalue())
+        self.assertNotIn("Your task:", buf.getvalue())
+        self.assertIn("If Codex opened without the context-kit prompt, rerun and paste the clipboard contents as the first message.", buf.getvalue())
         self.assertIn("Prompt copied to clipboard.", buf.getvalue())
 
     def test_codex_exec_mode_calls_codex_exec(self):
@@ -252,6 +264,32 @@ class TestStartCodex(TruthStateTestCase):
         self.assertIn("input", called_kwargs)
         self.assertIn("Codex CLI: launched with `codex exec`.", buf.getvalue())
 
+    def test_codex_print_prompt_flag_prints_prompt(self):
+        (self.project / "README.md").write_text("# Demo\n", encoding="utf-8")
+        (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
+        with patch("cli.start_codex.shutil.which", return_value=None):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = run_codex(
+                    argparse.Namespace(
+                        command="codex",
+                        project=str(self.project),
+                        user=None,
+                        mode="execute",
+                        model=None,
+                        short=True,
+                        interactive=True,
+                        exec=False,
+                        print_prompt=True,
+                    )
+                )
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("=== Codex startup prompt ===", out)
+        self.assertIn("## CONTEXT-KIT SESSION START", out)
+        self.assertIn("NEXT STEP: paste the copied context-kit startup prompt into Codex.", out)
+        self.assertIn("Do not type a task first.", out)
+
     def test_codex_command_falls_back_helpfully_when_binary_is_missing(self):
         (self.project / "README.md").write_text("# Demo\n", encoding="utf-8")
         (self.project / "CLAUDE.md").write_text("# Claude\n", encoding="utf-8")
@@ -273,7 +311,8 @@ class TestStartCodex(TruthStateTestCase):
         self.assertIn("Codex CLI: not found on PATH.", out)
         self.assertIn("Verification config: created `.context-kit/verify.yaml`.", out)
         self.assertIn("Clipboard unavailable.", out)
-        self.assertIn("Codex is opening interactively. Paste the copied startup prompt as the first message.", out)
+        self.assertIn("NEXT STEP: paste the copied context-kit startup prompt into Codex.", out)
+        self.assertIn("Do not type a task first.", out)
         self.assertIn("Essential rules:", out)
         self.assertIn("context-kit inspect", out)
         self.assertIn("context-kit verify", out)
@@ -342,6 +381,8 @@ class TestStartCodex(TruthStateTestCase):
         self.assertIn(".context-kit/verify.yaml", out)
         self.assertIn("historical docs as memory", out)
         self.assertIn("runtime and config files as truth", out)
+        self.assertIn("Close the loop before you leave", out)
+        self.assertIn("Correct stale docs before closing the task", out)
 
     def test_generates_startup_prompt(self):
         out = render_codex_prompt(self.project)
@@ -409,6 +450,7 @@ class TestStartCodex(TruthStateTestCase):
         out = buf.getvalue()
         self.assertIn("Steps:", out)
         self.assertIn("## TRUST / VERIFY / IGNORE", out)
+        self.assertIn("Close the loop before you leave", out)
 
     def test_cli_entrypoint_supports_short_flag(self):
         buf = io.StringIO()
@@ -423,6 +465,7 @@ class TestStartCodex(TruthStateTestCase):
         self.assertNotIn("## TRUST / VERIFY / IGNORE", out)
         self.assertIn("context-kit inspect", out)
         self.assertIn("context-kit verify", out)
+        self.assertIn("Close the loop before you leave", out)
 
     def test_persona_mode_uses_translation_layer_when_present(self):
         (self.project / "docs" / "DEMO_TRANSLATION_LAYER.md").write_text(

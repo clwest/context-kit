@@ -988,6 +988,12 @@ def _audit_agent_handoff(report: dict) -> dict:
         "Do not commit unless instructed.",
         "Keep the work read-only until the plan is clear.",
         "Prefer scoped audits before broad changes.",
+        "Close the loop: update docs when behavior changes.",
+        "Close the loop: refresh or verify the inventory when commands, routes, or features change.",
+        "Close the loop: remove, ignore, or intentionally track generated artifacts.",
+        "Close the loop: run `context-kit verify` and `context-kit doctor` where applicable before handoff.",
+        "Close the loop: write or update a handoff note after major work.",
+        "Correct stale docs before closing the task.",
     ]
     repo_path = (
         report.get("path")
@@ -1065,6 +1071,12 @@ def _audit_agent_handoff(report: dict) -> dict:
         "- Read `00-START-NEXT-SESSION.md` first.",
         "- Read the core inventory and what-it-is docs before editing.",
         "- Run `context-kit doctor` and `context-kit orient` before changes.",
+        "- Close the loop before you leave: update docs when behavior changes.",
+        "- Close the loop before you leave: refresh or verify the inventory when commands, routes, or features change.",
+        "- Close the loop before you leave: remove, ignore, or intentionally track generated artifacts.",
+        "- Close the loop before you leave: run `context-kit verify` and `context-kit doctor` where applicable before handoff.",
+        "- Close the loop before you leave: write or update a handoff note after major work.",
+        "- Correct stale docs before closing the task.",
         "- Prefer scoped audits over broad repo scans.",
         "- Report commands and tests run.",
     ]) + "\n"

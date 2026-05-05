@@ -18,8 +18,8 @@ If you have the `context-kit` CLI on PATH, just run:
 context-kit codex --mode=execute --short
 ```
 
-That opens Codex interactively and copies the startup prompt. For
-one-shot automation, use:
+That opens Codex interactively and copies the startup prompt. Paste
+that prompt as the first Codex message. For one-shot automation, use:
 
 ```bash
 context-kit codex --exec --mode=execute --short
@@ -66,6 +66,14 @@ the guide docs already live at the repo root rather than under
 - **Verification config wins for doc claims.** Use `.context-kit/verify.yaml`
   as the source map for canonical docs, and treat historical docs as memory
   unless the task explicitly says to include archive evidence.
+- **Close the loop before you leave.** If behavior changes, update the
+  relevant docs. If commands, routes, or features change, refresh or verify
+  the inventory. If generated artifacts appear, remove them, ignore them, or
+  mark them intentionally tracked. Before handoff, run `context-kit verify`
+  and `context-kit doctor` where applicable. After major work, write or update
+  a handoff note.
+- **Correct stale docs before closing the task.** Runtime truth wins over
+  stale docs, but stale docs are not acceptable as the final state.
 - **AI Notes** section in every handoff is where the AI writes as itself
   (per `08_collaboration_roles.md`).
 - **`docs/TRUST_CALIBRATION.md`** is the append-only log of calibration

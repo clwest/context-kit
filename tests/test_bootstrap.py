@@ -50,6 +50,7 @@ class TestInitWritesExpectedFiles(unittest.TestCase):
         expected = [
             "00-START-NEXT-SESSION.md",
             "CLAUDE.md",
+            "AGENTS.md",
             "docs/MY_APP_WHAT_IT_IS.md",
             "docs/MY_APP_INVENTORY.md",
             "docs/TRUST_CALIBRATION.md",
@@ -142,6 +143,20 @@ class TestInitWritesExpectedFiles(unittest.TestCase):
         self.assertTrue(body.startswith("---\n"))
         self.assertIn("state: scaffold", body.split("\n---\n", 1)[0])
 
+    def test_agents_md_contains_agent_orientation_rules(self):
+        target = self.tmpdir / "agents-check"
+        run_init(_init_args("Agents Check", target))
+        body = (target / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("00-START-NEXT-SESSION.md", body)
+        self.assertIn("docs/AGENTS_CHECK_WHAT_IT_IS.md", body)
+        self.assertIn("docs/AGENTS_CHECK_INVENTORY.md", body)
+        self.assertIn("context-kit doctor", body)
+        self.assertIn("context-kit orient", body)
+        self.assertIn("Close the loop before you leave", body)
+        self.assertIn("context-kit verify", body)
+        self.assertIn("handoff note", body)
+        self.assertIn("Do not edit code until you have oriented", body)
+
     def test_claude_skill_copied_into_generated_project(self):
         target = self.tmpdir / "skill"
         run_init(_init_args("Skill", target))
@@ -175,6 +190,7 @@ class TestPackagedResources(unittest.TestCase):
         import importlib.resources as resources
         cli_root = resources.files("cli")
         self.assertTrue((cli_root / "_starter" / "root" / "CLAUDE.md").is_file())
+        self.assertTrue((cli_root / "_starter" / "root" / "AGENTS.md").is_file())
         self.assertTrue((cli_root / "_starter" / "root" / "00-START-NEXT-SESSION.md").is_file())
         self.assertTrue((cli_root / "_starter" / "docs" / "TRUST_CALIBRATION.md").is_file())
         self.assertTrue(

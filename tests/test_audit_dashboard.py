@@ -312,6 +312,9 @@ class TestAuditDispatch(unittest.TestCase):
         self.assertIn("Codex Prompt", handoff["markdown"])
         self.assertIn("Claude Code Prompt", handoff["markdown"])
         self.assertIn("AGENTS.md Prompt", handoff["markdown"])
+        self.assertIn("Close the loop before you leave", handoff["agents_prompt"])
+        self.assertIn("context-kit verify", handoff["agents_prompt"])
+        self.assertIn("handoff note", handoff["agents_prompt"])
         self.assertIn("do not commit unless instructed", handoff["markdown"].lower())
         self.assertIn("run tests after making changes", handoff["markdown"].lower())
         self.assertIn("read `00-start-next-session.md` first", handoff["markdown"].lower())
@@ -395,6 +398,7 @@ class TestAuditDispatch(unittest.TestCase):
         self.assertIn("Codex Prompt", md)
         self.assertIn("Claude Code Prompt", md)
         self.assertIn("AGENTS.md Prompt", md)
+        self.assertIn("Close the loop before you leave", md)
 
     def test_risk_level_calculation_changes_with_signals(self):
         low = {"command": "inspect", "findings": [], "critical_issues": []}

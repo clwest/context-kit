@@ -54,19 +54,28 @@ def run_codex(args: argparse.Namespace) -> int:
     exec_mode = bool(getattr(args, "exec", False))
     interactive_mode = bool(getattr(args, "interactive", False)) or not exec_mode
     launch_mode = "exec" if exec_mode else "interactive"
+    print_prompt = bool(getattr(args, "print_prompt", False))
 
     codex_bin = shutil.which("codex")
     if codex_bin is None:
         print("Codex CLI: not found on PATH.")
         _print_verify_status(verify_status)
+        if print_prompt:
+            print("=== Codex startup prompt ===")
+            print(prompt.rstrip())
+            print("=== End Codex startup prompt ===")
         if interactive_mode:
-            print("Codex is opening interactively. Paste the copied startup prompt as the first message.")
+            _print_interactive_handoff_notice(prompt_copied=False)
         else:
             print("Codex is running one-shot with `codex exec`.")
         _emit_prompt_fallback(prompt, copied=_copy_to_clipboard(prompt), interactive=interactive_mode)
         return 0
 
     _print_verify_status(verify_status)
+    if print_prompt:
+        print("=== Codex startup prompt ===")
+        print(prompt.rstrip())
+        print("=== End Codex startup prompt ===")
     if interactive_mode:
         copied = _copy_to_clipboard(prompt)
         print("Prompt copied to clipboard." if copied else "Clipboard unavailable.")
@@ -76,7 +85,8 @@ def run_codex(args: argparse.Namespace) -> int:
         return 0
     if launch_result == "interactive":
         print("Codex CLI: launched interactively.")
-        print("Codex is opening interactively. Paste the copied startup prompt as the first message.")
+        _print_interactive_handoff_notice(prompt_copied=True)
+        print("If Codex opened without the context-kit prompt, rerun and paste the clipboard contents as the first message.")
         return 0
 
     print("Codex CLI: launch failed; showing the prompt instead.")
@@ -161,6 +171,12 @@ def render_codex_prompt(
     lines.append("- Use `.context-kit/verify.yaml` as the verification source map")
     lines.append("- Run `context-kit inspect` before trusting the repo shape")
     lines.append("- Run `context-kit verify` before trusting documentation claims")
+    lines.append("- Close the loop before you leave: update docs when behavior changes")
+    lines.append("- Close the loop before you leave: refresh or verify the inventory when commands, routes, or features change")
+    lines.append("- Close the loop before you leave: remove, ignore, or intentionally track generated artifacts")
+    lines.append("- Close the loop before you leave: run `context-kit verify` and `context-kit doctor` where applicable before handoff")
+    lines.append("- Close the loop before you leave: write or update a handoff note after major work")
+    lines.append("- Correct stale docs before closing the task")
     lines.append("- Do not modify protected systems")
     lines.append("- LLM = language layer only")
     lines.append("- Drift checks are warnings; do not treat warnings as blockers unless the user says so")
@@ -213,6 +229,12 @@ def _render_short_prompt(
     lines.append("- Use `.context-kit/verify.yaml` as the verification source map")
     lines.append("- Run `context-kit inspect` before trusting the repo shape")
     lines.append("- Run `context-kit verify` before trusting documentation claims")
+    lines.append("- Close the loop before you leave: update docs when behavior changes")
+    lines.append("- Close the loop before you leave: refresh or verify the inventory when commands, routes, or features change")
+    lines.append("- Close the loop before you leave: remove, ignore, or intentionally track generated artifacts")
+    lines.append("- Close the loop before you leave: run `context-kit verify` and `context-kit doctor` where applicable before handoff")
+    lines.append("- Close the loop before you leave: write or update a handoff note after major work")
+    lines.append("- Correct stale docs before closing the task")
     lines.append("- Warnings are advisory; blocking items stop work")
     lines.append("- Do not expand scope without asking")
     lines.append("- If unclear, ask before acting")
@@ -381,7 +403,8 @@ def _emit_prompt_fallback(prompt: str, *, copied: bool, interactive: bool) -> No
     else:
         print("Clipboard unavailable.")
     if interactive:
-        print("Codex is opening interactively. Paste the copied startup prompt as the first message.")
+        _print_interactive_handoff_notice(prompt_copied=copied)
+        print("If Codex opened without the context-kit prompt, rerun and paste the clipboard contents as the first message.")
     else:
         print("Codex is running one-shot with `codex exec`.")
         print("Paste the prompt below into Codex.")
@@ -389,6 +412,15 @@ def _emit_prompt_fallback(prompt: str, *, copied: bool, interactive: bool) -> No
     print("=== Codex startup prompt ===")
     print(prompt.rstrip())
     print("=== End Codex startup prompt ===")
+
+
+def _print_interactive_handoff_notice(*, prompt_copied: bool) -> None:
+    print("NEXT STEP: paste the copied context-kit startup prompt into Codex.")
+    print("Do not type a task first.")
+    if prompt_copied:
+        print("The prompt is already on your clipboard.")
+    else:
+        print("The prompt is not on your clipboard yet.")
 
 
 def _launch_codex(codex_bin: str, project: Path, prompt: str, *, launch_mode: str) -> str:
@@ -401,7 +433,7 @@ def _launch_codex(codex_bin: str, project: Path, prompt: str, *, launch_mode: st
                 check=False,
             )
             return "exec" if result.returncode == 0 else "failed"
-        subprocess.run([codex_bin], cwd=project, check=False)
+        subprocess.run([codex_bin, prompt], cwd=project, check=False)
         return "interactive"
     except OSError:
         return "failed"
