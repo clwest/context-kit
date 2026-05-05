@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>context-kit · audit dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #151822;
+    --panel-2: #1c2030;
+    --border: #262a35;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --accent: #6ee7b7;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fafbfc;
+      --panel: #ffffff;
+      --panel-2: #f3f4f6;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #059669;
+      --warn: #b45309;
+      --danger: #dc2626;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  header { margin-bottom: 1.25rem; }
+  h1 { margin: 0 0 .25rem; font-size: 1.6rem; }
+  .tag { color: var(--muted); }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    margin: 0 0 1rem;
+  }
+  .grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 1rem; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  label { display: block; margin: .75rem 0 .35rem; color: var(--muted); font-size: .88rem; }
+  input, select, button {
+    font: inherit;
+  }
+  input[type="text"], select {
+    width: 100%;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .6rem .7rem;
+  }
+  input[type="checkbox"] { margin-right: .5rem; }
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: .6rem .9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
+  .muted { color: var(--muted); }
+  .small { font-size: .88rem; }
+  .status {
+    margin-top: .75rem;
+    padding: .6rem .75rem;
+    border-radius: 8px;
+    background: var(--panel-2);
+    color: var(--muted);
+  }
+  .status.ok { color: var(--accent); }
+  .status.warn { color: var(--warn); }
+  .status.err { color: var(--danger); }
+  ul { margin: .5rem 0 0; padding-left: 1.1rem; }
+  li { margin: .35rem 0; }
+  code, pre {
+    font-family: var(--mono);
+    background: var(--panel-2);
+    border-radius: 6px;
+  }
+  code { padding: .1rem .3rem; }
+  pre {
+    padding: .75rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .findings li, .issues li { border-left: 3px solid var(--border); padding-left: .75rem; }
+  .severity-high { border-left-color: var(--danger); }
+  .severity-medium { border-left-color: var(--warn); }
+  .severity-warning { border-left-color: var(--warn); }
+  .severity-advisory, .severity-low { border-left-color: var(--border); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>context-kit audit dashboard</h1>
+    <div class="tag">Read-only audit runner for inspect, coverage, behavior, connections, verify, and doctor.</div>
+    <div class="tag">cwd: <code>{{PROJECT_ROOT}}</code></div>
+  </header>
+
+  <section class="grid">
+    <div>
+      <label for="pathInput">Path</label>
+      <input id="pathInput" type="text" value=".">
+
+      <label for="commandSelect">Audit command</label>
+      <select id="commandSelect">
+        <option value="inspect">inspect</option>
+        <option value="coverage">coverage</option>
+        <option value="behavior">behavior</option>
+        <option value="connections">connections</option>
+        <option value="verify">verify</option>
+        <option value="doctor">doctor</option>
+      </select>
+
+      <label for="audienceSelect">Explain For:</label>
+      <select id="audienceSelect">
+        <option value="developer">developer</option>
+        <option value="founder">founder</option>
+        <option value="business">business</option>
+      </select>
+
+      <div id="scopeWrap">
+        <label for="scopeSelect">Scope</label>
+        <select id="scopeSelect">
+          <option value="">(none)</option>
+          <option value="core">core</option>
+          <option value="celery">celery</option>
+          <option value="agents">agents</option>
+          <option value="spiders">spiders</option>
+          <option value="docs-rag">docs-rag</option>
+          <option value="frontend">frontend</option>
+          <option value="deployment">deployment</option>
+          <option value="tests">tests</option>
+        </select>
+      </div>
+
+      <div id="inspectOptions">
+        <label><input id="includeHistory" type="checkbox">Include historical docs</label>
+        <label><input id="includeRelated" type="checkbox">Include related paths</label>
+        <label for="depthInput">Depth</label>
+        <input id="depthInput" type="text" value="2">
+      </div>
+
+      <div id="verifyOptions" style="display:none">
+        <label><input id="includeArchive" type="checkbox">Include archive docs</label>
+        <label><input id="allDocs" type="checkbox">Scan all docs</label>
+      </div>
+
+      <div class="row" style="margin-top:1rem">
+        <button id="runBtn" type="button">Run audit</button>
+        <button id="fullAuditBtn" class="secondary" type="button">Run Full Audit</button>
+        <button id="fixPlanBtn" class="secondary" type="button">Generate Fix Plan</button>
+        <a id="exportBtn" class="secondary" href="/api/audit/report?format=json" style="display:inline-flex;align-items:center;text-decoration:none;padding:.55rem .9rem;">Export JSON</a>
+        <a id="fixPlanExportBtn" class="secondary" href="/api/audit/report?format=fix-plan-md" style="display:inline-flex;align-items:center;text-decoration:none;padding:.55rem .9rem;">Export Fix Plan MD</a>
+      </div>
+
+      <div id="status" class="status">Ready.</div>
+    </div>
+
+    <div>
+      <h2 style="margin:.25rem 0 .5rem">Summary</h2>
+      <div id="summaryCard" class="status">No audit has run yet.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Findings</h2>
+    <ul id="findingsList" class="findings">
+      <li class="muted">No findings yet.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Critical Issues</h2>
+    <div class="small muted">This section highlights non-verified claims or higher-severity risk signals from the findings.</div>
+    <ul id="criticalIssues" class="issues">
+      <li class="muted">No critical issues yet.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Fix Plan</h2>
+    <div class="small muted">Derived from the current findings and ordered by impact.</div>
+    <div id="fixPlanSummary" class="status">No fix plan yet.</div>
+    <ol id="fixPlanSteps">
+      <li class="muted">Run an audit to generate a fix plan.</li>
+    </ol>
+    <h3 style="margin:.9rem 0 .35rem;font-size:1rem;">Codex prompt</h3>
+    <pre id="fixPlanPrompt">Run an audit to generate a prompt.</pre>
+  </section>
+</div>
+
+<script>
+"use strict";
+
+const commandSelect = document.getElementById("commandSelect");
+const audienceSelect = document.getElementById("audienceSelect");
+const scopeWrap = document.getElementById("scopeWrap");
+const inspectOptions = document.getElementById("inspectOptions");
+const verifyOptions = document.getElementById("verifyOptions");
+const statusEl = document.getElementById("status");
+const summaryCard = document.getElementById("summaryCard");
+const findingsList = document.getElementById("findingsList");
+const criticalIssues = document.getElementById("criticalIssues");
+const fixPlanSummary = document.getElementById("fixPlanSummary");
+const fixPlanSteps = document.getElementById("fixPlanSteps");
+const fixPlanPrompt = document.getElementById("fixPlanPrompt");
+const exportBtn = document.getElementById("exportBtn");
+const fixPlanExportBtn = document.getElementById("fixPlanExportBtn");
+let currentReport = null;
+
+const INSPECT_SCOPES = ["core", "celery", "agents", "spiders", "docs-rag", "frontend", "deployment", "tests"];
+const CONNECTION_SCOPES = ["backend", "frontend", "mobile", "agents", "spiders", "celery"];
+const COMMAND_SCOPE_OPTIONS = {
+  inspect: INSPECT_SCOPES,
+  coverage: INSPECT_SCOPES,
+  behavior: INSPECT_SCOPES,
+  connections: CONNECTION_SCOPES,
+};
+
+function setStatus(kind, msg) {
+  statusEl.className = "status" + (kind ? " " + kind : "");
+  statusEl.textContent = msg;
+}
+
+function currentCommand() {
+  return commandSelect.value;
+}
+
+function toggleOptions() {
+  const cmd = currentCommand();
+  inspectOptions.style.display = ["inspect", "coverage", "behavior"].includes(cmd) ? "block" : "none";
+  verifyOptions.style.display = cmd === "verify" ? "block" : "none";
+  scopeWrap.style.display = ["inspect", "coverage", "behavior", "connections"].includes(cmd) ? "block" : "none";
+  renderScopeOptions(cmd);
+}
+
+function renderScopeOptions(cmd) {
+  const scopeSelect = document.getElementById("scopeSelect");
+  const previous = scopeSelect.value;
+  const options = COMMAND_SCOPE_OPTIONS[cmd] || [];
+  scopeSelect.innerHTML = '<option value="">(none)</option>';
+  options.forEach(scope => {
+    const option = document.createElement("option");
+    option.value = scope;
+    option.textContent = scope;
+    scopeSelect.appendChild(option);
+  });
+  if (options.includes(previous)) {
+    scopeSelect.value = previous;
+  } else {
+    scopeSelect.value = "";
+  }
+}
+
+function readPayload() {
+  const cmd = currentCommand();
+  const payload = {
+    path: document.getElementById("pathInput").value.trim() || ".",
+    command: cmd,
+    audience: audienceSelect.value || "developer",
+  };
+  if (["inspect", "coverage", "behavior", "connections"].includes(cmd)) {
+    const scope = document.getElementById("scopeSelect").value;
+    if (scope) payload.scope = scope;
+  }
+  if (cmd === "inspect") {
+    payload.depth = parseInt(document.getElementById("depthInput").value, 10) || 2;
+    payload.include_history = document.getElementById("includeHistory").checked;
+    payload.include_related = document.getElementById("includeRelated").checked;
+  } else if (cmd === "verify") {
+    payload.include_archive = document.getElementById("includeArchive").checked;
+    payload.all_docs = document.getElementById("allDocs").checked;
+  }
+  return payload;
+}
+
+function normalizeReport(report) {
+  if (!report) return null;
+  if (report.summary && report.findings) return report;
+  return report;
+}
+
+function renderSummary(report) {
+  const summary = report.summary || {};
+  const entries = Object.entries(summary);
+  if (!entries.length) {
+    summaryCard.textContent = "No summary data returned.";
+    return;
+  }
+  const summaryValue = value => {
+    if (value && typeof value === "object") return escapeHtml(JSON.stringify(value, null, 2));
+    return escapeHtml(value);
+  };
+  const parts = [
+    `<div><strong>${report.command}</strong>${report.audience ? ` · explain for ${escapeHtml(report.audience)}` : ""} · ${report.status} · ${report.generated_at || ""}</div>`,
+    "<ul>",
+  ];
+  entries.forEach(([key, value]) => {
+    parts.push(`<li><code>${escapeHtml(key)}</code>: ${summaryValue(value)}</li>`);
+  });
+  parts.push("</ul>");
+  summaryCard.innerHTML = parts.join("");
+}
+
+function renderFindings(list) {
+  findingsList.innerHTML = "";
+  if (!list || !list.length) {
+    findingsList.innerHTML = '<li class="muted">No findings.</li>';
+    return;
+  }
+  list.forEach(item => {
+    const li = document.createElement("li");
+    const severity = (item.severity || item.status || "advisory").toLowerCase();
+    li.className = "severity-" + severity;
+    li.innerHTML = `
+      <strong>${escapeHtml(item.title || item.id || "finding")}</strong>
+      <div class="muted small">${escapeHtml(item.status || item.severity || "")}</div>
+      ${item.impact ? `<div class="small"><strong>Impact:</strong> ${escapeHtml(item.impact)}</div>` : ""}
+      ${item.details ? `<div>${escapeHtml(item.details)}</div>` : ""}
+      ${item.recommendation ? `<div class="muted small">${escapeHtml(item.recommendation)}</div>` : ""}
+    `;
+    findingsList.appendChild(li);
+  });
+}
+
+function renderCriticalIssues(report) {
+  const view = report.translation || report;
+  const items = Array.isArray(view.critical_issues) ? view.critical_issues : (view.findings || []);
+  criticalIssues.innerHTML = "";
+  if (!items.length) {
+    criticalIssues.innerHTML = '<li class="muted">No critical issues.</li>';
+    return;
+  }
+  items.forEach(item => {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <strong>${escapeHtml(item.title || item.id || "issue")}</strong>
+      ${item.explanation ? `<div>${escapeHtml(item.explanation)}</div>` : ""}
+      ${item.impact ? `<div class="small"><strong>Impact:</strong> ${escapeHtml(item.impact)}</div>` : ""}
+      ${item.details ? `<div>${escapeHtml(item.details)}</div>` : ""}
+    `;
+    criticalIssues.appendChild(li);
+  });
+}
+
+function generateFixPlan(report) {
+  const view = report.translation || report;
+  const critical = (view.critical_issues || []).slice();
+  const steps = view.fix_plan && Array.isArray(view.fix_plan.steps) ? view.fix_plan.steps : [];
+  const summary = view.fix_plan && view.fix_plan.summary ? view.fix_plan.summary : {};
+  fixPlanSummary.innerHTML = `<strong>${escapeHtml(summary.critical_count ?? critical.length)}</strong> critical issue(s).`;
+  fixPlanSteps.innerHTML = "";
+  if (!steps.length) {
+    fixPlanSteps.innerHTML = '<li class="muted">No fix plan available.</li>';
+  } else {
+    steps.forEach(step => {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <strong>${escapeHtml(step.step || "")}. ${escapeHtml(step.title || "Issue")}</strong>
+        ${step.explanation ? `<div>${escapeHtml(step.explanation)}</div>` : ""}
+        ${step.impact ? `<div class="small"><strong>Impact:</strong> ${escapeHtml(step.impact)}</div>` : ""}
+        ${step.action ? `<div>${escapeHtml(step.action)}</div>` : ""}
+        ${step.evidence ? `<div class="muted small">${escapeHtml(step.evidence)}</div>` : ""}
+      `;
+      fixPlanSteps.appendChild(li);
+    });
+  }
+  fixPlanPrompt.textContent = (view.fix_plan && view.fix_plan.codex_prompt) ||
+    buildCodexPrompt(report, critical, steps);
+}
+
+function buildCodexPrompt(report, critical, steps) {
+  const lines = [
+    "You are helping fix the highest-priority issues from a read-only context-kit audit.",
+    `Audit command: ${report.command || ""}`,
+    `Scope: ${report.scope || "(none)"}`,
+    "",
+    "Critical issues:",
+  ];
+  if (steps.length) {
+    steps.forEach(step => {
+      lines.push(`- ${step.step}. ${step.title} — ${step.impact || "no impact supplied"}`);
+    });
+  } else if (critical.length) {
+    critical.forEach((item, idx) => {
+      lines.push(`- ${idx + 1}. ${item.title || item.id || "Issue"} — ${item.impact || "no impact supplied"}`);
+    });
+  } else {
+    lines.push("- None. Confirm the repo is in good shape and summarize the next safe checks.");
+  }
+  lines.push("", "Instructions:", "1. Work in order.", "2. Start with the highest-impact issue.", "3. Keep changes read-only until you have a concrete fix plan.", "4. Prefer small, reversible edits.", "5. Report what changed, what remains open, and any follow-up checks.");
+  return lines.join("\n");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+async function loadState() {
+  const resp = await fetch("/api/audit/state");
+  if (!resp.ok) {
+    setStatus("err", "Could not load audit state.");
+    return;
+  }
+  const data = await resp.json();
+  document.getElementById("pathInput").value = data.default_path || ".";
+  document.getElementById("pathInput").title = data.cwd || "";
+  if (data.last_run && data.last_run.audience) {
+    audienceSelect.value = data.last_run.audience;
+  }
+  if (data.last_run) {
+    exportBtn.href = "/api/audit/report?format=json";
+    fixPlanExportBtn.href = "/api/audit/report?format=fix-plan-md";
+    const reportResp = await fetch("/api/audit/report?format=json");
+    if (reportResp.ok) {
+      const report = normalizeReport(await reportResp.json());
+      if (report) {
+        currentReport = report;
+        if (report.audience) {
+          audienceSelect.value = report.audience;
+        }
+        renderSummary(report);
+        renderFindings(report.findings || []);
+        renderCriticalIssues(report);
+        generateFixPlan(report);
+        setStatus("ok", "Loaded the last report.");
+      }
+    }
+  }
+}
+
+async function runAudit() {
+  setStatus("", "Running read-only audit...");
+  const payload = readPayload();
+  const resp = await fetch("/api/audit/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    setStatus("err", data.error || "Audit failed.");
+    return;
+  }
+  const report = normalizeReport(data);
+  currentReport = report;
+  renderSummary(report);
+  renderFindings(report.findings || []);
+  renderCriticalIssues(report);
+  generateFixPlan(report);
+  setStatus("ok", "Audit complete.");
+  exportBtn.href = "/api/audit/report?format=json";
+  fixPlanExportBtn.href = "/api/audit/report?format=fix-plan-md";
+}
+
+async function runFullAudit() {
+  setStatus("", "Running full audit...");
+  const payload = readPayload();
+  payload.command = "full";
+  const resp = await fetch("/api/audit/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    setStatus("err", data.error || "Full audit failed.");
+    return;
+  }
+  const report = normalizeReport(data);
+  currentReport = report;
+  renderSummary(report);
+  renderFindings(report.findings || []);
+  renderCriticalIssues(report);
+  generateFixPlan(report);
+  setStatus("ok", "Full audit complete.");
+  exportBtn.href = "/api/audit/report?format=json";
+  fixPlanExportBtn.href = "/api/audit/report?format=fix-plan-md";
+}
+
+function triggerFixPlan() {
+  if (!currentReport) {
+    setStatus("warn", "Run an audit first so there is a fix plan to generate.");
+    return;
+  }
+  generateFixPlan(currentReport);
+  setStatus("ok", "Fix plan generated from the current audit.");
+}
+
+commandSelect.addEventListener("change", toggleOptions);
+document.getElementById("runBtn").addEventListener("click", runAudit);
+document.getElementById("fullAuditBtn").addEventListener("click", runFullAudit);
+document.getElementById("fixPlanBtn").addEventListener("click", triggerFixPlan);
+audienceSelect.addEventListener("change", () => {
+  if (currentReport) {
+    renderCriticalIssues(currentReport);
+    generateFixPlan(currentReport);
+  }
+});
+toggleOptions();
+loadState();
+</script>
+</body>
+</html>
