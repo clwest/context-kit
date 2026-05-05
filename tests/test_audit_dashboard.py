@@ -19,11 +19,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from cli.server import (  # noqa: E402
     _OnboardingHandler,
+    _audit_agent_handoff,
     _audit_fix_plan_markdown,
     _audit_risk_level,
     _audit_run,
     _audit_fix_plan,
     _audit_impact,
+    _audit_handoff_markdown,
     _audit_translate_report,
     _render_audit_html,
     _render_html,
@@ -258,6 +260,142 @@ class TestAuditDispatch(unittest.TestCase):
         self.assertIn("Codex Prompt", md)
         self.assertIn("frontend/app.py: /api/demo", md)
 
+    def test_handoff_translation_includes_prompts_and_guardrails(self):
+        report = {
+            "command": "inspect",
+            "scope": "frontend",
+            "path": "/tmp/demo",
+            "generated_at": "2026-05-04T00:00:00+00:00",
+            "findings": [
+                {
+                    "id": "missing-target:/api/demo",
+                    "title": "Missing backend endpoint",
+                    "severity": "high",
+                    "status": "high",
+                    "category": "missing_target",
+                    "details": "frontend/app.py: /api/demo",
+                    "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                    "recommendation": "Implement the endpoint.",
+                }
+            ],
+            "critical_issues": [
+                {
+                    "id": "missing-target:/api/demo",
+                    "title": "Missing backend endpoint",
+                    "severity": "high",
+                    "status": "high",
+                    "category": "missing_target",
+                    "details": "frontend/app.py: /api/demo",
+                    "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                    "recommendation": "Implement the endpoint.",
+                }
+            ],
+            "fix_plan": {
+                "summary": {"critical_count": 1, "command": "inspect", "scope": "frontend"},
+                "steps": [
+                    {
+                        "step": 1,
+                        "title": "Missing backend endpoint",
+                        "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                        "action": "Implement the endpoint.",
+                        "evidence": "frontend/app.py: /api/demo",
+                    }
+                ],
+                "codex_prompt": "You are Codex helping fix the highest-priority issues from a read-only context-kit audit.\n",
+            },
+        }
+        translated = _audit_translate_report(report, "founder")
+        handoff = _audit_agent_handoff(translated)
+        self.assertEqual(handoff["repo_path"], "/tmp/demo")
+        self.assertEqual(handoff["audit_command"], "inspect")
+        self.assertEqual(handoff["critical_count"], 1)
+        self.assertIn("Codex Prompt", handoff["markdown"])
+        self.assertIn("Claude Code Prompt", handoff["markdown"])
+        self.assertIn("AGENTS.md Prompt", handoff["markdown"])
+        self.assertIn("do not commit unless instructed", handoff["markdown"].lower())
+        self.assertIn("run tests after making changes", handoff["markdown"].lower())
+        self.assertIn("read `00-start-next-session.md` first", handoff["markdown"].lower())
+        self.assertIn("context-kit doctor", handoff["agents_prompt"])
+        self.assertIn("context-kit orient", handoff["agents_prompt"])
+        self.assertIn("highest-priority", handoff["codex_prompt"])
+        self.assertIn("read-only context-kit audit", handoff["claude_prompt"])
+
+    def test_handoff_markdown_export_contains_sections(self):
+        report = {
+            "command": "inspect",
+            "scope": "frontend",
+            "path": "/tmp/demo",
+            "generated_at": "2026-05-04T00:00:00+00:00",
+            "findings": [
+                {
+                    "id": "missing-target:/api/demo",
+                    "title": "Missing backend endpoint",
+                    "severity": "high",
+                    "status": "high",
+                    "category": "missing_target",
+                    "details": "frontend/app.py: /api/demo",
+                    "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                    "recommendation": "Implement the endpoint.",
+                }
+            ],
+            "critical_issues": [
+                {
+                    "id": "missing-target:/api/demo",
+                    "title": "Missing backend endpoint",
+                    "severity": "high",
+                    "status": "high",
+                    "category": "missing_target",
+                    "details": "frontend/app.py: /api/demo",
+                    "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                    "recommendation": "Implement the endpoint.",
+                }
+            ],
+            "fix_plan": {
+                "summary": {"critical_count": 1, "command": "inspect", "scope": "frontend"},
+                "steps": [
+                    {
+                        "step": 1,
+                        "title": "Missing backend endpoint",
+                        "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                        "action": "Implement the endpoint.",
+                        "evidence": "frontend/app.py: /api/demo",
+                    }
+                ],
+                "codex_prompt": "You are Codex helping fix the highest-priority issues from a read-only context-kit audit.\n",
+            },
+            "translation": {
+                "critical_issues": [
+                    {
+                        "title": "Missing backend endpoint",
+                        "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                        "details": "frontend/app.py: /api/demo",
+                        "explanation": "The client call has no matching backend route.",
+                    }
+                ],
+                "fix_plan": {
+                    "steps": [
+                        {
+                            "step": 1,
+                            "title": "Missing backend endpoint",
+                            "impact": "High impact: a backend endpoint is referenced by clients but no matching route was found.",
+                            "action": "Implement the endpoint.",
+                            "evidence": "frontend/app.py: /api/demo",
+                        }
+                    ],
+                    "codex_prompt": "You are Codex helping fix the highest-priority issues from a read-only context-kit audit.\n",
+                },
+            },
+        }
+        md = _audit_handoff_markdown(report)
+        self.assertIn("Agent Handoff", md)
+        self.assertIn("Repo path", md)
+        self.assertIn("Risk level", md)
+        self.assertIn("Critical Issues", md)
+        self.assertIn("Fix Plan", md)
+        self.assertIn("Codex Prompt", md)
+        self.assertIn("Claude Code Prompt", md)
+        self.assertIn("AGENTS.md Prompt", md)
+
     def test_risk_level_calculation_changes_with_signals(self):
         low = {"command": "inspect", "findings": [], "critical_issues": []}
         medium = {
@@ -348,6 +486,7 @@ class TestAuditDispatch(unittest.TestCase):
                 self.assertIn("risk_level", translated["translation"]["executive_summary"])
                 self.assertIn("explanation", translated["translation"]["critical_issues"][0])
                 self.assertIn("codex_prompt", translated["translation"]["fix_plan"])
+                self.assertIn("agent_handoff", translated["translation"])
                 self.assertNotEqual(
                     translated["translation"]["fix_plan"]["codex_prompt"],
                     report["fix_plan"]["codex_prompt"],
@@ -510,6 +649,10 @@ class TestLiveAuditServer(unittest.TestCase):
         self.assertIn("Generate Fix Plan", body)
         self.assertIn("Run Full Audit", body)
         self.assertIn("Fix Plan", body)
+        self.assertIn("Agent Handoff", body)
+        self.assertIn("Copy Codex Prompt", body)
+        self.assertIn("Copy Claude Prompt", body)
+        self.assertIn("Download Handoff.md", body)
         self.assertIn("Supporting Findings", body)
 
     def test_audit_state_reports_supported_commands_and_scopes(self):
@@ -578,6 +721,7 @@ class TestLiveAuditServer(unittest.TestCase):
                 "codex_prompt": "You are helping fix the highest-priority issues from a read-only context-kit audit.\n",
             },
         }
+        fake_report["agent_handoff"] = _audit_agent_handoff(_audit_translate_report(fake_report, None))
         with patch("cli.server._audit_run", return_value=fake_report):
             status, body = self._post_json("/api/audit/run", {
                 "path": ".",
@@ -607,6 +751,9 @@ class TestLiveAuditServer(unittest.TestCase):
         self.assertEqual(report["command"], "inspect")
         self.assertEqual(report["findings"][0]["id"], "risk-1")
         self.assertEqual(report["fix_plan"]["steps"][0]["step"], 1)
+        self.assertIn("agent_handoff", report)
+        self.assertIn("Codex Prompt", report["agent_handoff"]["markdown"])
+        self.assertIn("Claude Code Prompt", report["agent_handoff"]["markdown"])
 
         status, body = self._get("/api/audit/report?format=fix-plan-md")
         self.assertEqual(status, 200)
@@ -614,6 +761,14 @@ class TestLiveAuditServer(unittest.TestCase):
         self.assertIn("Fix Order", body)
         self.assertIn("Codex Prompt", body)
         self.assertIn("Evidence", body)
+
+        status, body = self._get("/api/audit/report?format=handoff-md")
+        self.assertEqual(status, 200)
+        self.assertIn("Agent Handoff", body)
+        self.assertIn("Repo path", body)
+        self.assertIn("AGENTS.md Prompt", body)
+        self.assertIn("Claude Code Prompt", body)
+        self.assertIn("Codex Prompt", body)
 
     def test_unsupported_command_is_rejected(self):
         status, body = self._post_json("/api/audit/run", {

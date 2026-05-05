@@ -224,6 +224,22 @@
   </section>
 
   <section>
+    <h2>Agent Handoff</h2>
+    <div id="handoffMeta" class="status">No handoff yet.</div>
+    <div class="row" style="margin-top:.75rem">
+      <button id="copyCodexBtn" class="secondary" type="button">Copy Codex Prompt</button>
+      <button id="copyClaudeBtn" class="secondary" type="button">Copy Claude Prompt</button>
+      <button id="downloadHandoffBtn" class="secondary" type="button">Download Handoff.md</button>
+    </div>
+    <h3 style="margin:.9rem 0 .35rem;font-size:1rem;">Codex Prompt</h3>
+    <pre id="handoffCodexPrompt">Run an audit to generate a Codex prompt.</pre>
+    <h3 style="margin:.9rem 0 .35rem;font-size:1rem;">Claude Code Prompt</h3>
+    <pre id="handoffClaudePrompt">Run an audit to generate a Claude prompt.</pre>
+    <h3 style="margin:.9rem 0 .35rem;font-size:1rem;">AGENTS.md Prompt</h3>
+    <pre id="handoffAgentsPrompt">Run an audit to generate an AGENTS.md prompt.</pre>
+  </section>
+
+  <section>
     <details>
       <summary style="cursor:pointer;font-weight:600;">Supporting Findings</summary>
       <div class="small muted" style="margin-top:.5rem">Secondary evidence and raw findings. Useful for implementation detail, but not the lead read.</div>
@@ -250,9 +266,17 @@ const criticalIssues = document.getElementById("criticalIssues");
 const fixPlanSummary = document.getElementById("fixPlanSummary");
 const fixPlanSteps = document.getElementById("fixPlanSteps");
 const fixPlanPrompt = document.getElementById("fixPlanPrompt");
+const handoffMeta = document.getElementById("handoffMeta");
+const handoffCodexPrompt = document.getElementById("handoffCodexPrompt");
+const handoffClaudePrompt = document.getElementById("handoffClaudePrompt");
+const handoffAgentsPrompt = document.getElementById("handoffAgentsPrompt");
+const copyCodexBtn = document.getElementById("copyCodexBtn");
+const copyClaudeBtn = document.getElementById("copyClaudeBtn");
+const downloadHandoffBtn = document.getElementById("downloadHandoffBtn");
 const exportBtn = document.getElementById("exportBtn");
 const fixPlanExportBtn = document.getElementById("fixPlanExportBtn");
 let currentReport = null;
+let currentHandoff = null;
 
 const INSPECT_SCOPES = ["core", "celery", "agents", "spiders", "docs-rag", "frontend", "deployment", "tests"];
 const CONNECTION_SCOPES = ["backend", "frontend", "mobile", "agents", "spiders", "celery"];
@@ -435,6 +459,58 @@ function generateFixPlan(report) {
     buildCodexPrompt(report, critical, steps);
 }
 
+function renderAgentHandoff(report) {
+  const handoff = report.agent_handoff || (report.translation && report.translation.agent_handoff);
+  if (!handoff) {
+    currentHandoff = null;
+    handoffMeta.textContent = "No handoff yet.";
+    handoffCodexPrompt.textContent = "Run an audit to generate a Codex prompt.";
+    handoffClaudePrompt.textContent = "Run an audit to generate a Claude prompt.";
+    handoffAgentsPrompt.textContent = "Run an audit to generate an AGENTS.md prompt.";
+    return;
+  }
+  currentHandoff = handoff;
+  handoffMeta.innerHTML = `
+    <div><strong>Repo:</strong> ${escapeHtml(handoff.repo_path || "(unknown)")}</div>
+    <div><strong>Command:</strong> ${escapeHtml(handoff.audit_command || "")}</div>
+    <div><strong>Risk Level:</strong> ${escapeHtml(handoff.risk_level || "Low")}</div>
+    <div><strong>Critical Issues:</strong> ${escapeHtml(handoff.critical_count ?? 0)}</div>
+    <div class="small"><strong>Guardrails:</strong> ${escapeHtml((handoff.guardrails || []).join(" · "))}</div>
+  `;
+  handoffCodexPrompt.textContent = handoff.codex_prompt || "";
+  handoffClaudePrompt.textContent = handoff.claude_prompt || "";
+  handoffAgentsPrompt.textContent = handoff.agents_prompt || "";
+}
+
+async function copyText(text, label) {
+  if (!text) {
+    setStatus("warn", `${label} is empty.`);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("ok", `${label} copied to clipboard.`);
+  } catch (error) {
+    setStatus("warn", `Could not copy ${label.toLowerCase()} automatically.`);
+  }
+}
+
+function downloadMarkdown(filename, content) {
+  if (!content) {
+    setStatus("warn", "No handoff markdown to download.");
+    return;
+  }
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function buildCodexPrompt(report, critical, steps) {
   const lines = [
     "You are helping fix the highest-priority issues from a read-only context-kit audit.",
@@ -495,6 +571,7 @@ async function loadState() {
         renderFindings(report.findings || []);
         renderCriticalIssues(report);
         generateFixPlan(report);
+        renderAgentHandoff(report);
         setStatus("ok", "Loaded the last report.");
       }
     }
@@ -521,6 +598,7 @@ async function runAudit() {
   renderFindings(report.findings || []);
   renderCriticalIssues(report);
   generateFixPlan(report);
+  renderAgentHandoff(report);
   setStatus("ok", "Audit complete.");
   exportBtn.href = "/api/audit/report?format=json";
   fixPlanExportBtn.href = "/api/audit/report?format=fix-plan-md";
@@ -547,6 +625,7 @@ async function runFullAudit() {
   renderFindings(report.findings || []);
   renderCriticalIssues(report);
   generateFixPlan(report);
+  renderAgentHandoff(report);
   setStatus("ok", "Full audit complete.");
   exportBtn.href = "/api/audit/report?format=json";
   fixPlanExportBtn.href = "/api/audit/report?format=fix-plan-md";
@@ -565,10 +644,14 @@ commandSelect.addEventListener("change", toggleOptions);
 document.getElementById("runBtn").addEventListener("click", runAudit);
 document.getElementById("fullAuditBtn").addEventListener("click", runFullAudit);
 document.getElementById("fixPlanBtn").addEventListener("click", triggerFixPlan);
+copyCodexBtn.addEventListener("click", () => copyText(currentHandoff && currentHandoff.codex_prompt, "Codex prompt"));
+copyClaudeBtn.addEventListener("click", () => copyText(currentHandoff && currentHandoff.claude_prompt, "Claude prompt"));
+downloadHandoffBtn.addEventListener("click", () => downloadMarkdown("Handoff.md", currentHandoff && currentHandoff.markdown));
 audienceSelect.addEventListener("change", () => {
   if (currentReport) {
     renderCriticalIssues(currentReport);
     generateFixPlan(currentReport);
+    renderAgentHandoff(currentReport);
   }
 });
 toggleOptions();

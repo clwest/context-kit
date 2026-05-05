@@ -965,11 +965,191 @@ def _audit_translate_report(report: dict, audience: str | None) -> dict:
             "recommendation": executive_summary["recommendation"],
         },
     }
-    return {
+    translated_report = {
         **report,
         "audience": normalized,
         "risk_level": executive_summary["risk_level"],
         "translation": translation,
+    }
+    translated_report["agent_handoff"] = _audit_agent_handoff(translated_report)
+    translated_report["translation"]["agent_handoff"] = translated_report["agent_handoff"]
+    return translated_report
+
+
+def _audit_agent_handoff(report: dict) -> dict:
+    translation = report.get("translation") or {}
+    audience = str(report.get("audience") or translation.get("audience") or "developer")
+    exec_summary = translation.get("executive_summary") or _audit_executive_summary(report, audience)
+    critical = translation.get("critical_issues") or report.get("critical_issues") or _audit_critical_issues(report.get("findings", []), str(report.get("command", "")))
+    fix_plan = translation.get("fix_plan") or report.get("fix_plan") or _audit_fix_plan(report)
+    guardrails = [
+        "Do not edit unrelated files.",
+        "Run tests after making changes.",
+        "Do not commit unless instructed.",
+        "Keep the work read-only until the plan is clear.",
+        "Prefer scoped audits before broad changes.",
+    ]
+    repo_path = (
+        report.get("path")
+        or report.get("repo_path")
+        or (report.get("raw_json") or {}).get("path")
+        or (report.get("raw_json") or {}).get("repo")
+        or ""
+    )
+    codex_prompt = _audit_translate_fix_prompt(report, audience, critical, fix_plan.get("steps", []))
+    claude_lines = [
+        "You are Claude Code helping resolve the highest-priority issues from a read-only context-kit audit.",
+        f"Repo path: {repo_path or '(unknown)'}",
+        f"Audit command: {report.get('command', '')}",
+        f"Audience: {audience}",
+        f"Risk level: {exec_summary.get('risk_level', 'Low')}",
+        "",
+        "Critical issues:",
+    ]
+    if critical:
+        for idx, issue in enumerate(critical, start=1):
+            claude_lines.append(f"- {idx}. {issue.get('title', issue.get('id', 'Issue'))} — {issue.get('impact', '')}")
+    else:
+        claude_lines.append("- None. Confirm the repo is in good shape and summarize the next safe checks.")
+    claude_lines.extend([
+        "",
+        "Fix plan:",
+    ])
+    if fix_plan.get("steps"):
+        for step in fix_plan["steps"]:
+            claude_lines.append(f"- {step.get('step', '?')}. {step.get('title', 'Issue')} — {step.get('impact', '')}")
+    else:
+        claude_lines.append("- None available.")
+    claude_lines.extend([
+        "",
+        "Guardrails:",
+        *[f"- {item}" for item in guardrails],
+        "",
+        "Tone: practical and concise.",
+    ])
+    claude_prompt = "\n".join(claude_lines).rstrip() + "\n"
+    agents_prompt = "\n".join([
+        "# AGENTS.md Handoff",
+        "",
+        f"- Repo path: `{repo_path or '(unknown)'}`",
+        f"- Audit command: `{report.get('command', '')}`",
+        f"- Audience: `{audience}`",
+        f"- Risk level: `{exec_summary.get('risk_level', 'Low')}`",
+        "",
+        "## Executive Summary",
+        "",
+        exec_summary.get("description", ""),
+        "",
+        f"Recommendation: {exec_summary.get('recommendation', '')}",
+        "",
+        "## Critical Issues",
+        "",
+    ] + [
+        f"- **{issue.get('title', issue.get('id', 'Issue'))}** — {issue.get('impact', '')}"
+        for issue in critical
+    ] + [
+        "",
+        "## Fix Plan",
+        "",
+    ] + [
+        f"{step.get('step', '?')}. {step.get('title', 'Issue')} — {step.get('impact', '')}"
+        for step in fix_plan.get("steps", [])
+    ] + [
+        "",
+        "## Guardrails",
+        "",
+    ] + [f"- {item}" for item in guardrails] + [
+        "",
+        "## Instructions",
+        "",
+        "- Read `00-START-NEXT-SESSION.md` first.",
+        "- Read the core inventory and what-it-is docs before editing.",
+        "- Run `context-kit doctor` and `context-kit orient` before changes.",
+        "- Prefer scoped audits over broad repo scans.",
+        "- Report commands and tests run.",
+    ]) + "\n"
+    markdown_lines = [
+        "# Agent Handoff",
+        "",
+        f"- Repo path: `{repo_path or '(unknown)'}`",
+        f"- Audit command: `{report.get('command', '')}`",
+        f"- Audience: `{audience}`",
+        f"- Risk level: `{exec_summary.get('risk_level', 'Low')}`",
+        f"- Recommendation: {exec_summary.get('recommendation', '')}",
+        "",
+        "## Executive Summary",
+        "",
+        exec_summary.get("description", ""),
+        "",
+        "## Critical Issues",
+        "",
+    ]
+    if critical:
+        for issue in critical:
+            markdown_lines.append(f"- **{issue.get('title', issue.get('id', 'Issue'))}**")
+            if issue.get("impact"):
+                markdown_lines.append(f"  - Impact: {issue['impact']}")
+            if issue.get("explanation"):
+                markdown_lines.append(f"  - Explanation: {issue['explanation']}")
+            if issue.get("details"):
+                markdown_lines.append(f"  - Evidence: {issue['details']}")
+    else:
+        markdown_lines.append("_No critical issues._")
+    markdown_lines.extend([
+        "",
+        "## Fix Plan",
+        "",
+    ])
+    if fix_plan.get("steps"):
+        for step in fix_plan["steps"]:
+            markdown_lines.append(f"{step.get('step', '?')}. {step.get('title', 'Issue')}")
+            if step.get("impact"):
+                markdown_lines.append(f"   - Impact: {step['impact']}")
+            if step.get("evidence"):
+                markdown_lines.append(f"   - Evidence: {step['evidence']}")
+            if step.get("action"):
+                markdown_lines.append(f"   - Action: {step['action']}")
+    else:
+        markdown_lines.append("_No fix plan available._")
+    markdown_lines.extend([
+        "",
+        "## Guardrails",
+        "",
+    ] + [f"- {item}" for item in guardrails] + [
+        "",
+        "## Prompts",
+        "",
+        "### Codex Prompt",
+        "",
+        "```text",
+        codex_prompt.rstrip(),
+        "```",
+        "",
+        "### Claude Code Prompt",
+        "",
+        "```text",
+        claude_prompt.rstrip(),
+        "```",
+        "",
+        "### AGENTS.md Prompt",
+        "",
+        "```text",
+        agents_prompt.rstrip(),
+        "```",
+    ])
+    return {
+        "repo_path": repo_path,
+        "audit_command": report.get("command", ""),
+        "audience": audience,
+        "risk_level": exec_summary.get("risk_level", "Low"),
+        "critical_count": len(critical),
+        "critical_issues": critical,
+        "fix_plan": fix_plan,
+        "guardrails": guardrails,
+        "codex_prompt": codex_prompt,
+        "claude_prompt": claude_prompt,
+        "agents_prompt": agents_prompt,
+        "markdown": "\n".join(markdown_lines).rstrip() + "\n",
     }
 
 
@@ -1427,6 +1607,11 @@ def _audit_report_markdown(report: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _audit_handoff_markdown(report: dict) -> str:
+    handoff = report.get("agent_handoff") or _audit_agent_handoff(report)
+    return handoff["markdown"]
+
+
 class _OnboardingHandler(http.server.BaseHTTPRequestHandler):
     """Routes:
 
@@ -1605,6 +1790,16 @@ class _OnboardingHandler(http.server.BaseHTTPRequestHandler):
             return
         if fmt == "fix-plan-md":
             body = _audit_fix_plan_markdown(report)
+            data = body.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if fmt == "handoff-md":
+            body = _audit_handoff_markdown(report)
             data = body.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/markdown; charset=utf-8")
