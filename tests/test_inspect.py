@@ -25,22 +25,52 @@ if str(REPO_ROOT) not in sys.path:
 from cli.inspect import run_inspect  # noqa: E402
 
 
-def _inspect_args(path, *, json_out=False, depth=2, scope=None, include_related=False, include_history=False):
+def _inspect_args(
+    path=None,
+    *,
+    project=None,
+    json_out=False,
+    depth=2,
+    scope=None,
+    include_related=False,
+    include_history=False,
+    output=None,
+):
     return argparse.Namespace(
         command="inspect",
-        path=str(path),
+        path=str(path) if path is not None else None,
+        project=str(project) if project is not None else None,
         json=json_out,
+        output=str(output) if output is not None else None,
         depth=depth,
         scope=scope,
         include_related=include_related,
         include_history=include_history,
+        format="markdown",
     )
 
 
-def _run_capture(path, *, json_out=False, scope=None, include_related=False, include_history=False) -> tuple[int, str]:
+def _run_capture(
+    path=None,
+    *,
+    project=None,
+    json_out=False,
+    scope=None,
+    include_related=False,
+    include_history=False,
+) -> tuple[int, str]:
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = run_inspect(_inspect_args(path, json_out=json_out, scope=scope, include_related=include_related, include_history=include_history))
+        rc = run_inspect(
+            _inspect_args(
+                path,
+                project=project,
+                json_out=json_out,
+                scope=scope,
+                include_related=include_related,
+                include_history=include_history,
+            )
+        )
     return rc, buf.getvalue()
 
 
@@ -393,6 +423,130 @@ class TestNextJsDetection(_CwdSandbox):
         self.assertIn("api_routes=1", out)
 
 
+class TestStaticRepoHints(_CwdSandbox):
+    def setUp(self):
+        super().setUp()
+        (self.tmpdir / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-app",
+                    "scripts": {
+                        "dev": "vite",
+                        "test": "vitest",
+                        "lint": "eslint .",
+                    },
+                    "dependencies": {
+                        "react": "^18.0.0",
+                        "react-dom": "^18.0.0",
+                        "vite": "^5.0.0",
+                        "react-router-dom": "^6.0.0",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (self.tmpdir / "pyproject.toml").write_text(
+            "[project]\nname = \"demo-app\"\n[project.scripts]\nserve = \"demo:main\"\n",
+            encoding="utf-8",
+        )
+        (self.tmpdir / "Makefile").write_text(
+            "test:\n\tpytest\nbuild:\n\tpython -m build\n",
+            encoding="utf-8",
+        )
+        src = self.tmpdir / "src"
+        src.mkdir()
+        (src / "api.py").write_text(
+            "from fastapi import FastAPI, APIRouter\n"
+            "app = FastAPI()\n"
+            "router = APIRouter()\n"
+            "@app.get('/health')\n"
+            "def health():\n    return {'ok': True}\n"
+            "@router.post('/items')\n"
+            "def create_item():\n    return {'ok': True}\n",
+            encoding="utf-8",
+        )
+        web = self.tmpdir / "web"
+        web.mkdir()
+        (web / "urls.py").write_text(
+            "from django.urls import path, re_path\n"
+            "urlpatterns = [path('health/', health), re_path(r'^x/$', x)]\n",
+            encoding="utf-8",
+        )
+        (web / "models.py").write_text(
+            "from django.db import models\n"
+            "class Thing(models.Model):\n    pass\n",
+            encoding="utf-8",
+        )
+        (web / "schema.py").write_text(
+            "from pydantic import BaseModel\n"
+            "class Payload(BaseModel):\n    value: str\n",
+            encoding="utf-8",
+        )
+        (self.tmpdir / "app.py").write_text(
+            "from flask import Flask\napp = Flask(__name__)\n@app.route('/ping')\ndef ping(): return 'ok'\n",
+            encoding="utf-8",
+        )
+        (self.tmpdir / ".env.example").write_text(
+            "API_KEY=\nDEBUG=true\n# comment\nexport EXPORTED=value\n",
+            encoding="utf-8",
+        )
+        (self.tmpdir / ".env").write_text("SECRET_TOKEN=do-not-read\n", encoding="utf-8")
+        (self.tmpdir / "docker-compose.yml").write_text(
+            "services:\n  web:\n    image: demo\n  db:\n    image: postgres\n",
+            encoding="utf-8",
+        )
+        (self.tmpdir / "Dockerfile").write_text("FROM python:3.11\n", encoding="utf-8")
+        (self.tmpdir / "app").mkdir()
+        (self.tmpdir / "app" / "page.tsx").write_text(
+            "export default function Home(){return null;}\n",
+            encoding="utf-8",
+        )
+        bulky = self.tmpdir / "node_modules"
+        bulky.mkdir()
+        (bulky / "big.js").write_text("x" * 1024, encoding="utf-8")
+
+    def test_package_json_scripts_are_reported(self):
+        _, out = _run_capture(self.tmpdir)
+        self.assertIn("package.json scripts", out)
+        self.assertIn("dev", out)
+        self.assertIn("vitest", out)
+
+    def test_project_flag_uses_target_path(self):
+        _, out = _run_capture(project=self.tmpdir)
+        self.assertIn("demo-app", out)
+        self.assertIn("package.json scripts", out)
+
+    def test_output_file_is_written(self):
+        output_path = Path("inspect.md")
+        with redirect_stdout(io.StringIO()):
+            rc = run_inspect(_inspect_args(project=self.tmpdir, output=output_path))
+        self.assertEqual(rc, 0)
+        self.assertTrue(output_path.is_file())
+        self.assertIn("# context-kit inspect", output_path.read_text(encoding="utf-8"))
+
+    def test_ignored_bulky_dirs_do_not_show_up(self):
+        _, out = _run_capture(self.tmpdir)
+        self.assertNotIn("node_modules/", out)
+
+    def test_fastapi_routes_are_detected(self):
+        _, out = _run_capture(self.tmpdir)
+        self.assertIn("FastAPI", out)
+        self.assertIn("health", out)
+        self.assertIn("items", out)
+
+    def test_django_urls_are_detected(self):
+        _, out = _run_capture(self.tmpdir)
+        self.assertIn("Django", out)
+        self.assertIn("urlpatterns", out)
+
+    def test_env_example_keys_are_reported_without_secrets(self):
+        _, out = _run_capture(self.tmpdir)
+        self.assertIn("API_KEY", out)
+        self.assertIn("DEBUG", out)
+        self.assertIn("EXPORTED", out)
+        self.assertNotIn("SECRET_TOKEN=do-not-read", out)
+
+
 # ---------------------------------------------------------------------------
 # Monorepo: depth-1 child workspaces with framework probes per child
 # ---------------------------------------------------------------------------
@@ -497,10 +651,10 @@ class TestRiskPatterns(_CwdSandbox):
         self.assertIn("logo.png", out)
         self.assertIn("MB", out)
 
-    def test_tracked_build_artifact_dir_flagged(self):
+    def test_tracked_build_artifact_dir_is_skipped_when_ignored(self):
         _, out = _run_capture(self.tmpdir)
-        self.assertIn("[tracked-build-artifacts]", out)
-        self.assertIn("__pycache__", out)
+        self.assertNotIn("[tracked-build-artifacts]", out)
+        self.assertNotIn("node_modules", out)
 
 
 # ---------------------------------------------------------------------------

@@ -33,12 +33,13 @@ def _init_args(name, target):
     )
 
 
-def _chat_args(project=None, prompt=None, *, model="llama3"):
+def _chat_args(project=None, prompt=None, *, model="llama3", include_inspect=False):
     return argparse.Namespace(
         command="chat",
         project=str(project) if project is not None else None,
         model=model,
         prompt=prompt,
+        include_inspect=include_inspect,
     )
 
 
@@ -228,3 +229,37 @@ class TestChatSmoke(unittest.TestCase):
 
         self.assertEqual(rc, 2)
         self.assertIn("error: --project path does not exist", stderr.getvalue())
+
+    def test_include_inspect_appends_machine_inspection(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(_chat_args(self.project, ["What", "do", "you", "see?"], include_inspect=True))
+
+        self.assertEqual(rc, 0)
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertIn("MACHINE-DERIVED REPO INSPECTION", system_message)
+        self.assertIn("Project identity", system_message)
+        self.assertIn("docs/CHAT_APP_WHAT_IT_IS.md", system_message)
+
+    def test_omit_include_inspect_preserves_current_behavior(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(_chat_args(self.project, ["What", "do", "you", "see?"]))
+
+        self.assertEqual(rc, 0)
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertNotIn("MACHINE-DERIVED REPO INSPECTION", system_message)

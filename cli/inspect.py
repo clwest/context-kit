@@ -24,6 +24,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +35,11 @@ from cli.hotpath import (
     _collect_files,
     _with_sizes,
 )
+
+try:  # Python 3.11+
+    import tomllib
+except ImportError:  # pragma: no cover - fallback for older stdlib targets
+    tomllib = None
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +118,17 @@ _DJANGO_TASK_RE = re.compile(r"@(?:shared_task|app\.task|celery\.task|celery_app
 _INSTALLED_APPS_RE = re.compile(r"INSTALLED_APPS\s*=\s*\[([^\]]+)\]", re.DOTALL)
 _FRONTMATTER_DATE_RE = re.compile(r"^date:\s*(\d{4}-\d{2}-\d{2})", re.MULTILINE)
 _ISO_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+_FASTAPI_ROUTE_RE = re.compile(r"@\s*(?:app|router)\.(?:get|post|put|delete|patch|options|head|api_route)\s*\(")
+_FASTAPI_APP_RE = re.compile(r"\bFastAPI\s*\(")
+_FASTAPI_ROUTER_RE = re.compile(r"\bAPIRouter\s*\(")
+_FASTAPI_IMPORT_RE = re.compile(r"\bfrom\s+fastapi\s+import\b|\bimport\s+fastapi\b")
+_FLASK_ROUTE_RE = re.compile(r"@\s*app\.route\s*\(")
+_DJANGO_URLPATTERNS_RE = re.compile(r"\burlpatterns\s*=")
+_DJANGO_MODELS_RE = re.compile(r"class\s+\w+\(.*models\.Model.*\)")
+_PYDANTIC_BASEMODEL_RE = re.compile(r"class\s+\w+\(.*BaseModel.*\)")
+_SQLA_DECL_RE = re.compile(r"class\s+\w+\((?:Base|DeclarativeBase)\)")
+_SQLA_BASE_RE = re.compile(r"\bdeclarative_base\s*\(")
+_REACT_ROUTER_RE = re.compile(r"\b(BrowserRouter|Routes|Route|createBrowserRouter|RouterProvider)\b")
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +235,7 @@ class InspectionResult:
     stale_docs: list[StaleDoc]
     documentation_intelligence: DocumentationIntelligence
     recommendations: list[Recommendation]
+    files: list[Path] = field(default_factory=list)
     include_related: bool = False
     include_history: bool = False
 
@@ -228,9 +246,8 @@ class InspectionResult:
 
 
 def run_inspect(args: argparse.Namespace) -> int:
-    project = Path(args.path).resolve() if args.path else Path.cwd().resolve()
-    if not project.is_dir():
-        print(f"context-kit: {project} is not a directory.")
+    project = _resolve_inspect_project(args)
+    if project is None:
         return 2
 
     scope = getattr(args, "scope", None)
@@ -249,8 +266,26 @@ def run_inspect(args: argparse.Namespace) -> int:
     if getattr(args, "json", False):
         print(json.dumps(_to_json(result), indent=2, default=str))
     else:
-        print(_render_text(result))
+        report = render_inspect_markdown(result)
+        output_path = getattr(args, "output", None)
+        if output_path:
+            out_path = Path(output_path).expanduser().resolve()
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(report, encoding="utf-8")
+        print(report)
     return 0
+
+
+def _resolve_inspect_project(args: argparse.Namespace) -> Path | None:
+    project_value = getattr(args, "project", None) or getattr(args, "path", None)
+    project = Path(project_value).expanduser().resolve() if project_value else Path.cwd().resolve()
+    if not project.exists():
+        print(f"context-kit: {project} does not exist.")
+        return None
+    if not project.is_dir():
+        print(f"context-kit: {project} is not a directory.")
+        return None
+    return project
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +354,7 @@ def _inspect(
         stale_docs=stale_docs,
         documentation_intelligence=doc_intel,
         recommendations=recommendations,
+        files=files,
         scope=scope,
         include_related=include_related if scope is not None else False,
         include_history=include_history if scope is not None else False,
@@ -333,7 +369,7 @@ def _inspect(
 def _git_head(project: Path) -> dict | None:
     if not (project / ".git").exists():
         return None
-    sha = _git_run(project, ["rev-parse", "--short", "HEAD"])
+    sha = _git_run(project, ["rev-parse", "HEAD"])
     branch = _git_run(project, ["rev-parse", "--abbrev-ref", "HEAD"])
     if sha is None and branch is None:
         return None
@@ -876,6 +912,8 @@ def _risk_tracked_build_artifacts(project: Path, files: list[Path] | None = None
         out_text = _git_run(project, ["ls-files"])
         if out_text is not None:
             for line in out_text.splitlines():
+                if _path_is_ignored(line):
+                    continue
                 if scoped is not None:
                     candidate = (project / line).resolve()
                     if candidate not in scoped:
@@ -892,6 +930,8 @@ def _risk_tracked_build_artifacts(project: Path, files: list[Path] | None = None
         # for).
         if files is not None:
             for path in files:
+                if _path_is_ignored(str(path)):
+                    continue
                 parts = path.parts
                 for part in parts[:-1]:
                     if part in _TRACKED_BUILD_NAMES:
@@ -905,6 +945,8 @@ def _risk_tracked_build_artifacts(project: Path, files: list[Path] | None = None
                     dirs[:] = []
                     continue
                 for name in list(dirs):
+                    if name in IGNORED_DIR_NAMES or any(name.endswith(sfx) for sfx in IGNORED_DIR_SUFFIXES):
+                        continue
                     if name in _TRACKED_BUILD_NAMES:
                         full = Path(root) / name
                         file_count = sum(1 for _ in full.rglob("*") if _.is_file())
@@ -1510,7 +1552,200 @@ def _build_recommendations(
 # ---------------------------------------------------------------------------
 
 
+def render_inspect_markdown(r: InspectionResult) -> str:
+    project = Path(r.path)
+    files = r.files
+
+    identity = _inspect_project_identity(project, files, r.head)
+    stack = _inspect_stack_details(project, files, r.primary_stack, r.framework_signals)
+    commands = _inspect_commands(project, files)
+    tree = _inspect_tree_summary(project, files)
+    api_hints = _inspect_api_route_hints(project, files)
+    model_hints = _inspect_model_hints(project, files)
+    env_hints = _inspect_env_hints(project, files)
+    docs_status = _inspect_docs_status(project)
+    warnings = _inspect_unknowns(identity, stack, commands, tree, api_hints, model_hints, env_hints, docs_status, r)
+
+    lines: list[str] = []
+    lines.append("# context-kit inspect")
+    lines.append("")
+    lines.append("> === CONTEXT-KIT INSPECT ===")
+    lines.append(f"> Repo:           {r.repo}")
+    lines.append(f"> Path:           {r.path}")
+    if r.scope is not None:
+        lines.append(f"> Scope:          {r.scope}")
+        lines.append(f"> Scope mode:     {'related' if r.include_related else 'strict'}")
+    if r.head:
+        branch = r.head.get("branch") or "(unknown)"
+        sha = r.head.get("sha") or "(unknown)"
+        lines.append(f"> HEAD:           {sha} (branch: {branch})")
+    else:
+        lines.append("> HEAD:           (not a git repo)")
+    lines.append(f"> Tracked files:  {r.counts['tracked_files']:,}")
+    lines.append(f"> Total size:     {_human_bytes(r.counts['total_bytes'])}")
+    lines.append("")
+
+    lines.append("## Project identity")
+    lines.append("")
+    lines.extend([
+        f"- Project path: `{r.path}`",
+        f"- Detected package/app names: {', '.join(f'`{name}`' for name in identity['names']) if identity['names'] else 'not detected'}",
+        f"- Git branch: {identity['branch']}",
+        f"- Latest commit hash: {identity['sha']}",
+    ])
+    lines.append("")
+
+    lines.append("## Detected stack")
+    lines.append("")
+    lines.append("### Python indicators")
+    lines.append(_format_bullets(stack["python"]))
+    lines.append("")
+    lines.append("### Node indicators")
+    lines.append(_format_bullets(stack["node"]))
+    lines.append("")
+    lines.append("### Backend framework indicators")
+    lines.append(_format_bullets(stack["backend"]))
+    lines.append("")
+    lines.append("### Frontend framework indicators")
+    lines.append(_format_bullets(stack["frontend"]))
+    lines.append("")
+
+    lines.append("## Commands")
+    lines.append("")
+    lines.append("### package.json scripts")
+    lines.append(_format_kv_table(commands["package_json_scripts"], "No package.json scripts detected."))
+    lines.append("")
+    lines.append("### pyproject scripts")
+    lines.append(_format_kv_table(commands["pyproject_scripts"], "No pyproject scripts detected."))
+    lines.append("")
+    lines.append("### Makefile targets")
+    lines.append(_format_bullets([name for name, _ in commands["make_targets"]]))
+    lines.append("")
+    lines.append("### Common test commands")
+    lines.append(_format_bullets(commands["test_commands"]))
+    lines.append("")
+
+    lines.append("## File tree summary")
+    lines.append("")
+    lines.append("### Top-level dirs/files")
+    lines.append(_format_bullets(tree["top_level"]))
+    lines.append("")
+    lines.append("### Important source dirs")
+    lines.append(_format_bullets(tree["source_dirs"]))
+    lines.append("")
+    lines.append("### Tests dirs")
+    lines.append(_format_bullets(tree["tests_dirs"]))
+    lines.append("")
+    lines.append("### Docs dirs")
+    lines.append(_format_bullets(tree["docs_dirs"]))
+    lines.append("")
+
+    lines.append("## API / route hints")
+    lines.append("")
+    lines.append("### FastAPI")
+    lines.append(_format_bullets(api_hints["fastapi"]))
+    lines.append("")
+    lines.append("### Django")
+    lines.append(_format_bullets(api_hints["django"]))
+    lines.append("")
+    lines.append("### Flask")
+    lines.append(_format_bullets(api_hints["flask"]))
+    lines.append("")
+    lines.append("### Frontend")
+    lines.append(_format_bullets(api_hints["frontend"]))
+    lines.append("")
+
+    lines.append("## Models / data hints")
+    lines.append("")
+    lines.append("### SQLAlchemy")
+    lines.append(_format_bullets(model_hints["sqlalchemy"]))
+    lines.append("")
+    lines.append("### Django models")
+    lines.append(_format_bullets(model_hints["django_models"]))
+    lines.append("")
+    lines.append("### Pydantic")
+    lines.append(_format_bullets(model_hints["pydantic"]))
+    lines.append("")
+
+    lines.append("## Environment hints")
+    lines.append("")
+    lines.append("### .env.example keys")
+    lines.append(_format_bullets(env_hints["env_keys"]))
+    lines.append("")
+    lines.append("### docker-compose services")
+    lines.append(_format_bullets(env_hints["compose_services"]))
+    lines.append("")
+    lines.append("### Dockerfile")
+    lines.append(_format_bullets(env_hints["dockerfiles"]))
+    lines.append("")
+
+    lines.append("## Context-kit docs status")
+    lines.append("")
+    lines.extend(docs_status["docs_lines"])
+    lines.append("")
+
+    if r.stale_docs:
+        lines.append("## Possibly stale docs")
+        lines.append("")
+        for sd in r.stale_docs:
+            lines.append(f"- `{sd.path}` - {sd.evidence}")
+        lines.append("")
+
+    if r.documentation_intelligence.strength in ("medium", "high"):
+        di = r.documentation_intelligence
+        lines.append("## Documentation Intelligence")
+        lines.append("")
+        lines.append(f"- Markdown files in docs/: {di.markdown_file_count:,}")
+        lines.append(f"- Session handoffs: {di.session_handoff_count:,}")
+        if di.anchor_docs:
+            lines.append(f"- Anchor docs: {', '.join(f'`{p}`' for p in di.anchor_docs)}")
+        if di.audit_folders:
+            lines.append(f"- Audit/cleanup folders: {', '.join(f'`{p}`' for p in di.audit_folders)}")
+        if di.process_docs_present:
+            lines.append("- Process docs: docs/docs-pattern/ (or similar)")
+        if di.rag_corpus_present:
+            lines.append(f"- RAG corpus: {', '.join(f'`{p}`' for p in di.rag_corpus_paths) or '.rag/'}")
+        lines.append(f"- Strength: `{di.strength}`")
+        lines.append("")
+        lines.append("This repository appears to use documentation as an active context/memory layer.")
+        lines.append("")
+        lines.append("! Caution: do not treat docs/ as disposable clutter without checking whether docs are embedded, retrieved, or injected at runtime.")
+        lines.append("")
+
+    lines.append("## Warnings / unknowns")
+    lines.append("")
+    if warnings:
+        lines.extend(f"- {warning}" for warning in warnings)
+    else:
+        lines.append("- No major unknowns detected by the static pass.")
+    lines.append("")
+
+    if r.recommendations:
+        lines.append("## Recommended next moves")
+        lines.append("")
+        lines.append("Deterministic suggestions based on detected signals. Override or ignore as needed.")
+        lines.append("")
+        for i, rec in enumerate(r.recommendations, 1):
+            lines.append(f"{i}. [{rec.confidence}] {rec.suggestion}")
+            lines.append(f"   - why: {rec.why}")
+            lines.append(f"   - id: {rec.id}")
+        lines.append("")
+
+    lines.append("## Legacy inspect summary")
+    lines.append("")
+    lines.append("```text")
+    lines.append(_render_legacy_text(r).rstrip())
+    lines.append("```")
+    lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _render_text(r: InspectionResult) -> str:
+    return render_inspect_markdown(r)
+
+
+def _render_legacy_text(r: InspectionResult) -> str:
     lines: list[str] = []
     lines.append("=== CONTEXT-KIT INSPECT ===")
     lines.append(f"Repo:           {r.repo}")
@@ -1636,6 +1871,527 @@ def _render_text(r: InspectionResult) -> str:
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _format_bullets(items: list[str], empty: str = "Not detected.") -> str:
+    if not items:
+        return f"- {empty}"
+    return "\n".join(f"- {item}" for item in items)
+
+
+def _format_kv_table(rows: list[tuple[str, str]], empty: str) -> str:
+    if not rows:
+        return f"- {empty}"
+    lines = ["| Name | Command |", "|---|---|"]
+    for name, value in rows:
+        lines.append(f"| `{name}` | `{value}` |")
+    return "\n".join(lines)
+
+
+def _inspect_project_identity(project: Path, files: list[Path], head: dict | None) -> dict:
+    names: list[str] = []
+    names.append(project.name)
+    for candidate in _project_name_candidates(project, files):
+        if candidate and candidate not in names:
+            names.append(candidate)
+    return {
+        "names": names,
+        "branch": head.get("branch") if head else "not a git repo",
+        "sha": head.get("sha") if head else "not available",
+    }
+
+
+def _project_name_candidates(project: Path, files: list[Path]) -> list[str]:
+    out: list[str] = []
+    package = _read_package_json(project / "package.json")
+    if package:
+        name = package.get("name")
+        if isinstance(name, str) and name.strip():
+            out.append(name.strip())
+    pyproject = _read_pyproject(project / "pyproject.toml")
+    if pyproject:
+        for key in ("project.name", "tool.poetry.name"):
+            value = _nested_get(pyproject, key)
+            if isinstance(value, str) and value.strip():
+                out.append(value.strip())
+    return out
+
+
+def _inspect_stack_details(project: Path, files: list[Path], primary_stack: dict, framework_signals: FrameworkSignals) -> dict:
+    root_names = {path.name for path in files if path.parent == project}
+    python_bits = [name for name in ("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg") if name in root_names]
+    node_bits = [name for name in ("package.json", "vite.config.js", "vite.config.ts", "vite.config.mjs", "next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs") if name in root_names]
+
+    package = _read_package_json(project / "package.json")
+    node_deps: list[str] = []
+    if package:
+        deps = {}
+        for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+            value = package.get(key)
+            if isinstance(value, dict):
+                deps.update({str(k): str(v) for k, v in value.items()})
+        for dep in ("react", "react-dom", "vite", "next", "expo", "react-router", "react-router-dom"):
+            if dep in deps:
+                node_deps.append(dep)
+
+    backend: list[str] = []
+    if framework_signals.django:
+        d = framework_signals.django
+        backend.append(
+            f"Django: manage.py/settings.py detected; apps={d['apps']}, urlpatterns={d['url_patterns']}, tasks={d['tasks']}, mgmt_commands={d['management_commands']}"
+        )
+    if framework_signals.django is None and any(path.name == "manage.py" for path in files):
+        backend.append("Django: manage.py detected.")
+    fastapi = _collect_fastapi_hints(project, files)
+    if fastapi:
+        backend.append("FastAPI: route decorators / APIRouter usage detected.")
+    flask = _collect_flask_hints(project, files)
+    if flask:
+        backend.append("Flask: app.route decorators detected.")
+
+    frontend: list[str] = []
+    if node_bits or node_deps:
+        bits = []
+        if any(b.startswith("vite.config") for b in node_bits) or "vite" in node_deps:
+            bits.append("Vite")
+        if any(b.startswith("next.config") for b in node_bits) or "next" in node_deps:
+            bits.append("Next.js")
+        if "react" in node_deps or "react-dom" in node_deps or _collect_frontend_route_hints(project, files):
+            bits.append("React")
+        if "expo" in node_deps:
+            bits.append("Expo")
+        if bits:
+            frontend.append("Detected: " + ", ".join(dict.fromkeys(bits)))
+
+    return {
+        "python": [f"Detected: {', '.join(python_bits)}"] if python_bits else [],
+        "node": [f"Detected: {', '.join(node_bits)}"] if node_bits else [],
+        "backend": backend,
+        "frontend": frontend,
+    }
+
+
+def _inspect_commands(project: Path, files: list[Path]) -> dict:
+    package = _read_package_json(project / "package.json") or {}
+    package_scripts: list[tuple[str, str]] = []
+    scripts = package.get("scripts")
+    if isinstance(scripts, dict):
+        for name, cmd in sorted(scripts.items()):
+            if isinstance(name, str) and isinstance(cmd, str):
+                package_scripts.append((name, cmd))
+
+    pyproject = _read_pyproject(project / "pyproject.toml") or {}
+    pyproject_scripts: list[tuple[str, str]] = []
+    scripts_map = _nested_get(pyproject, "project.scripts")
+    if isinstance(scripts_map, dict):
+        for name, cmd in sorted(scripts_map.items()):
+            if isinstance(name, str) and isinstance(cmd, str):
+                pyproject_scripts.append((name, cmd))
+    poetry_scripts = _nested_get(pyproject, "tool.poetry.scripts")
+    if isinstance(poetry_scripts, dict):
+        for name, cmd in sorted(poetry_scripts.items()):
+            if isinstance(name, str) and isinstance(cmd, str) and (name, cmd) not in pyproject_scripts:
+                pyproject_scripts.append((name, cmd))
+
+    make_targets = _read_make_targets(project / "Makefile")
+    test_commands = _common_test_commands(project, files, package_scripts, pyproject_scripts, make_targets)
+
+    return {
+        "package_json_scripts": package_scripts,
+        "pyproject_scripts": pyproject_scripts,
+        "make_targets": make_targets,
+        "test_commands": test_commands,
+    }
+
+
+def _inspect_tree_summary(project: Path, files: list[Path]) -> dict:
+    top_level_dirs: list[str] = []
+    top_level_files: list[str] = []
+    source_dirs: list[str] = []
+    tests_dirs: list[str] = []
+    docs_dirs: list[str] = []
+
+    top_seen = set()
+    for path in files:
+        try:
+            rel = path.relative_to(project)
+        except ValueError:
+            continue
+        parts = rel.parts
+        if not parts:
+            continue
+        if len(parts) == 1:
+            top_level_files.append(parts[0])
+        else:
+            top = parts[0]
+            if top not in top_seen:
+                top_seen.add(top)
+                top_level_dirs.append(f"{top}/")
+            if top in {"src", "app", "pages", "frontend", "backend", "core", "lib", "services", "server"} and top not in source_dirs:
+                source_dirs.append(f"{top}/")
+            if "tests" in parts or parts[0] in {"tests", "__tests__"}:
+                if "tests/" not in tests_dirs:
+                    tests_dirs.append("tests/")
+            if parts[0] == "docs" and "docs/" not in docs_dirs:
+                docs_dirs.append("docs/")
+    top_level = sorted(set(top_level_dirs + top_level_files))
+    return {
+        "top_level": top_level,
+        "source_dirs": source_dirs,
+        "tests_dirs": tests_dirs,
+        "docs_dirs": docs_dirs,
+    }
+
+
+def _inspect_api_route_hints(project: Path, files: list[Path]) -> dict:
+    fastapi = _collect_fastapi_hints(project, files)
+    django = _collect_django_route_hints(project, files)
+    flask = _collect_flask_hints(project, files)
+    frontend = _collect_frontend_route_hints(project, files)
+    return {
+        "fastapi": fastapi,
+        "django": django,
+        "flask": flask,
+        "frontend": frontend,
+    }
+
+
+def _inspect_model_hints(project: Path, files: list[Path]) -> dict:
+    sqlalchemy: list[str] = []
+    django_models: list[str] = []
+    pydantic: list[str] = []
+
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = _relpath(project, path)
+        for i, line in enumerate(text.splitlines(), 1):
+            if _SQLA_DECL_RE.search(line) or _SQLA_BASE_RE.search(line):
+                sqlalchemy.append(f"{rel}:{i}: {line.strip()}")
+            if _DJANGO_MODELS_RE.search(line):
+                django_models.append(f"{rel}:{i}: {line.strip()}")
+            if _PYDANTIC_BASEMODEL_RE.search(line):
+                pydantic.append(f"{rel}:{i}: {line.strip()}")
+    return {"sqlalchemy": sqlalchemy, "django_models": django_models, "pydantic": pydantic}
+
+
+def _inspect_env_hints(project: Path, files: list[Path]) -> dict:
+    env_keys: list[str] = []
+    compose_services: list[str] = []
+    dockerfiles: list[str] = []
+
+    for path in files:
+        rel = _relpath(project, path)
+        if path.name == ".env.example":
+            env_keys.extend(_read_env_example_keys(path))
+        if path.name in {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}:
+            compose_services.extend(_read_compose_services(path))
+        if path.name == "Dockerfile" or path.name.startswith("Dockerfile."):
+            dockerfiles.append(rel)
+
+    return {
+        "env_keys": sorted(set(env_keys)),
+        "compose_services": sorted(set(compose_services)),
+        "dockerfiles": sorted(set(dockerfiles)),
+    }
+
+
+def _inspect_docs_status(project: Path) -> dict:
+    slug = _project_slug(project.name)
+    lines: list[str] = []
+    what_it_is_candidates = [
+        f"docs/{slug}_WHAT_IT_IS.md",
+        "docs/CONTEXT_KIT_WHAT_IT_IS.md",
+    ]
+    inventory_candidates = [
+        f"docs/{slug}_INVENTORY.md",
+        "docs/CONTEXT_KIT_INVENTORY.md",
+    ]
+
+    lines.append("What-it-is docs:")
+    for rel in what_it_is_candidates:
+        lines.append(f"- `{rel}`: {'found' if (project / rel).is_file() else 'not found'}")
+    lines.append("Inventory docs:")
+    for rel in inventory_candidates:
+        lines.append(f"- `{rel}`: {'found' if (project / rel).is_file() else 'not found'}")
+
+    start_doc = project / "00-START-NEXT-SESSION.md"
+    lines.append(f"- `00-START-NEXT-SESSION.md`: {'found' if start_doc.is_file() else 'not found'}")
+
+    latest_handoff = _latest_numbered_handoff(project / "docs" / "handoffs")
+    if latest_handoff is not None:
+        lines.append(f"- Latest handoff: `{_relpath(project, latest_handoff)}`")
+    else:
+        lines.append("- Latest handoff: not found")
+
+    return {"docs_lines": lines}
+
+
+def _inspect_unknowns(
+    identity: dict,
+    stack: dict,
+    commands: dict,
+    tree: dict,
+    api_hints: dict,
+    model_hints: dict,
+    env_hints: dict,
+    docs_status: dict,
+    result: InspectionResult,
+) -> list[str]:
+    warnings: list[str] = []
+    if len(identity["names"]) == 1:
+        warnings.append("No package/app name was found in package.json or pyproject.toml; using the directory name only.")
+    if not stack["python"]:
+        warnings.append("No Python manifest indicators detected.")
+    if not stack["node"]:
+        warnings.append("No Node manifest indicators detected.")
+    if not any([api_hints["fastapi"], api_hints["django"], api_hints["flask"], api_hints["frontend"]]):
+        warnings.append("No route hints detected for FastAPI, Django, Flask, or frontend routing.")
+    if not any([model_hints["sqlalchemy"], model_hints["django_models"], model_hints["pydantic"]]):
+        warnings.append("No model/data hints detected for SQLAlchemy, Django models, or Pydantic.")
+    if not env_hints["env_keys"]:
+        warnings.append("No .env.example keys detected.")
+    if not env_hints["compose_services"]:
+        warnings.append("No docker-compose service names detected.")
+    if not env_hints["dockerfiles"]:
+        warnings.append("No Dockerfile detected.")
+    if "not found" in " ".join(docs_status["docs_lines"]).lower():
+        warnings.append("Some context-kit docs were not found; see the docs status section.")
+    if not result.risks:
+        warnings.append("No high-confidence risk patterns were detected by the static pass.")
+    if not tree["source_dirs"]:
+        warnings.append("No obvious source directories were detected.")
+    if not commands["package_json_scripts"] and not commands["pyproject_scripts"] and not commands["make_targets"]:
+        warnings.append("No project command definitions were detected in package.json, pyproject.toml, or Makefile.")
+    return warnings
+
+
+def _collect_fastapi_hints(project: Path, files: list[Path]) -> list[str]:
+    hints: list[str] = []
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not (_FASTAPI_IMPORT_RE.search(text) or _FASTAPI_APP_RE.search(text) or _FASTAPI_ROUTER_RE.search(text) or _FASTAPI_ROUTE_RE.search(text)):
+            continue
+        rel = _relpath(project, path)
+        for i, line in enumerate(text.splitlines(), 1):
+            if _FASTAPI_ROUTE_RE.search(line) or _FASTAPI_APP_RE.search(line) or _FASTAPI_ROUTER_RE.search(line):
+                hints.append(f"{rel}:{i}: {line.strip()}")
+    return hints
+
+
+def _collect_django_route_hints(project: Path, files: list[Path]) -> list[str]:
+    hints: list[str] = []
+    for path in files:
+        if path.name != "urls.py" or path.suffix != ".py":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "urlpatterns" not in text:
+            continue
+        rel = _relpath(project, path)
+        for i, line in enumerate(text.splitlines(), 1):
+            if _DJANGO_URLPATTERNS_RE.search(line) or "path(" in line or "re_path(" in line:
+                hints.append(f"{rel}:{i}: {line.strip()}")
+    return hints
+
+
+def _collect_flask_hints(project: Path, files: list[Path]) -> list[str]:
+    hints: list[str] = []
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "@app.route" not in text and "from flask import" not in text and "Flask(" not in text:
+            continue
+        rel = _relpath(project, path)
+        for i, line in enumerate(text.splitlines(), 1):
+            if _FLASK_ROUTE_RE.search(line) or "from flask import" in line or "Flask(" in line:
+                hints.append(f"{rel}:{i}: {line.strip()}")
+    return hints
+
+
+def _collect_frontend_route_hints(project: Path, files: list[Path]) -> list[str]:
+    hints: list[str] = []
+    for path in files:
+        rel = _relpath(project, path)
+        lower = rel.lower()
+        if lower.startswith("app/") and path.name.startswith("page."):
+            hints.append(f"{rel}: app route page")
+        elif lower.startswith("pages/") and path.suffix in {".tsx", ".ts", ".jsx", ".js"}:
+            hints.append(f"{rel}: pages route")
+        elif path.suffix in {".tsx", ".ts", ".jsx", ".js"}:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if _REACT_ROUTER_RE.search(text):
+                hints.append(f"{rel}: React Router usage")
+    return hints
+
+
+def _read_package_json(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _read_pyproject(path: Path) -> dict | None:
+    if tomllib is None or not path.is_file():
+        return None
+    try:
+        with path.open("rb") as fh:
+            return tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):  # type: ignore[attr-defined]
+        return None
+
+
+def _nested_get(data: dict, dotted: str):
+    cur = data
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _read_make_targets(path: Path) -> list[tuple[str, str]]:
+    if not path.is_file():
+        return []
+    targets: list[tuple[str, str]] = []
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("\t") or line.startswith("#") or ":" not in line:
+                continue
+            if line.startswith("."):
+                continue
+            match = re.match(r"^([A-Za-z0-9_.-]+)\s*:\s*(?:.*)?$", line)
+            if match:
+                target = match.group(1)
+                if target not in {".PHONY", ".DEFAULT", ".SUFFIXES"}:
+                    targets.append((target, target))
+    except OSError:
+        return []
+    return targets
+
+
+def _common_test_commands(
+    project: Path,
+    files: list[Path],
+    package_scripts: list[tuple[str, str]],
+    pyproject_scripts: list[tuple[str, str]],
+    make_targets: list[tuple[str, str]],
+) -> list[str]:
+    commands: list[str] = []
+    script_names = {name for name, _ in package_scripts}
+    if "test" in script_names:
+        commands.append("npm test")
+        commands.append("npm run test")
+    if "test" in {name for name, _ in pyproject_scripts} or any(path.suffix == ".py" for path in files):
+        commands.extend(["pytest", "python -m pytest", "python -m unittest"])
+    if any(name == "test" for name, _ in make_targets):
+        commands.append("make test")
+    if (project / "go.mod").is_file():
+        commands.append("go test ./...")
+    if (project / "Cargo.toml").is_file():
+        commands.append("cargo test")
+    return list(dict.fromkeys(commands))
+
+
+def _read_env_example_keys(path: Path) -> list[str]:
+    keys: list[str] = []
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" not in stripped:
+                continue
+            key = stripped.split("=", 1)[0].strip()
+            if key.startswith("export "):
+                key = key.removeprefix("export ").strip()
+            if key:
+                keys.append(key)
+    except OSError:
+        return []
+    return list(dict.fromkeys(keys))
+
+
+def _read_compose_services(path: Path) -> list[str]:
+    services: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    in_services = False
+    service_indent = None
+    for line in lines:
+        if not in_services and re.match(r"^\s*services\s*:\s*$", line):
+            in_services = True
+            continue
+        if not in_services:
+            continue
+        if service_indent is None:
+            if line.strip():
+                service_indent = len(line) - len(line.lstrip())
+            else:
+                continue
+        indent = len(line) - len(line.lstrip())
+        if indent < service_indent:
+            break
+        match = re.match(r"^\s{2,}([A-Za-z0-9_.-]+)\s*:\s*$", line)
+        if match:
+            services.append(match.group(1))
+    return list(dict.fromkeys(services))
+
+
+def _project_slug(name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
+    return slug.upper() or "PROJECT"
+
+
+def _path_is_ignored(rel_path: str) -> bool:
+    parts = Path(rel_path).parts
+    return any(part in IGNORED_DIR_NAMES or any(part.endswith(sfx) for sfx in IGNORED_DIR_SUFFIXES) for part in parts[:-1])
+
+
+def _relpath(project: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(project))
+    except ValueError:
+        return str(path)
+
+
+def _latest_numbered_handoff(handoffs_dir: Path) -> Path | None:
+    if not handoffs_dir.is_dir():
+        return None
+    best: tuple[int, Path] | None = None
+    for path in handoffs_dir.glob("SESSION_*.md"):
+        if not path.is_file():
+            continue
+        match = re.match(r"^SESSION_(\d+)_.*\.md$", path.name)
+        if not match:
+            continue
+        number = int(match.group(1))
+        if best is None or number > best[0]:
+            best = (number, path)
+    return None if best is None else best[1]
 
 
 def _human_bytes(n: int) -> str:

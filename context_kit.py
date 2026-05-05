@@ -145,6 +145,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Ollama model name (default: OLLAMA_MODEL env var or llama3)",
     )
+    chat.add_argument(
+        "--include-inspect",
+        action="store_true",
+        help="Append machine-derived inspect output to the system message",
+    )
 
     # hotpath
     hotpath = sub.add_parser(
@@ -463,26 +468,42 @@ def build_parser() -> argparse.ArgumentParser:
     # inspect
     inspect = sub.add_parser(
         "inspect",
-        help="Print a deterministic system map for a repo (stack, subsystems, hot files, risks)",
+        help="Print a deterministic markdown system map for any repo",
         description=(
-            "Read an arbitrary repo and print what's there: primary stack, "
-            "depth-1 subsystems, framework signals (Django + Next.js in v1), "
-            "hot files, risk patterns, likely-stale docs, and recommended "
-            "next moves. Read-only by contract: never modifies files, never "
-            "invokes an AI, never parses code as an AST. Filename / regex "
-            "probes only. Designed to seed an audit, not replace one."
+            "Read an arbitrary repo and print machine-derived facts as a "
+            "markdown report: project identity, detected stack, commands, "
+            "file-tree summary, route and model hints, environment hints, "
+            "context-kit docs status, and warnings/unknowns. Read-only by "
+            "contract: never modifies files, never invokes an AI, never "
+            "executes project code."
         ),
     )
     inspect.add_argument(
         "path",
         nargs="?",
-        default=".",
+        default=None,
+        help="Project root to inspect (default: current working directory)",
+    )
+    inspect.add_argument(
+        "--project",
+        default=None,
         help="Project root to inspect (default: current working directory)",
     )
     inspect.add_argument(
         "--json",
         action="store_true",
         help="Print machine-readable JSON to stdout",
+    )
+    inspect.add_argument(
+        "--format",
+        default="markdown",
+        choices=["markdown"],
+        help="Output format (markdown only in v1)",
+    )
+    inspect.add_argument(
+        "--output",
+        default=None,
+        help="Optional path to write the markdown report",
     )
     inspect.add_argument(
         "--depth",

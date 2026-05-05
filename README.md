@@ -159,6 +159,13 @@ Example:
 context-kit chat --model llama3 "What should I look at first?"
 ```
 
+Add `--include-inspect` to append a machine-derived repo inspection to
+the system message:
+
+```bash
+context-kit chat --project /path/to/project --include-inspect --model llama3
+```
+
 With the optional Python scaffold (drift verifier + index builder):
 
 ```bash
@@ -196,6 +203,7 @@ Commands:
   start                Launch the onboarding server for the current project
   orient               Print the assembled session-start orientation report
   chat                 Send the orient prompt plus a user prompt to local Ollama
+  inspect              Print a deterministic system map for any repo
   hotpath              Show the largest files most likely to dominate AI context
   inventory            Generate a runtime-derived inventory of the project
   seed PATH            Turn a structured idea file into project context (5 files)

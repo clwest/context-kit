@@ -19,10 +19,12 @@ CHAT_BEHAVIOR_PREAMBLE = (
     "You are running inside context-kit chat mode.\n"
     "Use the project orientation below as grounding, not as the only topic of conversation.\n"
     "The live user conversation is the current working context.\n"
+    "If a machine-derived repo inspection block is present, treat it as factual repo evidence.\n"
+    "Use the orientation for project meaning, source-of-truth rules, and anti-drift behavior.\n"
+    "If orientation and inspection disagree, say so instead of silently switching topics.\n"
+    "Do not invent capabilities not present in either the orientation or the inspection.\n"
     'When the user asks "what are we doing/testing/discussing right now", answer from the recent chat messages first.\n'
-    "Use the orientation to preserve project rules, source-of-truth hierarchy, and anti-drift behavior.\n"
     "Do not replace the live conversation with the repo's documented NEXT TASK unless the user specifically asks for repo priorities.\n"
-    "If live conversation and orientation conflict, explain the conflict instead of silently switching topics.\n"
     "Do not invent repo facts or stats."
 )
 HELP_TEXT = (
@@ -41,7 +43,13 @@ def run_chat(args: argparse.Namespace) -> int:
         return 2
 
     orientation = render_orient(project, short=False)
-    system_message = _build_system_message(orientation)
+    inspect_report = None
+    if getattr(args, "include_inspect", False):
+        from .inspect import render_inspect_markdown
+
+        inspect_result = _inspect_for_chat(project, args)
+        inspect_report = render_inspect_markdown(inspect_result)
+    system_message = _build_system_message(orientation, inspect_report)
     prompt = _resolve_one_shot_prompt(args)
     if prompt is not None:
         return _run_one_shot(prompt, system_message, args)
@@ -108,8 +116,11 @@ def _run_interactive_session(system_message: str, project: Path, args: argparse.
         print(response.rstrip())
 
 
-def _build_system_message(orientation: str) -> str:
-    return f"{CHAT_BEHAVIOR_PREAMBLE}\n\nProject orientation:\n{orientation}"
+def _build_system_message(orientation: str, inspect_report: str | None = None) -> str:
+    parts = [CHAT_BEHAVIOR_PREAMBLE, "", "Project orientation:", orientation]
+    if inspect_report:
+        parts.extend(["", "MACHINE-DERIVED REPO INSPECTION", inspect_report])
+    return "\n".join(parts)
 
 
 def _resolve_one_shot_prompt(args: argparse.Namespace) -> str | None:
@@ -142,3 +153,15 @@ def _resolve_project_path(project_value: str | None) -> Path | None:
         )
         return None
     return project
+
+
+def _inspect_for_chat(project: Path, args: argparse.Namespace):
+    from .inspect import _inspect
+
+    return _inspect(
+        project,
+        depth=getattr(args, "inspect_depth", 2),
+        scope=None,
+        include_related=False,
+        include_history=False,
+    )
