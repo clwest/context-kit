@@ -184,6 +184,14 @@ def _seed_nested_backend_frontend(root: Path) -> None:
         "    pass\n",
         encoding="utf-8",
     )
+    (app_dir / "models.py").write_text(
+        "from sqlalchemy.orm import DeclarativeBase\n"
+        "class Base(DeclarativeBase):\n"
+        "    pass\n"
+        "class Widget(Base):\n"
+        "    __tablename__ = 'widgets'\n",
+        encoding="utf-8",
+    )
     (app_dir / "tiers.py").write_text(
         "from dataclasses import dataclass\n"
         "\n"
@@ -331,6 +339,36 @@ class TestNestedManifestDetection(_CwdSandbox):
         self.assertIn("SQLAlchemy", data["primary_stack"]["frameworks"])
         self.assertIn("React", data["primary_stack"]["frameworks"])
         self.assertIn("Vite", data["primary_stack"]["frameworks"])
+        self.assertIn("backend/app/models.py", out)
+
+
+class TestContextKitSelfFrameworkFiltering(unittest.TestCase):
+    def test_repo_root_ignores_test_fixture_frameworks(self):
+        _, out = _run_capture(project=REPO_ROOT, json_out=True)
+        data = json.loads(out)
+        self.assertEqual(data["primary_stack"]["languages"], ["python"])
+        self.assertNotIn("FastAPI", data["primary_stack"]["frameworks"])
+        self.assertNotIn("SQLAlchemy", data["primary_stack"]["frameworks"])
+        self.assertIn("pyproject.toml", data["primary_stack"]["manifests"])
+        self.assertNotIn("FastAPI: ", out)
+        self.assertNotIn("SQLAlchemy: ", out)
+
+
+class TestContextKitCliCapabilities(unittest.TestCase):
+    def test_repo_root_detects_cli_capabilities(self):
+        _, out = _run_capture(project=REPO_ROOT)
+        self.assertIn("## Structured implementation facts", out)
+        self.assertIn("capability: orient", out)
+        self.assertIn("capability: inspect", out)
+        self.assertIn("capability: capabilities", out)
+        self.assertIn("capability: chat", out)
+        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"orient\":")
+        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"inspect\":")
+        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"capabilities\":")
+        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"chat\":")
+        self.assertRegex(out, r"cli/chat\.py:\d+ def run_chat\(args: argparse\.Namespace\) -> int:")
+        self.assertRegex(out, r"cli/inspect\.py:\d+ def run_inspect\(args: argparse\.Namespace\) -> int:")
+        self.assertRegex(out, r"cli/capabilities\.py:\d+ def run_capabilities\(args: argparse\.Namespace\) -> int:")
 
 
 class TestScopedInspect(_CwdSandbox):

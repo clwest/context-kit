@@ -17,6 +17,30 @@ _CAPABILITY_MEANINGS = {
     "config/env": "Config evidence suggests environment, deployment, or container configuration.",
     "stripe/checkout": "Route evidence suggests Stripe checkout support.",
     "stripe/webhook": "Route evidence suggests Stripe webhook handling.",
+    "orient": "CLI evidence suggests project orientation rendering.",
+    "inspect": "CLI evidence suggests static repo inspection.",
+    "capabilities": "CLI evidence suggests deterministic capability summarization.",
+    "chat": "CLI evidence suggests local, project-grounded chat mode.",
+    "doctor": "CLI evidence suggests read-only environment diagnostics.",
+    "inventory": "CLI evidence suggests runtime-derived inventory generation.",
+    "audit-response": "CLI evidence suggests response groundedness auditing.",
+    "init": "CLI evidence suggests project initialization scaffolding.",
+    "adopt": "CLI evidence suggests retrofitting context-kit docs onto existing projects.",
+    "seed": "CLI evidence suggests structured idea seeding.",
+    "hotpath": "CLI evidence suggests hot-file / context-dominance reporting.",
+    "coverage": "CLI evidence suggests file coverage classification.",
+    "behavior": "CLI evidence suggests behavior-surface analysis.",
+    "connections": "CLI evidence suggests connection inventory generation.",
+    "verify": "CLI evidence suggests verification checks.",
+    "exec": "CLI evidence suggests command execution orchestration.",
+    "audit": "CLI evidence suggests audit prompt generation.",
+    "fix": "CLI evidence suggests phased cleanup planning.",
+    "recommend-stack": "CLI evidence suggests stack recommendation from structured ideas.",
+    "start": "CLI evidence suggests serving an onboarding UI.",
+    "translation-init": "CLI evidence suggests translation-layer initialization.",
+    "codex": "CLI evidence suggests Codex launch or integration wiring.",
+    "start-codex": "CLI evidence suggests Codex startup wiring.",
+    "refactor": "CLI evidence suggests refactor assistance.",
 }
 
 _CAPABILITY_REASONS = {
@@ -28,6 +52,30 @@ _CAPABILITY_REASONS = {
     "config/env": "Env keys and Dockerfiles detected, but runtime deployment is not verified.",
     "stripe/checkout": "Stripe checkout route detected, but payment flow completion is not verified.",
     "stripe/webhook": "Stripe webhook route detected, but webhook processing behavior is not verified.",
+    "orient": "Explicit CLI command registration and module entrypoint detected.",
+    "inspect": "Explicit CLI command registration and module entrypoint detected.",
+    "capabilities": "Explicit CLI command registration and module entrypoint detected.",
+    "chat": "Explicit CLI command registration and module entrypoint detected.",
+    "doctor": "Explicit CLI command registration and module entrypoint detected.",
+    "inventory": "Explicit CLI command registration and module entrypoint detected.",
+    "audit-response": "Explicit CLI command registration and module entrypoint detected.",
+    "init": "Explicit CLI command registration and module entrypoint detected.",
+    "adopt": "Explicit CLI command registration and module entrypoint detected.",
+    "seed": "Explicit CLI command registration and module entrypoint detected.",
+    "hotpath": "Explicit CLI command registration and module entrypoint detected.",
+    "coverage": "Explicit CLI command registration and module entrypoint detected.",
+    "behavior": "Explicit CLI command registration and module entrypoint detected.",
+    "connections": "Explicit CLI command registration and module entrypoint detected.",
+    "verify": "Explicit CLI command registration and module entrypoint detected.",
+    "exec": "Explicit CLI command registration and module entrypoint detected.",
+    "audit": "Explicit CLI command registration and module entrypoint detected.",
+    "fix": "Explicit CLI command registration and module entrypoint detected.",
+    "recommend-stack": "Explicit CLI command registration and module entrypoint detected.",
+    "start": "Explicit CLI command registration and module entrypoint detected.",
+    "translation-init": "Explicit CLI command registration and module entrypoint detected.",
+    "codex": "Explicit CLI command registration and module entrypoint detected.",
+    "start-codex": "Explicit CLI command registration and module entrypoint detected.",
+    "refactor": "Explicit CLI command registration and module entrypoint detected.",
 }
 
 
@@ -43,7 +91,14 @@ def run_capabilities(args: argparse.Namespace) -> int:
         include_related=getattr(args, "include_related", False),
         include_history=getattr(args, "include_history", False),
     )
-    report = render_capabilities_markdown(project, result.files, result, format=getattr(args, "format", "full"))
+    report = render_capabilities_markdown(
+        project,
+        result.files,
+        result,
+        format=getattr(args, "format", "full"),
+        include_tests=getattr(args, "include_tests", False),
+        include_detectors=getattr(args, "include_detectors", False),
+    )
 
     output_path = getattr(args, "output", None)
     if output_path:
@@ -55,7 +110,15 @@ def run_capabilities(args: argparse.Namespace) -> int:
     return 0
 
 
-def render_capabilities_markdown(project: Path, files: list[Path], inspect_result, *, format: str = "full") -> str:
+def render_capabilities_markdown(
+    project: Path,
+    files: list[Path],
+    inspect_result,
+    *,
+    format: str = "full",
+    include_tests: bool = False,
+    include_detectors: bool = False,
+) -> str:
     from .inspect import _collect_structured_implementation_facts
 
     facts = _collect_structured_implementation_facts(project, files)
@@ -65,15 +128,51 @@ def render_capabilities_markdown(project: Path, files: list[Path], inspect_resul
         evidence = [str(item) for item in fact.get("evidence", []) if str(item).strip()]
         if not evidence:
             continue
-        entry = grouped.setdefault(capability, {"evidence": [], "heuristic": False})
+        classified = [(item, _classify_evidence_source(item)) for item in evidence]
+        has_test_evidence = any(source == "test_fixture" for _, source in classified)
+        has_detector_evidence = any(source == "detector_logic" for _, source in classified)
+        evidence = [
+            item
+            for item, source in classified
+            if source == "implementation"
+            or (include_tests and source == "test_fixture")
+            or (include_detectors and source == "detector_logic")
+        ]
+        if not evidence:
+            continue
+        entry = grouped.setdefault(
+            capability,
+            {
+                "evidence": [],
+                "heuristic": False,
+                "has_test_evidence": False,
+                "has_detector_evidence": False,
+            },
+        )
         entry["evidence"].extend(evidence)
+        if has_test_evidence:
+            entry["has_test_evidence"] = True
+        if has_detector_evidence:
+            entry["has_detector_evidence"] = True
         if capability not in {"config/env"}:
             entry["heuristic"] = True
 
     if format == "compact":
-        return _render_compact_capabilities_markdown(project, inspect_result, grouped)
+        return _render_compact_capabilities_markdown(
+            project,
+            inspect_result,
+            grouped,
+            include_tests=include_tests,
+            include_detectors=include_detectors,
+        )
     if format == "shortlist":
-        return _render_shortlist_capabilities_markdown(project, inspect_result, grouped)
+        return _render_shortlist_capabilities_markdown(
+            project,
+            inspect_result,
+            grouped,
+            include_tests=include_tests,
+            include_detectors=include_detectors,
+        )
 
     lines: list[str] = []
     lines.append("# context-kit capabilities")
@@ -95,7 +194,7 @@ def render_capabilities_markdown(project: Path, files: list[Path], inspect_resul
     lines.append("## Capability summary")
     lines.append("")
     if not grouped:
-        lines.append("- No structured implementation facts were detected.")
+        lines.append("- No implementation capabilities detected from non-test source paths.")
     else:
         for capability, payload in grouped.items():
             evidence = list(dict.fromkeys(payload["evidence"]))
@@ -108,6 +207,10 @@ def render_capabilities_markdown(project: Path, files: list[Path], inspect_resul
             confidence, reason = _capability_confidence(capability, evidence)
             lines.append(f"- Confidence: {confidence}")
             lines.append(f"- Reason: {reason}")
+            if include_tests and payload.get("has_test_evidence"):
+                lines.append("- Test/fixture evidence — not implementation.")
+            if include_detectors and payload.get("has_detector_evidence"):
+                lines.append("- Detector logic evidence — not project implementation.")
             lines.append("- Evidence:")
             for item in evidence:
                 lines.append(f"  - {item}")
@@ -122,6 +225,9 @@ def _render_compact_capabilities_markdown(
     project: Path,
     inspect_result,
     grouped: OrderedDict[str, dict[str, list[str] | bool]],
+    *,
+    include_tests: bool = False,
+    include_detectors: bool = False,
 ) -> str:
     lines: list[str] = []
     lines.append("# context-kit capabilities")
@@ -153,7 +259,7 @@ def _render_compact_capabilities_markdown(
         compact_items.append((capability, evidence, confidence, reason))
 
     if not compact_items:
-        lines.append("- No structured implementation facts were detected.")
+        lines.append("- No implementation capabilities detected from non-test source paths.")
         return "\n".join(lines).rstrip() + "\n"
 
     shortlist = _build_recommended_shortlist(compact_items)
@@ -167,6 +273,10 @@ def _render_compact_capabilities_markdown(
                 lines.append(f"- Meaning: {meaning}")
             lines.append(f"- Confidence: {confidence}")
             lines.append(f"- Reason: {reason}")
+            if include_tests and any(_classify_evidence_source(item) == "test_fixture" for item in evidence):
+                lines.append("- Test/fixture evidence — not implementation.")
+            if include_detectors and any(_classify_evidence_source(item) == "detector_logic" for item in evidence):
+                lines.append("- Detector logic evidence — not project implementation.")
             lines.append("- Best evidence:")
             for item in evidence[:3]:
                 lines.append(f"  - {item}")
@@ -182,6 +292,10 @@ def _render_compact_capabilities_markdown(
             lines.append(f"- Meaning: {meaning}")
         lines.append(f"- Confidence: {confidence}")
         lines.append(f"- Reason: {reason}")
+        if include_tests and any(_classify_evidence_source(item) == "test_fixture" for item in evidence):
+            lines.append("- Test/fixture evidence — not implementation.")
+        if include_detectors and any(_classify_evidence_source(item) == "detector_logic" for item in evidence):
+            lines.append("- Detector logic evidence — not project implementation.")
         lines.append("- Best evidence:")
         for item in evidence:
             lines.append(f"  - {item}")
@@ -195,6 +309,9 @@ def _render_shortlist_capabilities_markdown(
     project: Path,
     inspect_result,
     grouped: OrderedDict[str, dict[str, list[str] | bool]],
+    *,
+    include_tests: bool = False,
+    include_detectors: bool = False,
 ) -> str:
     lines: list[str] = []
     lines.append("# context-kit capabilities")
@@ -217,6 +334,30 @@ def _render_shortlist_capabilities_markdown(
 
     compact_items: list[tuple[str, list[str], str, str]] = []
     shortlist_order = [
+        "orient",
+        "inspect",
+        "capabilities",
+        "chat",
+        "doctor",
+        "inventory",
+        "audit-response",
+        "init",
+        "adopt",
+        "seed",
+        "hotpath",
+        "coverage",
+        "behavior",
+        "connections",
+        "verify",
+        "exec",
+        "audit",
+        "fix",
+        "recommend-stack",
+        "start",
+        "translation-init",
+        "codex",
+        "start-codex",
+        "refactor",
         "auth",
         "sessions/chat",
         "founder_projects/export",
@@ -238,7 +379,7 @@ def _render_shortlist_capabilities_markdown(
         compact_items.append((capability, evidence, confidence, reason))
 
     if not compact_items:
-        lines.append("- No structured implementation facts were detected.")
+        lines.append("- No implementation capabilities detected from non-test source paths.")
         return "\n".join(lines).rstrip() + "\n"
 
     for capability, evidence, confidence, reason in compact_items:
@@ -248,6 +389,10 @@ def _render_shortlist_capabilities_markdown(
             lines.append(f"- Meaning: {meaning}")
         lines.append(f"- Confidence: {confidence}")
         lines.append(f"- Reason: {reason}")
+        if include_tests and any(_classify_evidence_source(item) == "test_fixture" for item in evidence):
+            lines.append("- Test/fixture evidence — not implementation.")
+        if include_detectors and any(_classify_evidence_source(item) == "detector_logic" for item in evidence):
+            lines.append("- Detector logic evidence — not project implementation.")
         lines.append("- Best evidence:")
         for item in evidence[:3]:
             lines.append(f"  - {item}")
@@ -261,6 +406,30 @@ def _build_recommended_shortlist(
     compact_items: list[tuple[str, list[str], str, str]],
 ) -> list[tuple[str, list[str], str, str]]:
     shortlist_order = [
+        "orient",
+        "inspect",
+        "capabilities",
+        "chat",
+        "doctor",
+        "inventory",
+        "audit-response",
+        "init",
+        "adopt",
+        "seed",
+        "hotpath",
+        "coverage",
+        "behavior",
+        "connections",
+        "verify",
+        "exec",
+        "audit",
+        "fix",
+        "recommend-stack",
+        "start",
+        "translation-init",
+        "codex",
+        "start-codex",
+        "refactor",
         "auth",
         "sessions/chat",
         "founder_projects/export",
@@ -284,6 +453,35 @@ def _build_recommended_shortlist(
 
 def _capability_confidence(capability: str, evidence: list[str]) -> tuple[str, str]:
     joined = "\n".join(evidence).lower()
+    if capability in {
+        "orient",
+        "inspect",
+        "capabilities",
+        "chat",
+        "doctor",
+        "inventory",
+        "audit-response",
+        "init",
+        "adopt",
+        "seed",
+        "hotpath",
+        "coverage",
+        "behavior",
+        "connections",
+        "verify",
+        "exec",
+        "audit",
+        "fix",
+        "recommend-stack",
+        "start",
+        "translation-init",
+        "codex",
+        "start-codex",
+        "refactor",
+    }:
+        if len(evidence) >= 2:
+            return "high", _CAPABILITY_REASONS[capability]
+        return "medium", "CLI command evidence detected, but broader behavior is not fully verified."
     if capability == "auth":
         if any(token in joined for token in ("register", "login", "users/me")) and len(evidence) >= 2:
             return "high", _CAPABILITY_REASONS[capability]
@@ -310,6 +508,33 @@ def _capability_confidence(capability: str, evidence: list[str]) -> tuple[str, s
 
 
 def _select_compact_evidence(capability: str, evidence: list[str]) -> list[str]:
+    if capability in {
+        "orient",
+        "inspect",
+        "capabilities",
+        "chat",
+        "doctor",
+        "inventory",
+        "audit-response",
+        "init",
+        "adopt",
+        "seed",
+        "hotpath",
+        "coverage",
+        "behavior",
+        "connections",
+        "verify",
+        "exec",
+        "audit",
+        "fix",
+        "recommend-stack",
+        "start",
+        "translation-init",
+        "codex",
+        "start-codex",
+        "refactor",
+    }:
+        return evidence
     route_evidence = [item for item in evidence if "@app." in item or "@router." in item]
     if capability in {"auth", "sessions/chat", "founder_projects/export", "stripe/checkout", "stripe/webhook"}:
         return route_evidence or evidence
@@ -327,3 +552,49 @@ def _select_compact_evidence(capability: str, evidence: list[str]) -> list[str]:
         base_model = [item for item in evidence if "BaseModel" in item or "DeclarativeBase" in item or "declarative_base" in item]
         return base_model[:1]
     return route_evidence or evidence[:1]
+
+
+def _classify_evidence_source(evidence: str) -> str:
+    path = evidence.split(":", 1)[0].strip()
+    if not path:
+        return "implementation"
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    if any(part in {"tests", "test", "__tests__"} for part in parts):
+        return "test_fixture"
+    name = parts[-1]
+    if (
+        name.startswith("test_")
+        or name.startswith("test.")
+        or name.endswith("_test.py")
+        or ".test." in name
+        or name.endswith(".spec")
+        or name.endswith(".spec.py")
+        or ".spec." in name
+    ):
+        return "test_fixture"
+    if _is_detector_logic_evidence(normalized, evidence):
+        return "detector_logic"
+    return "implementation"
+
+
+def _is_detector_logic_evidence(normalized_path: str, evidence: str) -> bool:
+    if not normalized_path.startswith("cli/"):
+        return False
+    content = evidence.split(":", 1)[-1].strip().lower()
+    detector_signals = (
+        "markers =",
+        "_select_compact_evidence",
+        "_capability_confidence",
+        "render_capabilities_markdown",
+        "_collect_structured_implementation_facts",
+        "_group_fastapi_route_capabilities",
+        "_group_tier_config_capabilities",
+        "_group_model_capabilities",
+        "_group_env_capabilities",
+        "_route_capability_label",
+        "capability summary",
+        "if any(token in item",
+        "re.compile(",
+    )
+    return any(marker in content for marker in detector_signals)

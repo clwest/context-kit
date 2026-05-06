@@ -66,6 +66,10 @@ _MANIFESTS = {
     "foundry.toml": "smart-contract",
 }
 
+_NESTED_APP_DIRS = {"backend", "frontend", "web", "app", "client", "mobile"}
+_PYTHON_MANIFEST_NAMES = {"pyproject.toml", "requirements.txt", "setup.py"}
+_NODE_MANIFEST_NAMES = {"package.json"}
+
 # Common entry-point filenames for the brief "Entry points" section.
 _ENTRY_POINT_HINTS = {
     "manage.py": "django-cli",
@@ -315,8 +319,23 @@ def _inspect(
     total_bytes = sum(s for _, s in sized)
 
     head = _git_head(project)
-    root_manifests = _detect_manifests_at(project) if scope is None else _detect_manifests_from_files(files)
-    primary_stack = _classify_stack(root_manifests)
+    manifest_paths = _collect_manifest_paths(project, files if scope is not None else files)
+    primary_stack = _classify_stack(manifest_paths)
+    manifest_evidence = _collect_manifest_evidence(project, files)
+    primary_stack["frameworks"] = _enrich_primary_frameworks(
+        project,
+        files,
+        manifest_evidence,
+        primary_stack["frameworks"],
+    )
+    if primary_stack["frameworks"] and primary_stack["confidence"] == "none":
+        primary_stack["confidence"] = "medium"
+    if primary_stack["manifests"] and primary_stack["confidence"] == "none":
+        primary_stack["confidence"] = "medium"
+    if primary_stack["languages"] and primary_stack["frameworks"]:
+        primary_stack["confidence"] = "high"
+    elif primary_stack["manifests"]:
+        primary_stack["confidence"] = "medium"
 
     workspaces = [] if scope is not None else _detect_workspaces(project, depth=depth)
 
@@ -406,11 +425,63 @@ def _detect_manifests_at(directory: Path) -> list[str]:
 
 
 def _detect_manifests_from_files(files: list[Path]) -> list[str]:
-    found: list[str] = []
-    for name in _MANIFESTS:
-        if any(path.name == name for path in files):
-            found.append(name)
-    return found
+    return _collect_manifest_paths_from_files(files)
+
+
+def _collect_manifest_paths(project: Path, files: list[Path]) -> list[str]:
+    return _collect_manifest_paths_from_files(files, project=project)
+
+
+def _collect_manifest_paths_from_files(files: list[Path], project: Path | None = None) -> list[str]:
+    paths: list[str] = []
+    for path in files:
+        try:
+            rel = path.relative_to(project).as_posix() if project is not None else path.as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        if path.name not in _MANIFESTS:
+            continue
+        if project is not None:
+            if _is_root_manifest(path, project) or _is_nested_app_manifest(rel, path.name):
+                if rel not in paths:
+                    paths.append(rel)
+        else:
+            if rel not in paths:
+                paths.append(rel)
+    return paths
+
+
+def _is_root_manifest(path: Path, project: Path) -> bool:
+    try:
+        return path.parent == project
+    except ValueError:
+        return False
+
+
+def _is_nested_app_manifest(rel: str, name: str) -> bool:
+    parts = Path(rel).parts
+    return len(parts) >= 2 and parts[0] in _NESTED_APP_DIRS and name in _PYTHON_MANIFEST_NAMES | _NODE_MANIFEST_NAMES
+
+
+def _is_test_fixture_path(path: Path, project: Path) -> bool:
+    try:
+        rel = path.relative_to(project).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+    normalized = rel.replace("\\", "/")
+    parts = normalized.split("/")
+    if any(part in {"tests", "test", "__tests__"} for part in parts):
+        return True
+    name = parts[-1]
+    return (
+        name.startswith("test_")
+        or name.startswith("test.")
+        or name.endswith("_test.py")
+        or ".test." in name
+        or name.endswith(".spec")
+        or name.endswith(".spec.py")
+        or ".spec." in name
+    )
 
 
 def _classify_stack(manifests: list[str]) -> dict:
@@ -418,7 +489,9 @@ def _classify_stack(manifests: list[str]) -> dict:
     languages: list[str] = []
     frameworks: list[str] = []
     for m in manifests:
-        kind = _MANIFESTS[m]
+        kind = _MANIFESTS.get(Path(m).name)
+        if kind is None:
+            continue
         if kind == "python":
             if "python" not in languages:
                 languages.append("python")
@@ -465,6 +538,58 @@ def _classify_stack(manifests: list[str]) -> dict:
         "confidence": confidence,
         "manifests": manifests,
     }
+
+
+def _enrich_primary_frameworks(
+    project: Path,
+    files: list[Path],
+    manifest_evidence: dict,
+    base_frameworks: list[str],
+) -> list[str]:
+    frameworks: list[str] = list(base_frameworks)
+    requirements = manifest_evidence["requirements"]
+    package_jsons = manifest_evidence["packages"]
+
+    fastapi_detected = any("fastapi" in deps for deps in requirements.values()) or bool(_collect_fastapi_hints(project, files))
+    sqlalchemy_detected = any("sqlalchemy" in deps for deps in requirements.values()) or bool(_collect_sqlalchemy_hints(project, files))
+
+    if fastapi_detected and "FastAPI" not in frameworks:
+        frameworks.append("FastAPI")
+    if sqlalchemy_detected and "SQLAlchemy" not in frameworks:
+        frameworks.append("SQLAlchemy")
+
+    frontend_hits = {
+        "React": False,
+        "Vite": False,
+        "Next.js": False,
+        "Expo": False,
+        "Vue": False,
+        "Svelte": False,
+    }
+    for deps in package_jsons.values():
+        if {"react", "react-dom", "react-router", "react-router-dom"} & deps:
+            frontend_hits["React"] = True
+        if "vite" in deps:
+            frontend_hits["Vite"] = True
+        if "next" in deps:
+            frontend_hits["Next.js"] = True
+        if "expo" in deps or "expo-router" in deps:
+            frontend_hits["Expo"] = True
+        if "vue" in deps:
+            frontend_hits["Vue"] = True
+        if "svelte" in deps:
+            frontend_hits["Svelte"] = True
+
+    if not any(frontend_hits.values()):
+        route_hints = _collect_frontend_route_hints(project, files)
+        if route_hints:
+            frontend_hits["React"] = True
+
+    for name in ("React", "Vite", "Next.js", "Expo", "Vue", "Svelte"):
+        if frontend_hits[name] and name not in frameworks:
+            frameworks.append(name)
+
+    return frameworks
 
 
 # ---------------------------------------------------------------------------
@@ -1561,6 +1686,7 @@ def render_inspect_markdown(r: InspectionResult) -> str:
     commands = _inspect_commands(project, files)
     tree = _inspect_tree_summary(project, files)
     api_hints = _inspect_api_route_hints(project, files)
+    structured_facts = _collect_structured_implementation_facts(project, files)
     model_hints = _inspect_model_hints(project, files)
     env_hints = _inspect_env_hints(project, files)
     docs_status = _inspect_docs_status(project)
@@ -1653,6 +1779,11 @@ def render_inspect_markdown(r: InspectionResult) -> str:
     lines.append("")
     lines.append("### Frontend")
     lines.append(_format_bullets(api_hints["frontend"]))
+    lines.append("")
+
+    lines.append("## Structured implementation facts")
+    lines.append("")
+    lines.extend(_format_structured_implementation_facts(structured_facts))
     lines.append("")
 
     lines.append("## Models / data hints")
@@ -1903,36 +2034,31 @@ def _inspect_project_identity(project: Path, files: list[Path], head: dict | Non
 
 def _project_name_candidates(project: Path, files: list[Path]) -> list[str]:
     out: list[str] = []
-    package = _read_package_json(project / "package.json")
-    if package:
-        name = package.get("name")
-        if isinstance(name, str) and name.strip():
-            out.append(name.strip())
-    pyproject = _read_pyproject(project / "pyproject.toml")
-    if pyproject:
-        for key in ("project.name", "tool.poetry.name"):
-            value = _nested_get(pyproject, key)
-            if isinstance(value, str) and value.strip():
-                out.append(value.strip())
+    manifest_paths = _collect_manifest_paths(project, files)
+    for rel in manifest_paths:
+        path = project / rel
+        if path.name == "package.json":
+            package = _read_package_json(path)
+            if package:
+                name = package.get("name")
+                if isinstance(name, str) and name.strip():
+                    out.append(name.strip())
+        if path.name == "pyproject.toml":
+            pyproject = _read_pyproject(path)
+            if pyproject:
+                for key in ("project.name", "tool.poetry.name"):
+                    value = _nested_get(pyproject, key)
+                    if isinstance(value, str) and value.strip():
+                        out.append(value.strip())
     return out
 
 
 def _inspect_stack_details(project: Path, files: list[Path], primary_stack: dict, framework_signals: FrameworkSignals) -> dict:
-    root_names = {path.name for path in files if path.parent == project}
-    python_bits = [name for name in ("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg") if name in root_names]
-    node_bits = [name for name in ("package.json", "vite.config.js", "vite.config.ts", "vite.config.mjs", "next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs") if name in root_names]
-
-    package = _read_package_json(project / "package.json")
-    node_deps: list[str] = []
-    if package:
-        deps = {}
-        for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
-            value = package.get(key)
-            if isinstance(value, dict):
-                deps.update({str(k): str(v) for k, v in value.items()})
-        for dep in ("react", "react-dom", "vite", "next", "expo", "react-router", "react-router-dom"):
-            if dep in deps:
-                node_deps.append(dep)
+    manifest_evidence = _collect_manifest_evidence(project, files)
+    python_bits = manifest_evidence["python"]
+    node_bits = manifest_evidence["node"]
+    requirements = manifest_evidence["requirements"]
+    package_jsons = manifest_evidence["packages"]
 
     backend: list[str] = []
     if framework_signals.django:
@@ -1942,30 +2068,54 @@ def _inspect_stack_details(project: Path, files: list[Path], primary_stack: dict
         )
     if framework_signals.django is None and any(path.name == "manage.py" for path in files):
         backend.append("Django: manage.py detected.")
+
+    fastapi_bits: list[str] = []
+    sqlalchemy_bits: list[str] = []
+    for rel, deps in requirements.items():
+        if "fastapi" in deps:
+            fastapi_bits.append(f"{rel}: fastapi")
+        if "sqlalchemy" in deps:
+            sqlalchemy_bits.append(f"{rel}: sqlalchemy")
     fastapi = _collect_fastapi_hints(project, files)
-    if fastapi:
-        backend.append("FastAPI: route decorators / APIRouter usage detected.")
+    if fastapi_bits or fastapi:
+        parts = []
+        if fastapi_bits:
+            parts.append(", ".join(fastapi_bits))
+        if fastapi:
+            parts.append("route decorators / APIRouter usage detected")
+        backend.append("FastAPI: " + "; ".join(parts))
     flask = _collect_flask_hints(project, files)
     if flask:
         backend.append("Flask: app.route decorators detected.")
 
     frontend: list[str] = []
-    if node_bits or node_deps:
+    for rel, deps in package_jsons.items():
         bits = []
-        if any(b.startswith("vite.config") for b in node_bits) or "vite" in node_deps:
+        if "vite" in deps:
             bits.append("Vite")
-        if any(b.startswith("next.config") for b in node_bits) or "next" in node_deps:
+        if "next" in deps:
             bits.append("Next.js")
-        if "react" in node_deps or "react-dom" in node_deps or _collect_frontend_route_hints(project, files):
+        if "react" in deps or "react-dom" in deps or "react-router" in deps or "react-router-dom" in deps:
             bits.append("React")
-        if "expo" in node_deps:
+        if "expo" in deps or "expo-router" in deps:
             bits.append("Expo")
+        if "vue" in deps:
+            bits.append("Vue")
+        if "svelte" in deps:
+            bits.append("Svelte")
         if bits:
-            frontend.append("Detected: " + ", ".join(dict.fromkeys(bits)))
+            frontend.append(f"{rel}: {', '.join(dict.fromkeys(bits))}")
+    if not frontend:
+        route_hints = _collect_frontend_route_hints(project, files)
+        if route_hints:
+            frontend.append("Route evidence suggests frontend routing: " + "; ".join(route_hints))
+
+    if sqlalchemy_bits:
+        backend.append("SQLAlchemy: " + "; ".join(sqlalchemy_bits))
 
     return {
-        "python": [f"Detected: {', '.join(python_bits)}"] if python_bits else [],
-        "node": [f"Detected: {', '.join(node_bits)}"] if node_bits else [],
+        "python": python_bits,
+        "node": node_bits,
         "backend": backend,
         "frontend": frontend,
     }
@@ -2056,10 +2206,207 @@ def _inspect_api_route_hints(project: Path, files: list[Path]) -> dict:
     }
 
 
+def _collect_structured_implementation_facts(project: Path, files: list[Path]) -> list[dict[str, list[str]]]:
+    facts: list[dict[str, list[str]]] = []
+
+    cli_groups = _group_cli_capabilities(project, files)
+    route_groups = _group_fastapi_route_capabilities(project, files)
+    tier_groups = _group_tier_config_capabilities(project, files)
+    model_groups = _group_model_capabilities(project, files)
+    env_groups = _group_env_capabilities(project, files)
+
+    for label, evidence in cli_groups:
+        facts.append({"capability": label, "evidence": evidence})
+    for label, evidence in route_groups:
+        facts.append({"capability": label, "evidence": evidence})
+    for label, evidence in tier_groups:
+        facts.append({"capability": label, "evidence": evidence})
+    for label, evidence in model_groups:
+        facts.append({"capability": label, "evidence": evidence})
+    for label, evidence in env_groups:
+        facts.append({"capability": label, "evidence": evidence})
+
+    return facts
+
+
+def _format_structured_implementation_facts(facts: list[dict[str, list[str]]]) -> list[str]:
+    if not facts:
+        return ["- Not detected."]
+    lines: list[str] = []
+    for fact in facts:
+        capability = fact.get("capability", "unknown")
+        evidence = fact.get("evidence", [])
+        lines.append(f"- capability: {capability}")
+        lines.append("  evidence:")
+        for item in evidence:
+            lines.append(f"    - {item}")
+        lines.append("")
+    return lines[:-1] if lines and not lines[-1] else lines
+
+
+def _group_cli_capabilities(project: Path, files: list[Path]) -> list[tuple[str, list[str]]]:
+    evidence_by_capability: dict[str, list[str]] = {}
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        rel = _relpath(project, path)
+        if rel == "context_kit.py":
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                match = re.search(r'if\s+args\.command\s*==\s*"([^"]+)"', line)
+                if not match:
+                    continue
+                capability = match.group(1)
+                evidence_by_capability.setdefault(capability, []).append(f"{rel}:{i} {line.strip()}")
+            continue
+        if not rel.startswith("cli/"):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            match = re.search(r"^\s*def\s+run_([a-z_]+)\s*\(", line)
+            if not match:
+                continue
+            capability = match.group(1).replace("_", "-")
+            evidence_by_capability.setdefault(capability, []).append(f"{rel}:{i} {line.strip()}")
+    if not evidence_by_capability:
+        return []
+    return [(label, list(dict.fromkeys(items))) for label, items in evidence_by_capability.items()]
+
+
+def _group_fastapi_route_capabilities(project: Path, files: list[Path]) -> list[tuple[str, list[str]]]:
+    groups: dict[str, list[str]] = {}
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = _relpath(project, path)
+        for i, line in enumerate(text.splitlines(), 1):
+            match = _FASTAPI_DECORATOR_RE.search(line)
+            if not match:
+                continue
+            method = match.group(1).lower()
+            route_path = match.group(3)
+            capability = _route_capability_label(route_path, method)
+            evidence = f"{rel}:{i} {line.strip()}"
+            groups.setdefault(capability, []).append(evidence)
+    return [(label, items) for label, items in groups.items()]
+
+
+def _group_tier_config_capabilities(project: Path, files: list[Path]) -> list[tuple[str, list[str]]]:
+    markers = ("TIERS", "TierConfig", "allowed_modes", "max_sessions_per_day", "max_response_tokens", "max_messages_per_session")
+    evidence_by_file: dict[str, list[str]] = {}
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            if path.name == "tiers.py":
+                rel = _relpath(project, path)
+                evidence_by_file.setdefault("tier_config", []).append(f"{rel} (detected file evidence)")
+            continue
+        rel = _relpath(project, path)
+        if path.name != "tiers.py" and not any(marker.lower() in text.lower() for marker in markers):
+            continue
+        file_evidence: list[str] = []
+        saw_marker = False
+        for i, line in enumerate(text.splitlines(), 1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if any(marker in stripped for marker in markers):
+                saw_marker = True
+                file_evidence.append(f"{rel}:{i} {stripped}")
+        if file_evidence:
+            evidence_by_file.setdefault("tier_config", []).extend(file_evidence)
+        elif saw_marker:
+            evidence_by_file.setdefault("tier_config", []).append(f"{rel} (detected file evidence)")
+    evidence = evidence_by_file.get("tier_config", [])
+    if not evidence:
+        return []
+    return [("tier_config", list(dict.fromkeys(evidence)))]
+
+
+def _group_model_capabilities(project: Path, files: list[Path]) -> list[tuple[str, list[str]]]:
+    evidence: list[str] = []
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = _relpath(project, path)
+        for i, line in enumerate(text.splitlines(), 1):
+            if _SQLA_DECL_RE.search(line) or _SQLA_BASE_RE.search(line):
+                evidence.append(f"{rel}:{i} {line.strip()}")
+            if _DJANGO_MODELS_RE.search(line):
+                evidence.append(f"{rel}:{i} {line.strip()}")
+            if _PYDANTIC_BASEMODEL_RE.search(line):
+                evidence.append(f"{rel}:{i} {line.strip()}")
+    if not evidence:
+        return []
+    return [("data/models", evidence)]
+
+
+def _group_env_capabilities(project: Path, files: list[Path]) -> list[tuple[str, list[str]]]:
+    evidence: list[str] = []
+    for path in files:
+        if path.name == ".env.example":
+            keys = _read_env_example_keys(path)
+            if keys:
+                evidence.append(f"{_relpath(project, path)}: {', '.join(keys)}")
+        if path.name in {"Dockerfile", "Dockerfile.dev", "Dockerfile.prod"} or path.name.startswith("Dockerfile."):
+            evidence.append(_relpath(project, path))
+        if path.name in {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}:
+            services = _read_compose_services(path)
+            if services:
+                evidence.append(f"{_relpath(project, path)}: {', '.join(services)}")
+    if not evidence:
+        return []
+    return [("config/env", evidence)]
+
+
+_FASTAPI_DECORATOR_RE = re.compile(r"@\s*(?:app|router)\.(get|post|put|delete|patch|options|head|api_route)\s*\(\s*([\"'])(.+?)\2")
+
+
+def _route_capability_label(route_path: str, method: str) -> str:
+    normalized = route_path.lower()
+    if "auth" in normalized or "login" in normalized or "register" in normalized or "users/me" in normalized:
+        return "auth"
+    if "sessions" in normalized and "chat" in normalized:
+        return "sessions/chat"
+    if "founder-project" in normalized or "founder_projects" in normalized:
+        return "founder_projects/export"
+    if "checkout" in normalized:
+        return "stripe/checkout"
+    if "webhook" in normalized:
+        return "stripe/webhook"
+
+    parts = [part for part in normalized.split("/") if part and part != "api"]
+    if not parts:
+        return method
+    if len(parts) >= 2 and not parts[1].startswith("{"):
+        return f"{parts[0].replace('-', '_')}/{parts[1].replace('-', '_')}"
+    return parts[0].replace('-', '_')
+
+
 def _inspect_model_hints(project: Path, files: list[Path]) -> dict:
     sqlalchemy: list[str] = []
     django_models: list[str] = []
     pydantic: list[str] = []
+    requirement_sqlalchemy_hits: list[str] = []
+    requirement_pydantic_hits: list[str] = []
+    manifest_evidence = _collect_manifest_evidence(project, files)
 
     for path in files:
         if path.suffix != ".py":
@@ -2076,7 +2423,36 @@ def _inspect_model_hints(project: Path, files: list[Path]) -> dict:
                 django_models.append(f"{rel}:{i}: {line.strip()}")
             if _PYDANTIC_BASEMODEL_RE.search(line):
                 pydantic.append(f"{rel}:{i}: {line.strip()}")
+
+    for rel, deps in manifest_evidence["requirements"].items():
+        if "sqlalchemy" in deps:
+            requirement_sqlalchemy_hits.append(f"{rel}: SQLAlchemy dependency detected")
+        if "pydantic" in deps:
+            requirement_pydantic_hits.append(f"{rel}: Pydantic dependency detected")
+
+    if requirement_sqlalchemy_hits:
+        sqlalchemy.extend(requirement_sqlalchemy_hits)
+    if requirement_pydantic_hits:
+        pydantic.extend(requirement_pydantic_hits)
     return {"sqlalchemy": sqlalchemy, "django_models": django_models, "pydantic": pydantic}
+
+
+def _collect_sqlalchemy_hints(project: Path, files: list[Path]) -> list[str]:
+    hints: list[str] = []
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        if _is_test_fixture_path(path, project):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = _relpath(project, path)
+        for i, line in enumerate(text.splitlines(), 1):
+            if _SQLA_DECL_RE.search(line) or _SQLA_BASE_RE.search(line):
+                hints.append(f"{rel}:{i}: {line.strip()}")
+    return hints
 
 
 def _inspect_env_hints(project: Path, files: list[Path]) -> dict:
@@ -2175,6 +2551,8 @@ def _collect_fastapi_hints(project: Path, files: list[Path]) -> list[str]:
     for path in files:
         if path.suffix != ".py":
             continue
+        if _is_test_fixture_path(path, project):
+            continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -2192,6 +2570,8 @@ def _collect_django_route_hints(project: Path, files: list[Path]) -> list[str]:
     hints: list[str] = []
     for path in files:
         if path.name != "urls.py" or path.suffix != ".py":
+            continue
+        if _is_test_fixture_path(path, project):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -2211,6 +2591,8 @@ def _collect_flask_hints(project: Path, files: list[Path]) -> list[str]:
     for path in files:
         if path.suffix != ".py":
             continue
+        if _is_test_fixture_path(path, project):
+            continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -2227,6 +2609,8 @@ def _collect_flask_hints(project: Path, files: list[Path]) -> list[str]:
 def _collect_frontend_route_hints(project: Path, files: list[Path]) -> list[str]:
     hints: list[str] = []
     for path in files:
+        if _is_test_fixture_path(path, project):
+            continue
         rel = _relpath(project, path)
         lower = rel.lower()
         if lower.startswith("app/") and path.name.startswith("page."):
@@ -2241,6 +2625,80 @@ def _collect_frontend_route_hints(project: Path, files: list[Path]) -> list[str]
             if _REACT_ROUTER_RE.search(text):
                 hints.append(f"{rel}: React Router usage")
     return hints
+
+
+def _collect_manifest_evidence(project: Path, files: list[Path]) -> dict:
+    python: list[str] = []
+    node: list[str] = []
+    requirements: dict[str, set[str]] = {}
+    packages: dict[str, set[str]] = {}
+
+    for path in files:
+        try:
+            rel = path.relative_to(project).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        parts = Path(rel).parts
+        if not parts:
+            continue
+        if _is_test_fixture_path(path, project):
+            continue
+
+        if path.name in _PYTHON_MANIFEST_NAMES and (_is_root_manifest(path, project) or _is_nested_app_manifest(rel, path.name)):
+            if rel not in python:
+                python.append(rel)
+            if path.name == "requirements.txt":
+                requirements[rel] = _read_requirements_dependencies(path)
+
+        if path.name == "package.json" and (_is_root_manifest(path, project) or _is_nested_app_manifest(rel, path.name)):
+            if rel not in node:
+                node.append(rel)
+            packages[rel] = _package_json_framework_deps(path)
+
+    return {
+        "python": python,
+        "node": node,
+        "requirements": requirements,
+        "packages": packages,
+    }
+
+
+def _read_requirements_dependencies(path: Path) -> set[str]:
+    deps: set[str] = set()
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return deps
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        base = re.split(r"[<>=;\[\s]", line, maxsplit=1)[0].strip().lower()
+        if base:
+            deps.add(base)
+    return deps
+
+
+def _package_json_framework_deps(path: Path) -> set[str]:
+    package = _read_package_json(path)
+    deps: set[str] = set()
+    if not package:
+        return deps
+    merged: dict[str, str] = {}
+    for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        value = package.get(key)
+        if isinstance(value, dict):
+            merged.update({str(k).lower(): str(v) for k, v in value.items()})
+    for name in merged:
+        if name in {"react", "react-dom", "vite", "next", "expo", "expo-router", "react-router", "react-router-dom", "vue", "svelte"}:
+            deps.add(name)
+        if name.startswith("@vitejs/"):
+            deps.add("vite")
+        if name.startswith("@vue/"):
+            deps.add("vue")
+        if name.startswith("@sveltejs/"):
+            deps.add("svelte")
+    return deps
 
 
 def _read_package_json(path: Path) -> dict | None:

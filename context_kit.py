@@ -593,6 +593,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include broader related paths for the selected scope",
     )
+    capabilities.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Include test/fixture evidence and label it as non-implementation",
+    )
+    capabilities.add_argument(
+        "--include-detectors",
+        action="store_true",
+        help="Include detector/self-analysis evidence and label it as non-project implementation",
+    )
 
     # coverage
     coverage = sub.add_parser(

@@ -111,6 +111,14 @@ class TestChatSmoke(unittest.TestCase):
             "    pass\n",
             encoding="utf-8",
         )
+        (app_dir / "models.py").write_text(
+            "from sqlalchemy.orm import DeclarativeBase\n"
+            "class Base(DeclarativeBase):\n"
+            "    pass\n"
+            "class Widget(Base):\n"
+            "    __tablename__ = 'widgets'\n",
+            encoding="utf-8",
+        )
         (app_dir / "tiers.py").write_text(
             "from dataclasses import dataclass\n"
             "@dataclass\n"
@@ -137,6 +145,14 @@ class TestChatSmoke(unittest.TestCase):
             inventory_files[0].read_text(encoding="utf-8") + "\n<!-- context-kit:inventory:low-signal -->\n",
             encoding="utf-8",
         )
+
+    def _extract_section(self, text: str, heading: str) -> str:
+        start = text.index(heading) + len(heading)
+        remainder = text[start:]
+        next_heading = remainder.find("\n## ")
+        if next_heading == -1:
+            return remainder
+        return remainder[:next_heading]
 
     def test_posts_orientation_and_prompt_to_ollama(self):
         captured: dict = {}
@@ -208,6 +224,27 @@ class TestChatSmoke(unittest.TestCase):
         self.assertIn("For capability questions, prefer route/decorator evidence over request model evidence.", payload["messages"][0]["content"])
         self.assertIn("Request/response models support shape, not user-facing capability.", payload["messages"][0]["content"])
         self.assertIn("Do not cite BaseModel classes as primary capability evidence when route evidence exists.", payload["messages"][0]["content"])
+        self.assertIn("Do not treat detector/self-analysis code as project implementation evidence unless detector evidence was explicitly requested.", payload["messages"][0]["content"])
+        self.assertIn("Capability summaries are static snapshots from startup, not live repo state.", payload["messages"][0]["content"])
+        self.assertIn("Do not describe injected context as \"latest repo changes\" unless git diff/log data is explicitly present.", payload["messages"][0]["content"])
+        self.assertIn("A detected route proves endpoint presence only, not internal implementation correctness.", payload["messages"][0]["content"])
+        self.assertIn("Do not claim security validation, payment completion, business logic correctness, or test status from route evidence alone.", payload["messages"][0]["content"])
+        self.assertIn("If asked to verify implementation details, say you cannot verify from the injected capability summary and suggest the user run or paste a relevant command or include raw inspect/file content.", payload["messages"][0]["content"])
+        self.assertIn("With --include-capabilities only, do not claim to know internals beyond capability labels, evidence, confidence, and reason.", payload["messages"][0]["content"])
+        self.assertIn("If the user asks about live repo state, latest changes, recent changes, current test status, git diff, git log, uncommitted changes, or whether something is true \"right now\", do not answer from startup summaries.", payload["messages"][0]["content"])
+        self.assertIn("Never infer \"no changes\" or \"nothing changed\" from absent evidence.", payload["messages"][0]["content"])
+        self.assertIn("Only answer live-state questions if explicit git diff/log/status/test output was injected or pasted in the live conversation.", payload["messages"][0]["content"])
+        self.assertIn("I can’t verify live repo state from the injected startup context.", payload["messages"][0]["content"])
+        self.assertIn("Suggest specific commands: git status, git log --oneline -5, context-kit inspect --project <path>, context-kit capabilities --project <path> --format shortlist, and a test command if known; otherwise say no test command is known from context.", payload["messages"][0]["content"])
+        self.assertIn("You cannot execute shell commands or context-kit commands from inside this chat.", payload["messages"][0]["content"])
+        self.assertIn("You only know the project context injected when chat started plus live conversation history.", payload["messages"][0]["content"])
+        self.assertIn("Do not claim you can run commands, inspect files, access repositories, read additional files, or fetch updated state.", payload["messages"][0]["content"])
+        self.assertIn("You may suggest terminal commands for the user to run.", payload["messages"][0]["content"])
+        self.assertIn("Use wording like \"I was given\" or \"the injected context says,\" not \"I can execute\".", payload["messages"][0]["content"])
+        self.assertIn("Never simulate running commands.", payload["messages"][0]["content"])
+        self.assertIn("Never write fake terminal output.", payload["messages"][0]["content"])
+        self.assertIn("I can’t run commands from inside this chat.", payload["messages"][0]["content"])
+        self.assertIn("I can’t verify live repo state from injected startup context.", payload["messages"][0]["content"])
         self.assertEqual(payload["messages"][1], {"role": "user", "content": "How do I start?"})
         self.assertIn("ollama says hello", buf.getvalue())
 
@@ -450,6 +487,50 @@ class TestChatSmoke(unittest.TestCase):
         self.assertNotIn("## MACHINE-DERIVED REPO INSPECTION", system_message)
         self.assertNotIn("### data/models", system_message)
 
+    def test_include_capabilities_excludes_test_fixture_evidence_by_default(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(
+                    _chat_args(
+                        REPO_ROOT,
+                        ["What", "can", "this", "app", "do?"],
+                        include_inspect=True,
+                        include_capabilities=True,
+                    )
+                )
+
+        self.assertEqual(rc, 0)
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertIn("## PROJECT IDENTITY SUMMARY", system_message)
+        self.assertIn("## DETERMINISTIC CAPABILITY SUMMARY", system_message)
+        self.assertIn("### orient", system_message)
+        self.assertIn("### inspect", system_message)
+        self.assertIn("### capabilities", system_message)
+        self.assertIn("### chat", system_message)
+        self.assertIn("context_kit.py:", system_message)
+        self.assertIn("cli/chat.py:", system_message)
+        self.assertIn("Primary stack: python", system_message)
+        self.assertIn("Frameworks: (none)", system_message)
+        self.assertIn("Manifests: pyproject.toml", system_message)
+        identity_section = self._extract_section(system_message, "## PROJECT IDENTITY SUMMARY")
+        self.assertNotIn("FastAPI", identity_section)
+        self.assertNotIn("SQLAlchemy", identity_section)
+        self.assertNotIn("### auth", system_message)
+        self.assertNotIn("### sessions/chat", system_message)
+        self.assertNotIn("### founder_projects/export", system_message)
+        self.assertNotIn("### stripe/checkout", system_message)
+        self.assertNotIn("### stripe/webhook", system_message)
+        self.assertNotIn("### tier_config", system_message)
+        self.assertNotIn("Test/fixture evidence — not implementation.", system_message)
+        self.assertNotIn("Detector logic evidence — not project implementation.", system_message)
+
     def test_chat_capabilities_format_can_be_overridden(self):
         captured: dict = {}
 
@@ -571,6 +652,7 @@ class TestChatSmoke(unittest.TestCase):
         self.assertIn("frontend/package.json", system_message)
         self.assertIn("FastAPI", system_message)
         self.assertIn("SQLAlchemy", system_message)
+        self.assertIn("backend/app/models.py", system_message)
         self.assertIn("React", system_message)
         self.assertIn("Vite", system_message)
 

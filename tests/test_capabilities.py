@@ -19,7 +19,17 @@ from cli.capabilities import run_capabilities  # noqa: E402
 from cli.bootstrap import run_init  # noqa: E402
 
 
-def _capabilities_args(project=None, *, output=None, scope=None, include_related=False, include_history=False, format="full"):
+def _capabilities_args(
+    project=None,
+    *,
+    output=None,
+    scope=None,
+    include_related=False,
+    include_history=False,
+    format="full",
+    include_tests=False,
+    include_detectors=False,
+):
     return argparse.Namespace(
         command="capabilities",
         project=str(project) if project is not None else None,
@@ -28,6 +38,8 @@ def _capabilities_args(project=None, *, output=None, scope=None, include_related
         include_related=include_related,
         include_history=include_history,
         format=format,
+        include_tests=include_tests,
+        include_detectors=include_detectors,
     )
 
 
@@ -176,6 +188,62 @@ class TestCapabilitiesCommand(unittest.TestCase):
         self.assertIn("### sessions/chat", out)
         self.assertIn("### stripe/checkout", out)
         self.assertIn("### tier_config", out)
+
+    def test_repo_root_excludes_test_fixture_evidence_by_default(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_capabilities(_capabilities_args(REPO_ROOT, format="shortlist"))
+
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("### orient", out)
+        self.assertIn("### inspect", out)
+        self.assertIn("### capabilities", out)
+        self.assertIn("### chat", out)
+        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"orient\":")
+        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"inspect\":")
+        self.assertRegex(out, r"cli/chat\.py:\d+ def run_chat\(args: argparse\.Namespace\) -> int:")
+        self.assertNotIn("### auth", out)
+        self.assertNotIn("### sessions/chat", out)
+        self.assertNotIn("### founder_projects/export", out)
+        self.assertNotIn("### stripe/checkout", out)
+        self.assertNotIn("### stripe/webhook", out)
+        self.assertNotIn("### tier_config", out)
+        self.assertNotIn("Test/fixture evidence — not implementation.", out)
+        self.assertNotIn("Detector logic evidence — not project implementation.", out)
+
+    def test_include_tests_labels_test_fixture_evidence(self):
+        args = _capabilities_args(REPO_ROOT, format="shortlist")
+        args.include_tests = True
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_capabilities(args)
+
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("### orient", out)
+        self.assertIn("### inspect", out)
+        self.assertIn("Test/fixture evidence — not implementation.", out)
+        self.assertIn("### auth", out)
+        self.assertIn("### sessions/chat", out)
+        self.assertIn("### founder_projects/export", out)
+        self.assertIn("### stripe/checkout", out)
+        self.assertIn("### stripe/webhook", out)
+
+    def test_include_detectors_labels_detector_logic_evidence(self):
+        args = _capabilities_args(REPO_ROOT, format="shortlist", include_detectors=True)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_capabilities(args)
+
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("### orient", out)
+        self.assertIn("### inspect", out)
+        self.assertIn("### tier_config", out)
+        self.assertIn("Detector logic evidence — not project implementation.", out)
+        self.assertNotIn("### auth", out)
+        self.assertNotIn("### sessions/chat", out)
 
     def test_output_file_is_written(self):
         output = self.tmpdir / "capabilities.md"
