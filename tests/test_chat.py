@@ -39,6 +39,8 @@ def _chat_args(
     *,
     model="llama3",
     include_inspect=False,
+    include_capabilities=False,
+    capabilities_format="shortlist",
     debug_prompt=False,
     prompt_soft_threshold=20000,
     no_prime=False,
@@ -49,6 +51,8 @@ def _chat_args(
         model=model,
         prompt=prompt,
         include_inspect=include_inspect,
+        include_capabilities=include_capabilities,
+        capabilities_format=capabilities_format,
         debug_prompt=debug_prompt,
         prompt_soft_threshold=prompt_soft_threshold,
         no_prime=no_prime,
@@ -75,8 +79,53 @@ class TestChatSmoke(unittest.TestCase):
         self.tmpdir = Path(self._tmp.name)
         self.project = self.tmpdir / "chat-app"
         self.other_project = self.tmpdir / "other-chat-app"
+        self.nested_project = self.tmpdir / "mentorforge"
         run_init(_init_args("Chat App", self.project))
         run_init(_init_args("Other Chat App", self.other_project))
+        run_init(_init_args("Mentorforge", self.nested_project))
+        backend = self.nested_project / "backend"
+        frontend = self.nested_project / "frontend"
+        backend.mkdir()
+        frontend.mkdir()
+        app_dir = backend / "app"
+        app_dir.mkdir()
+        (backend / "requirements.txt").write_text(
+            "fastapi==0.115.0\nsqlalchemy==2.0.0\n",
+            encoding="utf-8",
+        )
+        (backend / "main.py").write_text(
+            "from fastapi import FastAPI, APIRouter\n"
+            "from sqlalchemy.orm import declarative_base\n"
+            "app = FastAPI()\n"
+            "router = APIRouter()\n"
+            "@app.post('/api/auth/register')\n"
+            "def register(): return {'ok': True}\n"
+            "@app.post('/api/sessions/{session_id}/chat')\n"
+            "def session_chat(): return {'ok': True}\n"
+            "@app.post('/api/checkout')\n"
+            "def checkout(): return {'ok': True}\n"
+            "@app.post('/api/webhook')\n"
+            "def webhook(): return {'ok': True}\n"
+            "Base = declarative_base()\n"
+            "class Thing(Base):\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
+        (app_dir / "tiers.py").write_text(
+            "from dataclasses import dataclass\n"
+            "@dataclass\n"
+            "class TierConfig:\n"
+            "    allowed_modes = ['basic', 'pro']\n"
+            "    max_sessions_per_day = 10\n"
+            "    max_response_tokens = 2000\n"
+            "    max_messages_per_session = 25\n"
+            "TIERS = {'free': TierConfig()}\n",
+            encoding="utf-8",
+        )
+        (frontend / "package.json").write_text(
+            '{"name":"mentorforge-ui","dependencies":{"react":"18.3.1","vite":"5.4.0"}}\n',
+            encoding="utf-8",
+        )
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -130,6 +179,35 @@ class TestChatSmoke(unittest.TestCase):
             "If the user asks what project you are oriented to, answer once with the project name/path and stop.",
             payload["messages"][0]["content"],
         )
+        self.assertIn("Machine-detected repo facts may only come from the MACHINE-DERIVED REPO INSPECTION section.", payload["messages"][0]["content"])
+        self.assertIn("Documented orientation may only come from PROJECT ORIENTATION.", payload["messages"][0]["content"])
+        self.assertIn("Do not copy orientation claims into machine-detected facts.", payload["messages"][0]["content"])
+        self.assertIn("If a feature is inferred from a route, say 'route evidence suggests...' instead of 'implements'.", payload["messages"][0]["content"])
+        self.assertIn("If neither inspection nor orientation supports a claim, label it speculation or unknown.", payload["messages"][0]["content"])
+        self.assertIn("Prefer 'detected' / 'documented' / 'suggests' over confident product claims.", payload["messages"][0]["content"])
+        self.assertIn("When listing machine-detected repo facts, include evidence in parentheses.", payload["messages"][0]["content"])
+        self.assertIn("Machine-detected facts must be based only on inspect lines with file paths, route decorators, models, env keys, Dockerfiles, manifests, or detected framework indicators.", payload["messages"][0]["content"])
+        self.assertIn('If a claim comes from PROJECT ORIENTATION only, label it "Documented orientation claim".', payload["messages"][0]["content"])
+        self.assertIn('If a feature is inferred from route evidence, label it "Route evidence suggests...".', payload["messages"][0]["content"])
+        self.assertIn("If no file/path/route/model/env evidence exists, do not put it under machine-detected facts.", payload["messages"][0]["content"])
+        self.assertIn("Prefer concrete implementation evidence over product summaries.", payload["messages"][0]["content"])
+        self.assertIn("Never invent file:line citations.", payload["messages"][0]["content"])
+        self.assertIn("Only use line numbers that appear in MACHINE-DERIVED REPO INSPECTION.", payload["messages"][0]["content"])
+        self.assertIn("If a file is known but no line is provided, cite only the file path.", payload["messages"][0]["content"])
+        self.assertIn("Do not cite line numbers from user-provided memory or inference.", payload["messages"][0]["content"])
+        self.assertIn("When the user asks \"what can this project do\", answer in this order:", payload["messages"][0]["content"])
+        self.assertIn("Structured implementation facts / machine-detected implementation evidence", payload["messages"][0]["content"])
+        self.assertIn("Prefer structured implementation facts when answering \"what can this app do?\".", payload["messages"][0]["content"])
+        self.assertIn("When capability labels are derived from route groups, use the phrase \"evidence suggests\".", payload["messages"][0]["content"])
+        self.assertIn("For \"what can this app do?\" questions, prefer DETERMINISTIC CAPABILITY SUMMARY first.", payload["messages"][0]["content"])
+        self.assertIn("Summarize the Recommended capability shortlist first.", payload["messages"][0]["content"])
+        self.assertIn("Do not omit high-confidence capabilities from the shortlist unless the user asks for a narrower answer.", payload["messages"][0]["content"])
+        self.assertIn("Use MACHINE-DERIVED REPO INSPECTION for details only when capabilities are missing.", payload["messages"][0]["content"])
+        self.assertIn("Do not override deterministic capability evidence with orientation claims.", payload["messages"][0]["content"])
+        self.assertIn("When summarizing deterministic capabilities, preserve Confidence and Reason exactly; do not upgrade confidence from orientation or inspection.", payload["messages"][0]["content"])
+        self.assertIn("For capability questions, prefer route/decorator evidence over request model evidence.", payload["messages"][0]["content"])
+        self.assertIn("Request/response models support shape, not user-facing capability.", payload["messages"][0]["content"])
+        self.assertIn("Do not cite BaseModel classes as primary capability evidence when route evidence exists.", payload["messages"][0]["content"])
         self.assertEqual(payload["messages"][1], {"role": "user", "content": "How do I start?"})
         self.assertIn("ollama says hello", buf.getvalue())
 
@@ -345,6 +423,51 @@ class TestChatSmoke(unittest.TestCase):
         self.assertIn("Project identity", system_message)
         self.assertIn("docs/CHAT_APP_WHAT_IT_IS.md", system_message)
 
+    def test_include_capabilities_appends_deterministic_summary(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(_chat_args(self.nested_project, ["What", "can", "this", "app", "do?"], include_capabilities=True))
+
+        self.assertEqual(rc, 0)
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertIn("## DETERMINISTIC CAPABILITY SUMMARY", system_message)
+        self.assertIn("Shortlist capability summary derived from inspect structured implementation facts.", system_message)
+        self.assertIn("## Recommended capability shortlist", system_message)
+        self.assertIn("### auth", system_message)
+        self.assertIn("Confidence:", system_message)
+        self.assertIn("Reason:", system_message)
+        self.assertIn("### stripe/checkout", system_message)
+        self.assertIn("@app.post('/api/auth/register')", system_message)
+        self.assertIn("### tier_config", system_message)
+        self.assertIn("allowed_modes", system_message)
+        self.assertNotIn("## MACHINE-DERIVED REPO INSPECTION", system_message)
+        self.assertNotIn("### data/models", system_message)
+
+    def test_chat_capabilities_format_can_be_overridden(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(_chat_args(self.nested_project, ["What", "can", "this", "app", "do?"], include_capabilities=True, capabilities_format="full"))
+
+        self.assertEqual(rc, 0)
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertIn("## DETERMINISTIC CAPABILITY SUMMARY", system_message)
+        self.assertNotIn("Shortlist capability summary derived from inspect structured implementation facts.", system_message)
+        self.assertIn("## Capability summary", system_message)
+
     def test_omit_include_inspect_preserves_current_behavior(self):
         captured: dict = {}
 
@@ -359,7 +482,7 @@ class TestChatSmoke(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         system_message = captured["payload"]["messages"][0]["content"]
-        self.assertNotIn("MACHINE-DERIVED REPO INSPECTION", system_message)
+        self.assertNotIn("## MACHINE-DERIVED REPO INSPECTION", system_message)
 
     def test_debug_prompt_prints_counts_and_system_prompt(self):
         captured: dict = {}
@@ -428,6 +551,28 @@ class TestChatSmoke(unittest.TestCase):
         self.assertIn("## PROJECT ORIENTATION", system_message)
         self.assertIn("docs/OTHER_CHAT_APP_WHAT_IT_IS.md", system_message)
         self.assertNotIn("docs/CHAT_APP_WHAT_IT_IS.md", system_message)
+
+    def test_nested_inspect_frameworks_flow_into_project_identity_summary(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "ok"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(_chat_args(self.nested_project, ["What", "project", "am", "I", "oriented", "to?"], include_inspect=True))
+
+        self.assertEqual(rc, 0)
+        system_message = captured["payload"]["messages"][0]["content"]
+        self.assertIn("Mentorforge", system_message)
+        self.assertIn("backend/requirements.txt", system_message)
+        self.assertIn("frontend/package.json", system_message)
+        self.assertIn("FastAPI", system_message)
+        self.assertIn("SQLAlchemy", system_message)
+        self.assertIn("React", system_message)
+        self.assertIn("Vite", system_message)
 
     def test_low_signal_inventory_is_compressed_and_skipped(self):
         self._mark_inventory_low_signal(self.project)

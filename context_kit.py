@@ -151,6 +151,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Append machine-derived inspect output to the system message",
     )
     chat.add_argument(
+        "--include-capabilities",
+        action="store_true",
+        help="Append deterministic capability summary to the system message",
+    )
+    chat.add_argument(
+        "--capabilities-format",
+        default="shortlist",
+        choices=["full", "compact", "shortlist"],
+        help="Capability summary format injected into chat (default: shortlist)",
+    )
+    chat.add_argument(
         "--debug-prompt",
         action="store_true",
         help="Print the resolved system prompt details before contacting Ollama",
@@ -160,6 +171,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=20000,
         help="Warn when the assembled system prompt exceeds this many characters (default: 20000)",
+    )
+    chat.add_argument(
+        "--no-prime",
+        action="store_true",
+        help="Disable the initial grounding exchange before interactive chat",
     )
 
     # hotpath
@@ -537,6 +553,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include broader related paths for the selected scope",
     )
 
+    # capabilities
+    capabilities = sub.add_parser(
+        "capabilities",
+        help="Generate a deterministic capability summary from inspect facts",
+        description=(
+            "Generate a markdown capability summary directly from inspect's "
+            "structured implementation facts. No LLM is used."
+        ),
+    )
+    capabilities.add_argument(
+        "--project",
+        default=None,
+        help="Project root to inspect (default: current working directory)",
+    )
+    capabilities.add_argument(
+        "--output",
+        default=None,
+        help="Write the markdown summary to this file as well as stdout",
+    )
+    capabilities.add_argument(
+        "--format",
+        default="full",
+        choices=["full", "compact", "shortlist"],
+        help="Output format (default: full)",
+    )
+    capabilities.add_argument(
+        "--scope",
+        default=None,
+        help="Restrict capability extraction to a named inspect scope (core, celery, agents, spiders, docs-rag, frontend, deployment, tests)",
+    )
+    capabilities.add_argument(
+        "--include-history",
+        action="store_true",
+        help="Include historical/external docs in scoped inspection",
+    )
+    capabilities.add_argument(
+        "--include-related",
+        action="store_true",
+        help="Include broader related paths for the selected scope",
+    )
+
     # coverage
     coverage = sub.add_parser(
         "coverage",
@@ -887,6 +944,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "inspect":
         from cli.inspect import run_inspect
         return run_inspect(args)
+
+    if args.command == "capabilities":
+        from cli.capabilities import run_capabilities
+        return run_capabilities(args)
 
     if args.command == "coverage":
         from cli.coverage import run_coverage

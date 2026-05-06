@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from . import ollama
+from .capabilities import render_capabilities_markdown
 from .orient import render_chat_orient, render_orient
 
 STARTUP_LINE = "context-kit chat started. Type /exit to quit."
@@ -24,6 +25,38 @@ CHAT_BEHAVIOR_PREAMBLE = (
     "If a machine-derived repo inspection block is present, treat it as factual repo evidence.\n"
     "If orientation and inspection disagree, say so instead of silently switching topics.\n"
     "Do not invent capabilities not present in either the orientation or the inspection.\n"
+    "Machine-detected repo facts may only come from the MACHINE-DERIVED REPO INSPECTION section.\n"
+    "Documented orientation may only come from PROJECT ORIENTATION.\n"
+    "Do not copy orientation claims into machine-detected facts.\n"
+    "If inspection detects routes, models, env keys, Dockerfiles, or manifests, list those concrete items.\n"
+    "If a feature is inferred from a route, say 'route evidence suggests...' instead of 'implements'.\n"
+    "If a claim appears only in orientation, label it as documented orientation, not machine-detected.\n"
+    "If neither inspection nor orientation supports a claim, label it speculation or unknown.\n"
+    "Prefer 'detected' / 'documented' / 'suggests' over confident product claims.\n"
+    "When listing machine-detected repo facts, include evidence in parentheses.\n"
+    "Machine-detected facts must be based only on inspect lines with file paths, route decorators, models, env keys, Dockerfiles, manifests, or detected framework indicators.\n"
+    "If a claim comes from PROJECT ORIENTATION only, label it \"Documented orientation claim\".\n"
+    "If a feature is inferred from route evidence, label it \"Route evidence suggests...\".\n"
+    "If no file/path/route/model/env evidence exists, do not put it under machine-detected facts.\n"
+    "Prefer concrete implementation evidence over product summaries.\n"
+    "Never invent file:line citations.\n"
+    "Only use line numbers that appear in MACHINE-DERIVED REPO INSPECTION.\n"
+    "If a file is known but no line is provided, cite only the file path.\n"
+    "Do not cite line numbers from user-provided memory or inference.\n"
+    "Prefer structured implementation facts when answering \"what can this app do?\".\n"
+    "When capability labels are derived from route groups, use the phrase \"evidence suggests\".\n"
+    "For \"what can this app do?\" questions, prefer DETERMINISTIC CAPABILITY SUMMARY first.\n"
+    "Summarize the Recommended capability shortlist first.\n"
+    "Do not omit high-confidence capabilities from the shortlist unless the user asks for a narrower answer.\n"
+    "Use MACHINE-DERIVED REPO INSPECTION for details only when capabilities are missing.\n"
+    "Do not override deterministic capability evidence with orientation claims.\n"
+    "When summarizing deterministic capabilities, preserve Confidence and Reason exactly; do not upgrade confidence from orientation or inspection.\n"
+    "If DETERMINISTIC CAPABILITY SUMMARY is present, it may be shortlist-only; treat it as the primary capability source.\n"
+    "Treat DETERMINISTIC CAPABILITY SUMMARY as compact capability-focused evidence, not raw inspect output.\n"
+    "Prefer its best evidence and ignore model-heavy lines unless no better evidence exists.\n"
+    "For capability questions, prefer route/decorator evidence over request model evidence.\n"
+    "Request/response models support shape, not user-facing capability.\n"
+    "Do not cite BaseModel classes as primary capability evidence when route evidence exists.\n"
     "Answer the user's current question directly.\n"
     "Do not repeatedly introduce yourself.\n"
     "Do not repeatedly reintroduce the project unless asked.\n"
@@ -35,6 +68,7 @@ CHAT_BEHAVIOR_PREAMBLE = (
     "Do not ask \"what would you like to discuss?\" unless the user explicitly asks for brainstorming or open-ended exploration.\n"
     "If the user asks what project you are oriented to, answer once with the project name/path and stop.\n"
     'When the user asks "what are we doing/testing/discussing right now", answer from the recent chat messages first.\n'
+    'When the user asks "what can this project do", answer in this order: 1. Structured implementation facts / machine-detected implementation evidence 2. Documented orientation claims 3. Inferred capabilities 4. Unknowns / needs verification.\n'
     "Do not replace the live conversation with the repo's documented NEXT TASK unless the user specifically asks for repo priorities.\n"
     "Do not invent repo facts or stats."
 )
@@ -52,13 +86,16 @@ HELP_TEXT = (
 class SystemPromptBundle:
     project: Path
     include_inspect: bool
+    include_capabilities: bool
     inspect_generated: bool
+    capabilities_generated: bool
     inventory_low_signal: bool
     prime_enabled: bool
     chat_preamble: str
     project_identity_summary: str
     orientation: str
     inspection: str | None
+    capabilities: str | None
     system_message: str
     prime_messages: list[dict[str, str]]
 
@@ -152,11 +189,14 @@ def _build_system_prompt_bundle(project: Path, args: argparse.Namespace) -> Syst
     orientation = render_chat_orient(project)
     inspect_report = None
     inspect_result = None
+    capabilities_report = None
     if getattr(args, "include_inspect", False):
         from .inspect import render_inspect_markdown
 
         inspect_result = _inspect_for_chat(project, args)
         inspect_report = render_inspect_markdown(inspect_result)
+    if getattr(args, "include_capabilities", False):
+        capabilities_report = _build_capabilities_report(project, args, inspect_result)
     identity_summary = _build_project_identity_summary(project, inspect_result)
     inventory_low_signal = _chat_inventory_low_signal(project)
     prime_enabled = not getattr(args, "no_prime", False)
@@ -166,16 +206,21 @@ def _build_system_prompt_bundle(project: Path, args: argparse.Namespace) -> Syst
         inspect_report,
         orientation,
     )
+    if capabilities_report:
+        system_message = "\n".join([system_message, "", "## DETERMINISTIC CAPABILITY SUMMARY", capabilities_report])
     return SystemPromptBundle(
         project=project,
         include_inspect=getattr(args, "include_inspect", False),
+        include_capabilities=getattr(args, "include_capabilities", False),
         inspect_generated=inspect_report is not None,
+        capabilities_generated=capabilities_report is not None,
         inventory_low_signal=inventory_low_signal,
         prime_enabled=prime_enabled,
         chat_preamble=CHAT_BEHAVIOR_PREAMBLE,
         project_identity_summary=identity_summary,
         orientation=orientation,
         inspection=inspect_report,
+        capabilities=capabilities_report,
         system_message=system_message,
         prime_messages=prime_messages,
     )
@@ -187,14 +232,17 @@ def _print_debug_prompt(bundle: SystemPromptBundle) -> None:
     total_count = len(bundle.system_message)
     print(f"Resolved project path: {bundle.project}")
     print(f"--include-inspect enabled: {'yes' if bundle.include_inspect else 'no'}")
+    print(f"--include-capabilities enabled: {'yes' if bundle.include_capabilities else 'no'}")
     print(f"Priming exchange enabled: {'yes' if bundle.prime_enabled else 'no'}")
     print(f"Inspection text generated: {inspect_generated}")
+    print(f"Capability summary generated: {'yes' if bundle.capabilities_generated else 'no'}")
     print(f"Inventory preview skipped: {'yes' if bundle.inventory_low_signal else 'no'}")
     print(f"Character counts:")
     print(f"  chat preamble: {len(bundle.chat_preamble)}")
     print(f"  project identity summary: {len(bundle.project_identity_summary)}")
     print(f"  orientation: {len(bundle.orientation)}")
     print(f"  inspection: {inspection_count}")
+    print(f"  capabilities: {len(bundle.capabilities or '')}")
     print(f"  total system prompt: {total_count}")
     print("")
     print("=== CHAT PREAMBLE ===")
@@ -211,6 +259,12 @@ def _print_debug_prompt(bundle: SystemPromptBundle) -> None:
     print("")
     print("=== PROJECT ORIENTATION ===")
     print(bundle.orientation.rstrip())
+    print("")
+    print("=== DETERMINISTIC CAPABILITY SUMMARY ===")
+    if bundle.include_capabilities and bundle.capabilities:
+        print(bundle.capabilities.rstrip())
+    else:
+        print("capability summary not included")
     print("")
 
 
@@ -249,6 +303,25 @@ def _build_project_identity_summary(project: Path, inspect_result) -> str:
         lines.append("- Git branch: (not a git repo)")
         lines.append("- Latest commit hash: (not available)")
     return "\n".join(lines)
+
+
+def _build_capabilities_report(project: Path, args: argparse.Namespace, inspect_result) -> str | None:
+    from .inspect import _inspect
+
+    if inspect_result is None:
+        inspect_result = _inspect(
+            project,
+            depth=getattr(args, "inspect_depth", 2),
+            scope=getattr(args, "inspect_scope", None),
+            include_related=getattr(args, "inspect_include_related", False),
+            include_history=getattr(args, "inspect_include_history", False),
+        )
+    return render_capabilities_markdown(
+        project,
+        inspect_result.files,
+        inspect_result,
+        format=getattr(args, "capabilities_format", "compact"),
+    )
 
 
 def _build_prime_messages(project: Path) -> list[dict[str, str]]:

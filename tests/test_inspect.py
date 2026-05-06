@@ -147,6 +147,68 @@ def _seed_nextjs(root: Path) -> None:
     )
 
 
+def _seed_nested_backend_frontend(root: Path) -> None:
+    backend = root / "backend"
+    frontend = root / "frontend"
+    backend.mkdir()
+    frontend.mkdir()
+    app_dir = backend / "app"
+    app_dir.mkdir()
+    (backend / "requirements.txt").write_text(
+        "fastapi==0.115.0\nsqlalchemy==2.0.0\n",
+        encoding="utf-8",
+    )
+    (backend / "main.py").write_text(
+        "from fastapi import FastAPI, APIRouter\n"
+        "from sqlalchemy.orm import declarative_base\n"
+        "app = FastAPI()\n"
+        "router = APIRouter()\n"
+        "@app.post('/api/auth/register')\n"
+        "def register(): return {'ok': True}\n"
+        "@app.post('/api/auth/login')\n"
+        "def login(): return {'ok': True}\n"
+        "@app.get('/api/users/me')\n"
+        "def me(): return {'ok': True}\n"
+        "@app.post('/api/sessions')\n"
+        "def sessions(): return {'ok': True}\n"
+        "@app.post('/api/sessions/{session_id}/chat')\n"
+        "def session_chat(): return {'ok': True}\n"
+        "@app.post('/api/founder-projects')\n"
+        "def founder_project_create(): return {'ok': True}\n"
+        "@app.get('/api/founder-projects')\n"
+        "def founder_project_list(): return {'ok': True}\n"
+        "@app.get('/api/founder-projects/{project_id}')\n"
+        "def founder_project_get(): return {'ok': True}\n"
+        "Base = declarative_base()\n"
+        "class Thing(Base):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (app_dir / "tiers.py").write_text(
+        "from dataclasses import dataclass\n"
+        "\n"
+        "@dataclass\n"
+        "class TierConfig:\n"
+        "    allowed_modes = ['basic', 'pro']\n"
+        "    max_sessions_per_day = 10\n"
+        "    max_response_tokens = 2000\n"
+        "    max_messages_per_session = 25\n"
+        "\n"
+        "TIERS = {\n"
+        "    'free': TierConfig(),\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (frontend / "package.json").write_text(
+        '{"name":"mentorforge-ui","dependencies":{"react":"18.3.1","vite":"5.4.0"}}\n',
+        encoding="utf-8",
+    )
+    (frontend / "vite.config.ts").write_text(
+        "import { defineConfig } from 'vite';\nexport default defineConfig({});\n",
+        encoding="utf-8",
+    )
+
+
 class _CwdSandbox(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -222,6 +284,53 @@ class TestDjangoDetection(_CwdSandbox):
         _, out = _run_capture(self.tmpdir)
         self.assertIn("manage.py", out)
         self.assertIn("django-cli", out)
+
+
+class TestNestedManifestDetection(_CwdSandbox):
+    def setUp(self):
+        super().setUp()
+        _seed_nested_backend_frontend(self.tmpdir)
+
+    def test_nested_backend_requirements_detect_python_indicators(self):
+        _, out = _run_capture(self.tmpdir)
+        self.assertIn("backend/requirements.txt", out)
+        self.assertIn("Python indicators", out)
+        self.assertIn("FastAPI", out)
+        self.assertIn("SQLAlchemy", out)
+
+    def test_nested_frontend_package_json_detects_node_indicators(self):
+        _, out = _run_capture(self.tmpdir)
+        self.assertIn("frontend/package.json", out)
+        self.assertIn("Node indicators", out)
+
+    def test_nested_package_json_detects_react_vite_dependencies(self):
+        _, out = _run_capture(self.tmpdir)
+        self.assertIn("frontend/package.json: Vite, React", out)
+        self.assertIn("React", out)
+        self.assertIn("Vite", out)
+
+    def test_structured_implementation_facts_section_is_emitted(self):
+        _, out = _run_capture(self.tmpdir)
+        self.assertIn("## Structured implementation facts", out)
+        self.assertIn("capability: auth", out)
+        self.assertIn("capability: sessions/chat", out)
+        self.assertIn("capability: founder_projects/export", out)
+        self.assertIn("capability: tier_config", out)
+        self.assertIn("backend/main.py", out)
+        self.assertIn("@app.post('/api/auth/register')", out)
+        self.assertRegex(out, r"backend/app/tiers\.py:\d+ .*allowed_modes")
+
+    def test_nested_primary_stack_reflects_frameworks(self):
+        _, out = _run_capture(self.tmpdir, json_out=True)
+        data = json.loads(out)
+        self.assertIn("backend/requirements.txt", data["primary_stack"]["manifests"])
+        self.assertIn("frontend/package.json", data["primary_stack"]["manifests"])
+        self.assertIn("python", data["primary_stack"]["languages"])
+        self.assertIn("javascript", data["primary_stack"]["languages"])
+        self.assertIn("FastAPI", data["primary_stack"]["frameworks"])
+        self.assertIn("SQLAlchemy", data["primary_stack"]["frameworks"])
+        self.assertIn("React", data["primary_stack"]["frameworks"])
+        self.assertIn("Vite", data["primary_stack"]["frameworks"])
 
 
 class TestScopedInspect(_CwdSandbox):
