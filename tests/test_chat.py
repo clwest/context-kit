@@ -41,6 +41,7 @@ def _chat_args(
     include_inspect=False,
     debug_prompt=False,
     prompt_soft_threshold=20000,
+    no_prime=False,
 ):
     return argparse.Namespace(
         command="chat",
@@ -50,6 +51,7 @@ def _chat_args(
         include_inspect=include_inspect,
         debug_prompt=debug_prompt,
         prompt_soft_threshold=prompt_soft_threshold,
+        no_prime=no_prime,
     )
 
 
@@ -121,6 +123,13 @@ class TestChatSmoke(unittest.TestCase):
             'When the user asks "what are we doing/testing/discussing right now", answer from the recent chat messages first.',
             payload["messages"][0]["content"],
         )
+        self.assertIn("Answer the user's current question directly.", payload["messages"][0]["content"])
+        self.assertIn("Do not repeatedly introduce yourself.", payload["messages"][0]["content"])
+        self.assertIn("Do not ask \"what would you like to discuss?\"", payload["messages"][0]["content"])
+        self.assertIn(
+            "If the user asks what project you are oriented to, answer once with the project name/path and stop.",
+            payload["messages"][0]["content"],
+        )
         self.assertEqual(payload["messages"][1], {"role": "user", "content": "How do I start?"})
         self.assertIn("ollama says hello", buf.getvalue())
 
@@ -146,11 +155,31 @@ class TestChatSmoke(unittest.TestCase):
         self.assertTrue(captured_payloads[0]["messages"][0]["content"].startswith(CHAT_BEHAVIOR_PREAMBLE))
         self.assertIn("## PROJECT ORIENTATION", captured_payloads[0]["messages"][0]["content"])
         self.assertIn("docs/CHAT_APP_WHAT_IT_IS.md", captured_payloads[0]["messages"][0]["content"])
-        self.assertEqual(captured_payloads[0]["messages"][1], {"role": "user", "content": "Hello"})
+        self.assertEqual(
+            captured_payloads[0]["messages"][1],
+            {
+                "role": "user",
+                "content": (
+                    "Before we begin: you are oriented to project 'chat-app' at "
+                    f"'{self.project.resolve()}'. Use the provided machine-derived repo inspection and project orientation as your grounding. "
+                    "When asked what project you are oriented to, answer with this project."
+                ),
+            },
+        )
+        self.assertEqual(
+            captured_payloads[0]["messages"][2],
+            {
+                "role": "assistant",
+                "content": "Understood. I am oriented to chat-app.",
+            },
+        )
+        self.assertEqual(captured_payloads[0]["messages"][3], {"role": "user", "content": "Hello"})
         self.assertEqual(
             captured_payloads[1]["messages"],
             [
                 captured_payloads[0]["messages"][0],
+                captured_payloads[0]["messages"][1],
+                captured_payloads[0]["messages"][2],
                 {"role": "user", "content": "Hello"},
                 {"role": "assistant", "content": "reply 1"},
                 {"role": "user", "content": "How are you?"},
@@ -178,15 +207,61 @@ class TestChatSmoke(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(len(captured_payloads), 2)
         self.assertTrue(captured_payloads[0]["messages"][0]["content"].startswith(CHAT_BEHAVIOR_PREAMBLE))
-        self.assertEqual(captured_payloads[0]["messages"][1], {"role": "user", "content": "Hello"})
+        self.assertEqual(len(captured_payloads[0]["messages"]), 4)
+        self.assertEqual(
+            captured_payloads[0]["messages"][1],
+            {
+                "role": "user",
+                "content": (
+                    "Before we begin: you are oriented to project 'chat-app' at "
+                    f"'{self.project.resolve()}'. Use the provided machine-derived repo inspection and project orientation as your grounding. "
+                    "When asked what project you are oriented to, answer with this project."
+                ),
+            },
+        )
+        self.assertEqual(
+            captured_payloads[0]["messages"][2],
+            {
+                "role": "assistant",
+                "content": "Understood. I am oriented to chat-app.",
+            },
+        )
+        self.assertEqual(captured_payloads[0]["messages"][3], {"role": "user", "content": "Hello"})
         self.assertEqual(
             captured_payloads[1]["messages"],
             [
                 captured_payloads[0]["messages"][0],
+                captured_payloads[0]["messages"][1],
+                captured_payloads[0]["messages"][2],
                 {"role": "user", "content": "After reset"},
             ],
         )
         self.assertIn("Conversation reset.", buf.getvalue())
+
+    def test_no_prime_omits_priming_exchange(self):
+        captured_payloads: list[dict] = []
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured_payloads.append(json.loads(req.data.decode("utf-8")))
+            return _FakeResponse({"message": {"content": "reply"}})
+
+        buf = io.StringIO()
+        with patch("cli.chat.sys.stdin.isatty", return_value=True):
+            with patch("cli.chat.input", side_effect=["Hello", "/exit"]):
+                with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+                    with redirect_stdout(buf):
+                        rc = run_chat(_chat_args(self.project, no_prime=True))
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(captured_payloads), 1)
+        self.assertEqual(
+            captured_payloads[0]["messages"],
+            [
+                captured_payloads[0]["messages"][0],
+                {"role": "user", "content": "Hello"},
+            ],
+        )
 
     def test_exit_exits_cleanly(self):
         with patch("cli.chat.sys.stdin.isatty", return_value=True):
@@ -303,6 +378,7 @@ class TestChatSmoke(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("Resolved project path:", output)
         self.assertIn("--include-inspect enabled: no", output)
+        self.assertIn("Priming exchange enabled: yes", output)
         self.assertIn("Inspection text generated: no", output)
         self.assertIn("Inventory preview skipped:", output)
         self.assertIn("Character counts:", output)
@@ -319,6 +395,7 @@ class TestChatSmoke(unittest.TestCase):
         self.assertNotIn("chat>", output)
         self.assertIn("ok", output)
         self.assertIn(CHAT_BEHAVIOR_PREAMBLE, output)
+        self.assertIn("Do not repeatedly explain context-kit chat mode unless asked.", output)
 
     def test_debug_prompt_with_inspect_includes_machine_inspection(self):
         captured: dict = {}
@@ -336,12 +413,14 @@ class TestChatSmoke(unittest.TestCase):
         self.assertEqual(rc, 0)
         output = stdout.getvalue()
         self.assertIn("--include-inspect enabled: yes", output)
+        self.assertIn("Priming exchange enabled: yes", output)
         self.assertIn("Inspection text generated: yes", output)
         self.assertIn("Inventory preview skipped:", output)
         self.assertIn("=== MACHINE-DERIVED REPO INSPECTION ===", output)
         self.assertIn("=== PROJECT ORIENTATION ===", output)
         self.assertIn("docs/OTHER_CHAT_APP_WHAT_IT_IS.md", output)
         self.assertIn(str(self.other_project), output)
+        self.assertIn("Do not repeatedly reintroduce the project unless asked.", output)
 
         system_message = captured["payload"]["messages"][0]["content"]
         self.assertIn("## PROJECT IDENTITY SUMMARY", system_message)

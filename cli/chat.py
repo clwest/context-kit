@@ -24,6 +24,16 @@ CHAT_BEHAVIOR_PREAMBLE = (
     "If a machine-derived repo inspection block is present, treat it as factual repo evidence.\n"
     "If orientation and inspection disagree, say so instead of silently switching topics.\n"
     "Do not invent capabilities not present in either the orientation or the inspection.\n"
+    "Answer the user's current question directly.\n"
+    "Do not repeatedly introduce yourself.\n"
+    "Do not repeatedly reintroduce the project unless asked.\n"
+    "Do not repeatedly explain context-kit chat mode unless asked.\n"
+    "Do not summarize orientation or inspection unless the user asks.\n"
+    "Avoid recursive conversational framing.\n"
+    "Treat prior assistant onboarding text as low-priority context.\n"
+    "Prefer concise answers unless the user asks for depth.\n"
+    "Do not ask \"what would you like to discuss?\" unless the user explicitly asks for brainstorming or open-ended exploration.\n"
+    "If the user asks what project you are oriented to, answer once with the project name/path and stop.\n"
     'When the user asks "what are we doing/testing/discussing right now", answer from the recent chat messages first.\n'
     "Do not replace the live conversation with the repo's documented NEXT TASK unless the user specifically asks for repo priorities.\n"
     "Do not invent repo facts or stats."
@@ -44,11 +54,13 @@ class SystemPromptBundle:
     include_inspect: bool
     inspect_generated: bool
     inventory_low_signal: bool
+    prime_enabled: bool
     chat_preamble: str
     project_identity_summary: str
     orientation: str
     inspection: str | None
     system_message: str
+    prime_messages: list[dict[str, str]]
 
 
 def run_chat(args: argparse.Namespace) -> int:
@@ -72,7 +84,7 @@ def run_chat(args: argparse.Namespace) -> int:
         )
         return 2
 
-    return _run_interactive_session(prompt_bundle.system_message, project, args)
+    return _run_interactive_session(prompt_bundle, args)
 
 
 def _run_one_shot(prompt: str, system_message: str, args: argparse.Namespace) -> int:
@@ -90,8 +102,9 @@ def _run_one_shot(prompt: str, system_message: str, args: argparse.Namespace) ->
     return 0
 
 
-def _run_interactive_session(system_message: str, project: Path, args: argparse.Namespace) -> int:
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_message}]
+def _run_interactive_session(bundle: SystemPromptBundle, args: argparse.Namespace) -> int:
+    messages: list[dict[str, str]] = [{"role": "system", "content": bundle.system_message}]
+    messages.extend(bundle.prime_messages)
     print(STARTUP_LINE)
     while True:
         try:
@@ -108,11 +121,11 @@ def _run_interactive_session(system_message: str, project: Path, args: argparse.
             print(HELP_TEXT)
             continue
         if line == "/reset":
-            messages = [messages[0]]
+            messages = [messages[0], *bundle.prime_messages]
             print("Conversation reset.")
             continue
         if line == "/orient":
-            print(render_orient(project, short=True).rstrip())
+            print(render_orient(bundle.project, short=True).rstrip())
             continue
         messages.append({"role": "user", "content": line})
         try:
@@ -146,6 +159,8 @@ def _build_system_prompt_bundle(project: Path, args: argparse.Namespace) -> Syst
         inspect_report = render_inspect_markdown(inspect_result)
     identity_summary = _build_project_identity_summary(project, inspect_result)
     inventory_low_signal = _chat_inventory_low_signal(project)
+    prime_enabled = not getattr(args, "no_prime", False)
+    prime_messages = _build_prime_messages(project) if prime_enabled else []
     system_message = _build_system_message(
         identity_summary,
         inspect_report,
@@ -156,11 +171,13 @@ def _build_system_prompt_bundle(project: Path, args: argparse.Namespace) -> Syst
         include_inspect=getattr(args, "include_inspect", False),
         inspect_generated=inspect_report is not None,
         inventory_low_signal=inventory_low_signal,
+        prime_enabled=prime_enabled,
         chat_preamble=CHAT_BEHAVIOR_PREAMBLE,
         project_identity_summary=identity_summary,
         orientation=orientation,
         inspection=inspect_report,
         system_message=system_message,
+        prime_messages=prime_messages,
     )
 
 
@@ -170,6 +187,7 @@ def _print_debug_prompt(bundle: SystemPromptBundle) -> None:
     total_count = len(bundle.system_message)
     print(f"Resolved project path: {bundle.project}")
     print(f"--include-inspect enabled: {'yes' if bundle.include_inspect else 'no'}")
+    print(f"Priming exchange enabled: {'yes' if bundle.prime_enabled else 'no'}")
     print(f"Inspection text generated: {inspect_generated}")
     print(f"Inventory preview skipped: {'yes' if bundle.inventory_low_signal else 'no'}")
     print(f"Character counts:")
@@ -231,6 +249,21 @@ def _build_project_identity_summary(project: Path, inspect_result) -> str:
         lines.append("- Git branch: (not a git repo)")
         lines.append("- Latest commit hash: (not available)")
     return "\n".join(lines)
+
+
+def _build_prime_messages(project: Path) -> list[dict[str, str]]:
+    project_name = project.name
+    project_path = str(project)
+    user_message = (
+        f"Before we begin: you are oriented to project '{project_name}' at '{project_path}'. "
+        "Use the provided machine-derived repo inspection and project orientation as your grounding. "
+        "When asked what project you are oriented to, answer with this project."
+    )
+    assistant_message = f"Understood. I am oriented to {project_name}."
+    return [
+        {"role": "user", "content": user_message},
+        {"role": "assistant", "content": assistant_message},
+    ]
 
 
 def _chat_inventory_low_signal(project: Path) -> bool:
