@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Union
 
+from . import state
+
 SCHEMA_VERSION = 1
 
 # Updated periodically. Reflects "no surprises with mainstream tooling
@@ -90,11 +92,14 @@ def run_all_checks(project: Path) -> list[CheckResult]:
         check_expo(project),
         check_file_watcher(project),
         check_inventory(project),
+        check_version_drift(project),
+        check_test_count_drift(project),
         check_pipeline_doc(project),
         check_behavior_layer_doc(project),
         check_translation_layer_doc(project),
         check_next_task_consistency(project),
         check_handoff_numbering(project),
+        check_start_handoff_conflict(project),
         check_adopt_placeholders(project),
         check_stale_generic_actions(project),
     ]
@@ -568,6 +573,98 @@ def check_inventory(project: Path) -> CheckResult:
         status="warning",
         detail=reason,
         fix="context-kit inventory --write",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Truth / state drift checks
+# ---------------------------------------------------------------------------
+
+
+def check_version_drift(project: Path) -> CheckResult:
+    """Warn when docs name a different latest package version than pyproject."""
+    current = state.get_current_version(project)
+    if current is None:
+        return CheckResult(
+            id="version_drift",
+            label="Version drift",
+            status="skipped",
+            detail="No pyproject.toml version found",
+        )
+
+    start_version = state.highest_version_in_text(
+        state.read_text(project / state.START_DOC)
+    )
+    latest = state.get_latest_handoff(project)
+    handoff_version = (
+        state.highest_version_in_text(state.read_text(latest.path))
+        if latest is not None else None
+    )
+
+    mismatches: list[str] = []
+    if start_version is not None and start_version != current:
+        mismatches.append(f"start-here references {start_version}")
+    if handoff_version is not None and handoff_version != current:
+        mismatches.append(f"latest handoff references {handoff_version}")
+
+    if mismatches:
+        return CheckResult(
+            id="version_drift",
+            label="Version drift",
+            status="warning",
+            detail=f"pyproject.toml is {current}; " + "; ".join(mismatches),
+            fix="Update start-here / latest handoff to match pyproject.toml, or update pyproject.toml if the docs are ahead.",
+        )
+
+    if start_version is None and handoff_version is None:
+        return CheckResult(
+            id="version_drift",
+            label="Version drift",
+            status="skipped",
+            detail=f"pyproject.toml is {current}; no version references found in start-here or latest handoff",
+        )
+
+    return CheckResult(
+        id="version_drift",
+        label="Version drift",
+        status="ok",
+        detail=f"pyproject.toml version {current} matches documented current version",
+    )
+
+
+def check_test_count_drift(project: Path) -> CheckResult:
+    """Warn when unittest discovery count and inventory count diverge."""
+    actual = state.get_actual_test_count(project)
+    inventory_count = state.get_inventory_test_count(project)
+
+    if actual is None:
+        return CheckResult(
+            id="test_count_drift",
+            label="Test count drift",
+            status="warning",
+            detail="Could not count tests via unittest discovery",
+            fix="Run `python3 -m unittest discover -s tests -t .` to inspect the import error.",
+        )
+    if inventory_count is None:
+        return CheckResult(
+            id="test_count_drift",
+            label="Test count drift",
+            status="skipped",
+            detail="Inventory test count not found",
+        )
+    if actual != inventory_count:
+        return CheckResult(
+            id="test_count_drift",
+            label="Test count drift",
+            status="warning",
+            detail=f"unittest discovery counts {actual}; inventory says {inventory_count}",
+            fix="Regenerate inventory after confirming the test suite shape.",
+        )
+    return CheckResult(
+        id="test_count_drift",
+        label="Test count drift",
+        status="ok",
+        detail=f"unittest discovery and inventory both count {actual} tests",
     )
 
 
@@ -1409,6 +1506,19 @@ def check_handoff_numbering(project: Path) -> CheckResult:
     Skipped unless we can read both numbers. Warning when the gap is
     greater than ``_HANDOFF_GAP_TOLERANCE``. Never blocking.
     """
+    numbers = state.get_handoff_numbers(project)
+    missing = state.missing_handoff_numbers(numbers)
+    if missing:
+        formatted = ", ".join(f"SESSION_{n:03d}" for n in missing[:8])
+        more = "" if len(missing) <= 8 else ", ..."
+        return CheckResult(
+            id="handoff_numbering",
+            label="Handoff numbering continuity",
+            status="warning",
+            detail=f"Missing numbered handoff(s): {formatted}{more}",
+            fix="Backfill missing handoffs from CHANGELOG.md / git log, or document the intentional numbering gap.",
+        )
+
     next_num = _next_session_number_from_start_doc(project)
     latest_num = _latest_handoff_number(project)
     if next_num is None or latest_num is None:
@@ -1447,6 +1557,61 @@ def check_handoff_numbering(project: Path) -> CheckResult:
             "Backfill the missing handoffs from CHANGELOG.md / git log, or",
             f"Renumber the next-session pointer to SESSION_{latest_num + 1:03d}.",
         ],
+    )
+
+
+def check_start_handoff_conflict(project: Path) -> CheckResult:
+    """Warn when start-here and latest handoff may point at different state."""
+    start_session = state.get_start_session_number(project)
+    latest = state.get_latest_handoff(project)
+    if start_session is None or latest is None:
+        return CheckResult(
+            id="start_handoff_conflict",
+            label="Start vs handoff verification",
+            status="skipped",
+            detail="Could not derive session number from start-here or latest handoff",
+        )
+
+    if start_session != latest.number:
+        return CheckResult(
+            id="start_handoff_conflict",
+            label="Start vs handoff verification",
+            status="warning",
+            detail=(
+                f"start-here references SESSION_{start_session:03d}; "
+                f"latest handoff is {latest.token}"
+            ),
+            fix=(
+                "Verify whether start-here intentionally points beyond the latest "
+                "handoff. If so, document that; otherwise update start-here or "
+                "write the missing handoff."
+            ),
+        )
+
+    next_task = state.first_task_line(state.get_next_task(project)).lower()
+    handoff_text = state.read_text(latest.path).lower()
+    if next_task and next_task not in handoff_text:
+        return CheckResult(
+            id="start_handoff_conflict",
+            label="Start vs handoff verification",
+            status="warning",
+            detail=(
+                f"Verify {state.START_DOC} next task against "
+                f"{latest.path.relative_to(project)}; the task text was not "
+                "found verbatim in the latest handoff."
+            ),
+            fix=(
+                "Confirm whether start-here intentionally supersedes the latest "
+                "handoff. If so, document that; otherwise update the latest "
+                "handoff or start-here so they agree."
+            ),
+        )
+
+    return CheckResult(
+        id="start_handoff_conflict",
+        label="Start vs handoff verification",
+        status="ok",
+        detail=f"start-here and latest handoff both point at {latest.token}",
     )
 
 

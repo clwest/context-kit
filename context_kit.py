@@ -146,6 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ollama model name (default: OLLAMA_MODEL env var or llama3)",
     )
     chat.add_argument(
+        "--user",
+        default=None,
+        metavar="NAME",
+        help="Apply persona-aware startup framing from TRANSLATION_LAYER.md when available.",
+    )
+    chat.add_argument(
         "--include-inspect",
         action="store_true",
         help="Append machine-derived inspect output to the system message",
@@ -154,6 +160,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-capabilities",
         action="store_true",
         help="Append deterministic capability summary to the system message",
+    )
+    chat.add_argument(
+        "--include-doctor",
+        action="store_true",
+        help="Append a startup snapshot of `context-kit doctor` output to the system message",
+    )
+    chat.add_argument(
+        "--include-hotpath",
+        action="store_true",
+        help="Append a startup snapshot of `context-kit hotpath` output to the system message",
+    )
+    chat.add_argument(
+        "--include-behavior",
+        action="store_true",
+        help="Append a startup snapshot of `context-kit behavior` output to the system message",
     )
     chat.add_argument(
         "--capabilities-format",
@@ -176,6 +197,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-prime",
         action="store_true",
         help="Disable the initial grounding exchange before interactive chat",
+    )
+    chat.add_argument(
+        "--no-task-wrapper",
+        action="store_true",
+        help="Send raw user text without the per-turn task wrapper",
+    )
+    chat.add_argument(
+        "--no-auto-context",
+        action="store_true",
+        help="Disable deterministic query routing for optional context blocks",
     )
 
     # hotpath

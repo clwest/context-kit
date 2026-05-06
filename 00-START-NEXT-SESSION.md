@@ -12,7 +12,7 @@
 
 - **Package version:** `0.15.0` in `pyproject.toml`.
 - **Latest tag:** `v0.15.0`.
-- **Tests:** **818 / 818 passing** via `python3 -m unittest discover -s tests -t .`.
+- **Tests:** **821 / 821 passing** via `python3 -m unittest discover -s tests -t .`.
 - **Inventory:** regenerated in Session 014; `inventory --check` should be clean.
 - **Latest handoff:** `SESSION_014`
   (`docs/handoffs/SESSION_014_V0_12_TO_CURRENT_TRUTH_RESTORE.md`).

@@ -9,38 +9,38 @@ from pathlib import Path
 from .inspect import _inspect, _resolve_inspect_project
 
 _CAPABILITY_MEANINGS = {
-    "auth": "Route evidence suggests user registration, login, and current-user lookup.",
-    "sessions/chat": "Route evidence suggests chat messages are supported inside mentor sessions.",
-    "founder_projects/export": "Route evidence suggests founder/project export or project management endpoints.",
-    "tier_config": "Config evidence suggests tier limits, allowed modes, token limits, and session/message enforcement.",
-    "data/models": "Model evidence suggests schema or ORM/domain model definitions.",
-    "config/env": "Config evidence suggests environment, deployment, or container configuration.",
-    "stripe/checkout": "Route evidence suggests Stripe checkout support.",
-    "stripe/webhook": "Route evidence suggests Stripe webhook handling.",
-    "orient": "CLI evidence suggests project orientation rendering.",
-    "inspect": "CLI evidence suggests static repo inspection.",
-    "capabilities": "CLI evidence suggests deterministic capability summarization.",
-    "chat": "CLI evidence suggests local, project-grounded chat mode.",
-    "doctor": "CLI evidence suggests read-only environment diagnostics.",
-    "inventory": "CLI evidence suggests runtime-derived inventory generation.",
-    "audit-response": "CLI evidence suggests response groundedness auditing.",
-    "init": "CLI evidence suggests project initialization scaffolding.",
-    "adopt": "CLI evidence suggests retrofitting context-kit docs onto existing projects.",
-    "seed": "CLI evidence suggests structured idea seeding.",
-    "hotpath": "CLI evidence suggests hot-file / context-dominance reporting.",
-    "coverage": "CLI evidence suggests file coverage classification.",
-    "behavior": "CLI evidence suggests behavior-surface analysis.",
-    "connections": "CLI evidence suggests connection inventory generation.",
-    "verify": "CLI evidence suggests verification checks.",
-    "exec": "CLI evidence suggests command execution orchestration.",
-    "audit": "CLI evidence suggests audit prompt generation.",
-    "fix": "CLI evidence suggests phased cleanup planning.",
-    "recommend-stack": "CLI evidence suggests stack recommendation from structured ideas.",
-    "start": "CLI evidence suggests serving an onboarding UI.",
-    "translation-init": "CLI evidence suggests translation-layer initialization.",
-    "codex": "CLI evidence suggests Codex launch or integration wiring.",
-    "start-codex": "CLI evidence suggests Codex startup wiring.",
-    "refactor": "CLI evidence suggests refactor assistance.",
+    "auth": "Detected route group for auth-related endpoints.",
+    "sessions/chat": "Detected route group for session chat endpoints.",
+    "founder_projects/export": "Detected route group for founder/project management endpoints.",
+    "tier_config": "Detected config evidence for tier limits and enforcement knobs.",
+    "data/models": "Detected model definitions in the codebase.",
+    "config/env": "Detected environment and deployment configuration evidence.",
+    "stripe/checkout": "Detected route group for Stripe checkout endpoints.",
+    "stripe/webhook": "Detected route group for Stripe webhook endpoints.",
+    "orient": "Detected CLI command for project orientation rendering.",
+    "inspect": "Detected CLI command for static repo inspection.",
+    "capabilities": "Detected CLI command for deterministic capability summaries.",
+    "chat": "Detected CLI command for local, project-grounded chat mode.",
+    "doctor": "Detected CLI command for read-only environment diagnostics.",
+    "inventory": "Detected CLI command for runtime-derived inventory generation.",
+    "audit-response": "Detected CLI command for response groundedness auditing.",
+    "init": "Detected CLI command for project initialization scaffolding.",
+    "adopt": "Detected CLI command for retrofitting context-kit docs onto existing projects.",
+    "seed": "Detected CLI command for structured idea seeding.",
+    "hotpath": "Detected CLI command for hot-file and context-dominance reporting.",
+    "coverage": "Detected CLI command for file coverage classification.",
+    "behavior": "Detected CLI command for behavior-surface analysis.",
+    "connections": "Detected CLI command for connection inventory reporting.",
+    "verify": "Detected CLI command for verification checks.",
+    "exec": "Detected CLI command for executing a defined task prompt.",
+    "audit": "Detected CLI command for audit prompt generation.",
+    "fix": "Detected CLI command for phased cleanup planning.",
+    "recommend-stack": "Detected CLI command for stack recommendation from structured ideas.",
+    "start": "Detected CLI command for serving an onboarding UI.",
+    "translation-init": "Detected CLI command for translation-layer initialization.",
+    "codex": "Detected CLI command for Codex startup wiring.",
+    "start-codex": "Detected CLI command for Codex startup wiring.",
+    "refactor": "Detected CLI command for refactor assistance.",
 }
 
 _CAPABILITY_REASONS = {
@@ -76,6 +76,51 @@ _CAPABILITY_REASONS = {
     "codex": "Explicit CLI command registration and module entrypoint detected.",
     "start-codex": "Explicit CLI command registration and module entrypoint detected.",
     "refactor": "Explicit CLI command registration and module entrypoint detected.",
+}
+
+_CAPABILITY_SAFE_DESCRIPTIONS = {
+    "connections": "The repo exposes a connections CLI command.",
+    "recommend-stack": "The repo exposes a recommend-stack CLI command.",
+    "verify": "The repo exposes a verify CLI command.",
+    "exec": "The repo exposes an exec CLI command.",
+    "codex": "The repo exposes a codex CLI command.",
+    "start-codex": "The repo exposes a start-codex CLI command.",
+}
+
+_CAPABILITY_FORBIDDEN_EXTRAPOLATIONS = {
+    "connections": "Do not infer collaboration, relationship mapping, business value, automation, or workflow impact from the command name alone.",
+    "recommend-stack": "Do not infer architecture intelligence, automatic architecture selection, or optimization from the command name alone.",
+    "verify": "Do not infer correctness guarantees, formal verification, or runtime test status from the command name alone.",
+    "exec": "Do not infer workflow orchestration, automated execution, or operational impact from the command name alone.",
+    "codex": "Do not infer an autonomous coding agent or general AI autonomy from the command name alone.",
+    "start-codex": "Do not infer an autonomous coding agent or general AI autonomy from the command name alone.",
+}
+
+_CLI_CAPABILITIES = {
+    "orient",
+    "inspect",
+    "capabilities",
+    "chat",
+    "doctor",
+    "inventory",
+    "audit-response",
+    "init",
+    "adopt",
+    "seed",
+    "hotpath",
+    "coverage",
+    "behavior",
+    "connections",
+    "verify",
+    "exec",
+    "audit",
+    "fix",
+    "recommend-stack",
+    "start",
+    "translation-init",
+    "codex",
+    "start-codex",
+    "refactor",
 }
 
 
@@ -179,6 +224,8 @@ def render_capabilities_markdown(
     lines.append("")
     lines.append("> Deterministic capability summary derived from inspect structured implementation facts.")
     lines.append("")
+    lines.extend(_capability_answer_contract_lines())
+    lines.append("")
     lines.append("## Project identity")
     lines.append("")
     lines.append(f"- Project path: `{project}`")
@@ -201,9 +248,12 @@ def render_capabilities_markdown(
             lines.append(f"### {capability}")
             if payload.get("heuristic"):
                 lines.append("- Capability label is heuristic.")
-            meaning = _CAPABILITY_MEANINGS.get(capability)
-            if meaning:
-                lines.append(f"- Meaning: {meaning}")
+            if capability in _CLI_CAPABILITIES:
+                lines.extend(_literal_cli_capability_lines(capability, evidence))
+            else:
+                meaning = _CAPABILITY_MEANINGS.get(capability)
+                if meaning:
+                    lines.append(f"- Meaning: {meaning}")
             confidence, reason = _capability_confidence(capability, evidence)
             lines.append(f"- Confidence: {confidence}")
             lines.append(f"- Reason: {reason}")
@@ -233,6 +283,8 @@ def _render_compact_capabilities_markdown(
     lines.append("# context-kit capabilities")
     lines.append("")
     lines.append("> Compact capability summary derived from inspect structured implementation facts.")
+    lines.append("")
+    lines.extend(_capability_answer_contract_lines())
     lines.append("")
     lines.append("## Project identity")
     lines.append("")
@@ -266,30 +318,14 @@ def _render_compact_capabilities_markdown(
     if shortlist:
         lines.append("## Recommended capability shortlist")
         lines.append("")
-        for capability, evidence, confidence, reason in shortlist:
-            lines.append(f"### {capability}")
+    for capability, evidence, confidence, reason in shortlist:
+        lines.append(f"### {capability}")
+        if capability in _CLI_CAPABILITIES:
+            lines.extend(_literal_cli_capability_lines(capability, evidence))
+        else:
             meaning = _CAPABILITY_MEANINGS.get(capability)
             if meaning:
                 lines.append(f"- Meaning: {meaning}")
-            lines.append(f"- Confidence: {confidence}")
-            lines.append(f"- Reason: {reason}")
-            if include_tests and any(_classify_evidence_source(item) == "test_fixture" for item in evidence):
-                lines.append("- Test/fixture evidence — not implementation.")
-            if include_detectors and any(_classify_evidence_source(item) == "detector_logic" for item in evidence):
-                lines.append("- Detector logic evidence — not project implementation.")
-            lines.append("- Best evidence:")
-            for item in evidence[:3]:
-                lines.append(f"  - {item}")
-            lines.append("")
-        if lines and lines[-1] == "":
-            lines.pop()
-        lines.append("")
-
-    for capability, evidence, confidence, reason in compact_items:
-        lines.append(f"### {capability}")
-        meaning = _CAPABILITY_MEANINGS.get(capability)
-        if meaning:
-            lines.append(f"- Meaning: {meaning}")
         lines.append(f"- Confidence: {confidence}")
         lines.append(f"- Reason: {reason}")
         if include_tests and any(_classify_evidence_source(item) == "test_fixture" for item in evidence):
@@ -297,7 +333,7 @@ def _render_compact_capabilities_markdown(
         if include_detectors and any(_classify_evidence_source(item) == "detector_logic" for item in evidence):
             lines.append("- Detector logic evidence — not project implementation.")
         lines.append("- Best evidence:")
-        for item in evidence:
+        for item in evidence[:3]:
             lines.append(f"  - {item}")
         lines.append("")
     if lines and lines[-1] == "":
@@ -317,6 +353,8 @@ def _render_shortlist_capabilities_markdown(
     lines.append("# context-kit capabilities")
     lines.append("")
     lines.append("> Shortlist capability summary derived from inspect structured implementation facts.")
+    lines.append("")
+    lines.extend(_capability_answer_contract_lines())
     lines.append("")
     lines.append("## Project identity")
     lines.append("")
@@ -384,9 +422,12 @@ def _render_shortlist_capabilities_markdown(
 
     for capability, evidence, confidence, reason in compact_items:
         lines.append(f"### {capability}")
-        meaning = _CAPABILITY_MEANINGS.get(capability)
-        if meaning:
-            lines.append(f"- Meaning: {meaning}")
+        if capability in _CLI_CAPABILITIES:
+            lines.extend(_literal_cli_capability_lines(capability, evidence))
+        else:
+            meaning = _CAPABILITY_MEANINGS.get(capability)
+            if meaning:
+                lines.append(f"- Meaning: {meaning}")
         lines.append(f"- Confidence: {confidence}")
         lines.append(f"- Reason: {reason}")
         if include_tests and any(_classify_evidence_source(item) == "test_fixture" for item in evidence):
@@ -449,6 +490,34 @@ def _build_recommended_shortlist(
             continue
         shortlist.append(item)
     return shortlist
+
+
+def _literal_cli_capability_lines(capability: str, evidence: list[str]) -> list[str]:
+    lines = [
+        f"- command_name: `{capability}`",
+        "- command_type: CLI command",
+        "- detected_entrypoint:",
+    ]
+    for item in evidence[:3]:
+        lines.append(f"  - {item}")
+    lines.append(f"- literal description: The repo exposes a CLI command named `{capability}`.")
+    forbidden = _CAPABILITY_FORBIDDEN_EXTRAPOLATIONS.get(capability)
+    if forbidden:
+        lines.append(f"- forbidden extrapolations: {forbidden}")
+    return lines
+
+
+def _capability_answer_contract_lines() -> list[str]:
+    return [
+        "## Capability answer contract",
+        "",
+        "- For capability questions, answer only from the Recommended capability shortlist when it is present.",
+        "- Do not synthesize from orientation, repo inspection, stack/framework detection, or command presence.",
+        "- If the user says \"use only the capability shortlist\", ignore everything except evidence lines already present in the shortlist.",
+        "- Use answer shape: command name, literal detected type, evidence, confidence.",
+        "- No narrative paragraph before or after.",
+        "- Do not infer unused code detection, optimization suggestions, maintainability analysis, performance analysis, modularization analysis, or architecture recommendations unless they are explicitly listed here.",
+    ]
 
 
 def _capability_confidence(capability: str, evidence: list[str]) -> tuple[str, str]:
