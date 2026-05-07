@@ -3,72 +3,94 @@
 > **Source of truth (read in this order):**
 > 1. `docs/CONTEXT_KIT_WHAT_IT_IS.md` — narrative anchor
 > 2. `docs/CONTEXT_KIT_INVENTORY.md` — runtime anchor (auto-generated; wins on counts)
-> 3. `docs/handoffs/SESSION_014_V0_12_TO_CURRENT_TRUTH_RESTORE.md` — current continuity backfill
-> 4. `docs/handoffs/SESSION_013_V0_10_TO_V0_11_2_BACKFILL.md` — prior backfill through `v0.11.2`
+> 3. `docs/handoffs/SESSION_015_POST_V0_15_FEATURE_BURST.md` — current continuity handoff
+> 4. `docs/handoffs/SESSION_014_V0_12_TO_CURRENT_TRUTH_RESTORE.md` — prior backfill through `v0.15.0`
 >
 > When narrative and runtime disagree, runtime wins.
 
 ## Current State
 
-- **Package version:** `0.15.0` in `pyproject.toml`.
+- **Package version:** `0.15.0` in `pyproject.toml` (unchanged; post-v0.15.0 work is unreleased).
 - **Latest tag:** `v0.15.0`.
-- **Tests:** **821 / 821 passing** via `python3 -m unittest discover -s tests -t .`.
-- **Inventory:** regenerated in Session 014; `inventory --check` should be clean.
-- **Latest handoff:** `SESSION_014`
-  (`docs/handoffs/SESSION_014_V0_12_TO_CURRENT_TRUTH_RESTORE.md`).
-- **Unreleased after `v0.15.0`:** pipeline, behavior-layer,
-  translation-layer, `translation-init`, Live Chat Mode, and
-  `orient --short` / doctor context-shape diagnostics.
+- **Branch:** `main`, in sync with `origin/main`. Working tree clean.
+- **Tests:** **1016 / 1018 passing** via `python3 -m unittest discover -s tests -t .`.
+- **The 2 failing tests are scaffolded targets, not regressions:**
+  - `tests/test_truth_state.py::TestOrientRuntimeState::test_full_orient_includes_runtime_state_block`
+  - `tests/test_truth_state.py::TestOrientRuntimeState::test_short_orient_includes_runtime_state_block`
+- **Inventory:** stale (`inventory --check` fails). Doctor reports 6 warnings, 0 blocking.
+- **Latest handoff:** `SESSION_015` (`docs/handoffs/SESSION_015_POST_V0_15_FEATURE_BURST.md`).
 
-## Next Task
+## Next Task — in strict order
 
-Implement a Truth / State Layer for drift detection. The goal is to
-prevent the truth-restore drift from recurring by making runtime state
-visible during orientation and surfacing documentation inconsistencies
-early.
+### FIRST THING: regenerate the inventory
 
-Constraints:
+```bash
+python3 context_kit.py inventory --write
+python3 context_kit.py inventory --check   # should now exit 0
+```
+
+Commit it as its own commit. This clears two doctor warnings
+(test-count drift, inventory staleness) and makes the
+Truth / State Layer signal meaningful for the next step.
+
+### Then: finish the Truth / State Layer (orient side)
+
+The doctor side of the Truth / State Layer is already complete and
+passing. The remaining work is the `orient` `## CURRENT RUNTIME
+STATE` block. The two failing tests in
+`tests/test_truth_state.py::TestOrientRuntimeState` are the contract.
+
+Both `render_orient(project)` and `render_orient(project, short=True)`
+must emit a `## CURRENT RUNTIME STATE` section. Minimum content:
+
+- Current package version (read from `pyproject.toml`).
+- Actual test count.
+- Inventory status (fresh / stale).
+- Latest handoff filename.
+- Next expected session number.
+- Doctor warning count.
+- Drift summary (one line per drift category).
+
+Constraints (carried forward from the prior next-task scope):
 
 - Do not change CLI behavior or arguments.
 - Do not break existing tests.
 - All new checks must be non-blocking warnings.
-- Follow existing `doctor.py` and `orient.py` patterns.
+- Follow existing `cli/doctor.py` and `cli/orient.py` patterns.
 - No external dependencies.
+- Reuse the doctor-side helpers. Do not re-shell `unittest discover`
+  from inside `orient` — read the inventory's recorded test count and
+  optionally compare against a cheap re-discovery.
 
-Scope:
+### Then: close the loop
 
-1. Extend `context-kit doctor` with warning-only drift checks:
-   version drift, test-count drift, inventory staleness, handoff
-   continuity, and start-vs-handoff conflict.
-2. Enhance `context-kit orient` output with a `CURRENT RUNTIME STATE`
-   block showing version, actual test count, inventory status, latest
-   handoff, next expected session, doctor warning count, and drift
-   summary.
-3. Add small shared helpers only if they keep the implementation
-   simpler, such as `_get_current_version()`, `_get_actual_test_count()`,
-   and `_get_latest_handoff()`.
-4. Add tests for version mismatch detection, test-count mismatch
-   detection, missing handoff continuity, orient runtime-state output,
-   and drift vs no-drift scenarios.
-
-Keep this deterministic and readable. Do not over-engineer.
-
-The remaining pipeline / behavior-layer doctor warnings are still real,
-but they are now secondary to this Truth / State Layer work.
+1. Re-run the verification baseline below.
+2. Confirm `00-START-NEXT-SESSION.md` and the latest handoff agree
+   on the "next task" so the **start vs handoff verification**
+   doctor warning clears.
+3. Decide on `docs/CONTEXT_KIT_PIPELINE.md` and
+   `docs/CONTEXT_KIT_BEHAVIOR_LAYER.md` for this repo (the new
+   chat surface raised the value of the behavior layer).
+4. Only after the above: plan a `v0.16.0` release covering verify,
+   scoped inspect, connection integrity audit, chat surface, and
+   the Truth / State Layer.
 
 ## Verification Baseline
 
-Run before making changes:
+Run before making changes, then again after:
 
 ```bash
 python3 -m unittest discover -s tests -t .
 python3 context_kit.py doctor
 python3 context_kit.py orient --short
+python3 context_kit.py inventory --check
 ```
 
 ## Do Not Touch
 
-- Release tags or PyPI state.
+- Release tags or PyPI state. No release until the orient block
+  lands and the inventory is regenerated.
+- The `cli/adopt.py` refactor — still on hold until context-layer
+  warnings settle.
 - Unrelated repos or active dev servers.
-- Broad refactors, especially `cli/adopt.py`, until the context-layer
-  warnings are settled.
+- Broad refactors of any kind during this session.
