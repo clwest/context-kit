@@ -208,6 +208,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable deterministic query routing for optional context blocks",
     )
+    chat.add_argument(
+        "--planner-mode",
+        action="store_true",
+        help="Use a minimal command-planner prompt for human-in-the-loop repo inspection",
+    )
+    chat.add_argument(
+        "--planner-prefer-git",
+        action="store_true",
+        help="Prefer git commands over context-kit commands in planner mode",
+    )
 
     # hotpath
     hotpath = sub.add_parser(

@@ -144,6 +144,24 @@ CHAT_BEHAVIOR_PREAMBLE = (
     "Do not replace the live conversation with the repo's documented NEXT TASK unless the user specifically asks for repo priorities.\n"
     "Do not invent repo facts or stats."
 )
+PLANNER_RESPONSE_CONTRACT = (
+    "You are a command planner.\n"
+    "You cannot run commands.\n"
+    "Recommend exactly one command at a time.\n"
+    "Prefer {preferred_family} commands when available.\n"
+    "If the user pasted command output, summarize in at most 3 bullets, then give exactly one next command.\n"
+    "Never ask open-ended follow-up questions.\n"
+    "Never continue the conversation after the command.\n"
+    "Never respond to your own prior output.\n"
+    "If no command is appropriate, output: COMMAND: none\n"
+    "Response format:\n"
+    "SUMMARY:\n"
+    "- ...\n"
+    "COMMAND:\n"
+    "<one command>\n"
+)
+PLANNER_TASK_PREFIX = "PLANNER_TASK:\n"
+PLANNER_TASK_SUFFIX = "\nEND_PLANNER_TASK"
 HELP_TEXT = (
     "Commands:\n"
     "  /help   Show this help text\n"
@@ -157,6 +175,8 @@ HELP_TEXT = (
 @dataclass
 class SystemPromptBundle:
     project: Path
+    planner_mode: bool
+    planner_prefer_git: bool
     persona_requested: str | None
     persona_matched: str | None
     include_inspect: bool
@@ -210,7 +230,7 @@ def run_chat(args: argparse.Namespace) -> int:
 
 def _run_one_shot(prompt: str, bundle: SystemPromptBundle, args: argparse.Namespace) -> int:
     request_messages, routing = _build_request_messages([{"role": "system", "content": bundle.system_message}], prompt, bundle, args)
-    if getattr(args, "debug_prompt", False):
+    if getattr(args, "debug_prompt", False) and not bundle.planner_mode:
         _print_turn_routing_debug(routing)
     try:
         response = ollama.chat_messages(
@@ -227,7 +247,8 @@ def _run_one_shot(prompt: str, bundle: SystemPromptBundle, args: argparse.Namesp
 
 def _run_interactive_session(bundle: SystemPromptBundle, args: argparse.Namespace) -> int:
     messages: list[dict[str, str]] = [{"role": "system", "content": bundle.system_message}]
-    messages.extend(bundle.prime_messages)
+    if bundle.prime_enabled:
+        messages.extend(bundle.prime_messages)
     print(STARTUP_LINE)
     while True:
         try:
@@ -244,14 +265,16 @@ def _run_interactive_session(bundle: SystemPromptBundle, args: argparse.Namespac
             print(HELP_TEXT)
             continue
         if line == "/reset":
-            messages = [messages[0], *bundle.prime_messages]
+            messages = [messages[0]]
+            if bundle.prime_enabled:
+                messages.extend(bundle.prime_messages)
             print("Conversation reset.")
             continue
         if line == "/orient":
             print(render_orient(bundle.project, short=True).rstrip())
             continue
         request_messages, routing = _build_request_messages(messages, line, bundle, args)
-        if getattr(args, "debug_prompt", False):
+        if getattr(args, "debug_prompt", False) and not bundle.planner_mode:
             _print_turn_routing_debug(routing)
         try:
             response = ollama.chat_messages(
@@ -261,8 +284,11 @@ def _run_interactive_session(bundle: SystemPromptBundle, args: argparse.Namespac
         except ollama.OllamaError as exc:
             sys.stderr.write(f"error: {exc}\n")
             return 2
-        messages.append({"role": "user", "content": _wrap_user_task(line, getattr(args, "no_task_wrapper", False))})
-        messages.append({"role": "assistant", "content": response})
+        if bundle.planner_mode:
+            messages.append({"role": "user", "content": _wrap_planner_task(line)})
+        else:
+            messages.append({"role": "user", "content": _wrap_user_task(line, getattr(args, "no_task_wrapper", False))})
+            messages.append({"role": "assistant", "content": response})
         print(response.rstrip())
 
 
@@ -281,7 +307,55 @@ def _build_system_message(
     return "\n".join(parts)
 
 
+def _build_planner_system_message(project: Path, args: argparse.Namespace) -> str:
+    preferred_family = "git" if getattr(args, "planner_prefer_git", False) else "context-kit"
+    return "\n".join(
+        [
+            PLANNER_RESPONSE_CONTRACT.format(preferred_family=preferred_family).rstrip(),
+            f"Project path: `{project}`",
+            "When no pasted command output is present, start with:",
+            "SUMMARY:",
+            "- Starting repo inspection.",
+            "COMMAND:",
+            f"context-kit doctor --project {project}",
+        ]
+    )
+
+
 def _build_system_prompt_bundle(project: Path, args: argparse.Namespace) -> SystemPromptBundle:
+    planner_mode = getattr(args, "planner_mode", False)
+    if planner_mode:
+        system_message = _build_planner_system_message(project, args)
+        return SystemPromptBundle(
+            project=project,
+            planner_mode=True,
+            planner_prefer_git=getattr(args, "planner_prefer_git", False),
+            persona_requested=None,
+            persona_matched=None,
+            include_inspect=False,
+            include_capabilities=False,
+            include_doctor=False,
+            include_hotpath=False,
+            include_behavior=False,
+            auto_context_enabled=False,
+            inspect_generated=False,
+            capabilities_generated=False,
+            doctor_generated=False,
+            hotpath_generated=False,
+            behavior_generated=False,
+            inventory_low_signal=False,
+            prime_enabled=False,
+            chat_preamble=PLANNER_RESPONSE_CONTRACT,
+            project_identity_summary="",
+            orientation="",
+            inspection=None,
+            capabilities=None,
+            doctor=None,
+            hotpath=None,
+            behavior=None,
+            system_message=system_message,
+            prime_messages=[],
+        )
     orientation = render_chat_orient(project)
     persona_requested = getattr(args, "user", None)
     persona_context, _persona_translation, persona_matched = _build_persona_context(project, persona_requested)
@@ -316,6 +390,8 @@ def _build_system_prompt_bundle(project: Path, args: argparse.Namespace) -> Syst
     )
     return SystemPromptBundle(
         project=project,
+        planner_mode=False,
+        planner_prefer_git=getattr(args, "planner_prefer_git", False),
         persona_requested=persona_requested,
         persona_matched=persona_matched,
         include_inspect=getattr(args, "include_inspect", False),
@@ -345,6 +421,19 @@ def _build_system_prompt_bundle(project: Path, args: argparse.Namespace) -> Syst
 
 
 def _print_debug_prompt(bundle: SystemPromptBundle) -> None:
+    if bundle.planner_mode:
+        total_count = len(bundle.system_message)
+        print(f"Resolved project path: {bundle.project}")
+        print("Planner mode: yes")
+        print(f"Planner prefers git: {'yes' if bundle.planner_prefer_git else 'no'}")
+        print("Character counts:")
+        print(f"  planner prompt: {len(bundle.chat_preamble)}")
+        print(f"  total system prompt: {total_count}")
+        print("")
+        print("=== PLANNER PROMPT ===")
+        print(bundle.system_message.rstrip())
+        print("")
+        return
     inspect_generated = "yes" if bundle.inspect_generated else "no"
     inspection_count = len(bundle.inspection or "")
     total_count = len(bundle.system_message)
@@ -538,6 +627,17 @@ def _build_request_messages(
     bundle: SystemPromptBundle,
     args: argparse.Namespace,
 ) -> tuple[list[dict[str, str]], dict[str, object]]:
+    if bundle.planner_mode:
+        request_messages = list(base_messages)
+        request_messages.append({"role": "user", "content": _wrap_planner_task(user_text)})
+        return request_messages, {
+            "query_type": "planner",
+            "auto_enabled": False,
+            "sections": [],
+            "auto_sections": [],
+            "explicit_sections": [],
+            "skipped_sections": [],
+        }
     routing = _route_user_query(user_text, bundle, args)
     request_messages = list(base_messages)
     if routing["sections"]:
@@ -815,6 +915,10 @@ def _wrap_user_task(user_text: str, disabled: bool) -> str:
         f"{user_text}\n\n"
         "USER_TASK_END"
     )
+
+
+def _wrap_planner_task(user_text: str) -> str:
+    return f"{PLANNER_TASK_PREFIX}{user_text}{PLANNER_TASK_SUFFIX}"
 
 
 def _chat_inventory_low_signal(project: Path) -> bool:

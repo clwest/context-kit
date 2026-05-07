@@ -20,6 +20,9 @@ if str(REPO_ROOT) not in sys.path:
 from cli.bootstrap import run_init  # noqa: E402
 from cli.chat import run_chat  # noqa: E402
 from cli.chat import CHAT_BEHAVIOR_PREAMBLE  # noqa: E402
+from cli.chat import PLANNER_RESPONSE_CONTRACT  # noqa: E402
+from cli.chat import PLANNER_TASK_PREFIX  # noqa: E402
+from cli.chat import PLANNER_TASK_SUFFIX  # noqa: E402
 
 
 def _init_args(name, target):
@@ -50,6 +53,8 @@ def _chat_args(
     prompt_soft_threshold=20000,
     no_prime=False,
     no_task_wrapper=False,
+    planner_mode=False,
+    planner_prefer_git=False,
 ):
     return argparse.Namespace(
         command="chat",
@@ -68,6 +73,8 @@ def _chat_args(
         prompt_soft_threshold=prompt_soft_threshold,
         no_prime=no_prime,
         no_task_wrapper=no_task_wrapper,
+        planner_mode=planner_mode,
+        planner_prefer_git=planner_prefer_git,
     )
 
 
@@ -193,6 +200,9 @@ class TestChatSmoke(unittest.TestCase):
             f"{user_text}\n\n"
             "USER_TASK_END"
         )
+
+    def _wrap_planner_task(self, user_text: str) -> str:
+        return f"{PLANNER_TASK_PREFIX}{user_text}{PLANNER_TASK_SUFFIX}"
 
     def test_posts_orientation_and_prompt_to_ollama(self):
         captured: dict = {}
@@ -591,6 +601,116 @@ class TestChatSmoke(unittest.TestCase):
                 {"role": "user", "content": "Hello"},
             ],
         )
+
+    def test_planner_mode_uses_minimal_preamble(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "planner reply"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(_chat_args(self.project, ["What", "should", "I", "inspect?"], planner_mode=True))
+
+        self.assertEqual(rc, 0)
+        system_message = self._payload_text(captured)
+        self.assertTrue(
+            system_message.startswith(
+                PLANNER_RESPONSE_CONTRACT.format(preferred_family="context-kit").rstrip()
+            )
+        )
+        self.assertIn(f"Project path: `{self.project.resolve()}`", system_message)
+        self.assertIn("When no pasted command output is present, start with:", system_message)
+        self.assertIn("SUMMARY:", system_message)
+        self.assertIn("- Starting repo inspection.", system_message)
+        self.assertIn(f"COMMAND:\ncontext-kit doctor --project {self.project.resolve()}", system_message)
+        self.assertNotIn(CHAT_BEHAVIOR_PREAMBLE, system_message)
+        self.assertNotIn("## PROJECT ORIENTATION", system_message)
+        self.assertNotIn("## PROJECT IDENTITY SUMMARY", system_message)
+
+    def test_planner_mode_uses_tiny_task_wrapper(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "planner reply"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(_chat_args(self.project, ["List", "the", "next", "step"], planner_mode=True))
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            captured["payload"]["messages"],
+            [
+                captured["payload"]["messages"][0],
+                {"role": "user", "content": self._wrap_planner_task("List the next step")},
+            ],
+        )
+
+    def test_planner_mode_can_prefer_git_commands(self):
+        captured: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return _FakeResponse({"message": {"content": "planner reply"}})
+
+        with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+            with redirect_stdout(io.StringIO()):
+                rc = run_chat(
+                    _chat_args(
+                        self.project,
+                        ["Check", "the", "repo"],
+                        planner_mode=True,
+                        planner_prefer_git=True,
+                    )
+                )
+
+        self.assertEqual(rc, 0)
+        system_message = self._payload_text(captured)
+        self.assertIn("Prefer git commands when available.", system_message)
+        self.assertNotIn("Prefer context-kit commands when available.", system_message)
+
+    def test_planner_mode_does_not_store_assistant_history(self):
+        captured_payloads: list[dict] = []
+
+        def fake_urlopen(req, timeout=None):
+            del timeout
+            captured_payloads.append(json.loads(req.data.decode("utf-8")))
+            content = f"planner reply {len(captured_payloads)}"
+            return _FakeResponse({"message": {"content": content}})
+
+        buf = io.StringIO()
+        with patch("cli.chat.sys.stdin.isatty", return_value=True):
+            with patch("cli.chat.input", side_effect=["Inspect the repo", "Use git status", "/exit"]):
+                with patch("cli.ollama.request.urlopen", side_effect=fake_urlopen):
+                    with redirect_stdout(buf):
+                        rc = run_chat(_chat_args(self.project, planner_mode=True))
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(captured_payloads), 2)
+        self.assertEqual(
+            captured_payloads[0]["messages"],
+            [
+                captured_payloads[0]["messages"][0],
+                {"role": "user", "content": self._wrap_planner_task("Inspect the repo")},
+            ],
+        )
+        self.assertEqual(
+            captured_payloads[1]["messages"],
+            [
+                captured_payloads[0]["messages"][0],
+                {"role": "user", "content": self._wrap_planner_task("Inspect the repo")},
+                {"role": "user", "content": self._wrap_planner_task("Use git status")},
+            ],
+        )
+        self.assertTrue(all(message["role"] != "assistant" for payload in captured_payloads for message in payload["messages"]))
+        self.assertIn("planner reply 1", buf.getvalue())
+        self.assertIn("planner reply 2", buf.getvalue())
 
     def test_persona_unmatched_stays_neutral(self):
         captured: dict = {}
