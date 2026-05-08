@@ -21,6 +21,7 @@ START_DOC = "00-START-NEXT-SESSION.md"
 HANDOFFS_DIR = Path("docs/handoffs")
 DOCS_DIR = Path("docs")
 PATTERN_DIR = Path("docs/docs-pattern")
+VERIFY_CONFIG_REL = Path(".context-kit/verify.yaml")
 
 # Token embedded by `cli.inventory.render_block_body` when the
 # context-kit-shape detectors don't match the project. When orient
@@ -439,6 +440,13 @@ def _section_source_of_truth(project: Path) -> str:
         )
     else:
         lines.append("If any other doc disagrees with the inventory, the inventory is right.")
+    # Anchor-ambiguity warnings: when ``docs/`` has multiple
+    # ``*_INVENTORY.md`` (or ``*_WHAT_IT_IS.md``) files and verify.yaml
+    # doesn't pin one, the alphabetic-first selection is meaningless.
+    # Surface this so the project owner can fix it via canonical_docs.
+    for warning in _anchor_ambiguity(project):
+        lines.append("")
+        lines.append(warning)
     return "\n".join(lines)
 
 
@@ -620,13 +628,154 @@ def _section_what_to_do_now() -> str:
 
 
 def _find_anchor_docs(project: Path) -> tuple[Path | None, Path | None]:
-    """Discover the two-doc anchor by suffix, since prefix is project-specific."""
+    """Discover the two-doc anchor.
+
+    Resolution order — project-local pin wins over alphabetic-luck:
+
+    1. ``.context-kit/verify.yaml``'s ``canonical_docs`` list. If it
+       names exactly one ``*_WHAT_IT_IS.md`` (or ``*_INVENTORY.md``)
+       file that exists on disk, that file is the anchor.
+    2. Otherwise fall back to the suffix-glob (``docs/*_INVENTORY.md``)
+       and pick the alphabetic-first match — preserving behavior for
+       projects without verify.yaml or with a single matching candidate.
+
+    When multiple suffix-glob candidates exist and the config does not
+    pin exactly one, ``_section_source_of_truth`` emits a visible
+    warning (via :func:`_anchor_ambiguity`) so the project owner can
+    disambiguate by editing ``canonical_docs``. The current selection
+    is still returned — orient never crashes on an ambiguous tree.
+
+    Older projects with a single ``*_INVENTORY.md`` and no verify.yaml
+    keep their existing behavior unchanged.
+    """
     docs = project / DOCS_DIR
     if not docs.is_dir():
         return None, None
-    what = _first_match(docs.glob("*_WHAT_IT_IS.md"))
-    inventory = _first_match(docs.glob("*_INVENTORY.md"))
+    canonical = _load_canonical_docs(project)
+    what = _resolve_anchor(project, docs, "_WHAT_IT_IS.md", canonical)
+    inventory = _resolve_anchor(project, docs, "_INVENTORY.md", canonical)
     return what, inventory
+
+
+def _resolve_anchor(
+    project: Path,
+    docs: Path,
+    suffix: str,
+    canonical_docs: list[str],
+) -> Path | None:
+    """Pick the anchor for a given suffix: pinned-by-config first, else
+    alphabetic-first of the suffix-glob matches."""
+    matches = sorted(p for p in docs.glob(f"*{suffix}") if p.is_file())
+    pinned = _pin_from_canonical(project, matches, canonical_docs, suffix)
+    if pinned is not None:
+        return pinned
+    return matches[0] if matches else None
+
+
+def _pin_from_canonical(
+    project: Path,
+    suffix_matches: list[Path],
+    canonical_docs: list[str],
+    suffix: str,
+) -> Path | None:
+    """Return the suffix-match pinned by ``canonical_docs``, or None.
+
+    A pin requires:
+      - ``canonical_docs`` to contain **exactly one** entry ending in
+        ``suffix`` (multiple ``*_INVENTORY.md`` entries → not a pin),
+      - that entry to exist on disk under the project root,
+      - the entry path to match one of the suffix-glob results
+        (so a config typo doesn't silently override the glob).
+
+    Returns None on any failure mode, deferring to the alphabetic-first
+    fallback.
+    """
+    if not canonical_docs or not suffix_matches:
+        return None
+
+    matching = [c for c in canonical_docs if c.endswith(suffix)]
+    if len(matching) != 1:
+        return None
+
+    candidate_rel = matching[0]
+    suffix_rels = {str(p.relative_to(project)) for p in suffix_matches}
+    if candidate_rel not in suffix_rels:
+        return None
+
+    return project / candidate_rel
+
+
+def _anchor_ambiguity(project: Path) -> list[str]:
+    """Return human-readable warning lines for anchors that have multiple
+    unpinned suffix-glob candidates.
+
+    Empty list means the tree is unambiguous (single candidate, or
+    config pins one). Each returned string is a one-line warning that
+    callers (currently :func:`_section_source_of_truth`) print verbatim
+    inside the orient report so the message stays in the same buffer
+    as the rest of the source-of-truth output.
+    """
+    docs = project / DOCS_DIR
+    if not docs.is_dir():
+        return []
+    canonical = _load_canonical_docs(project)
+
+    warnings: list[str] = []
+    for label, suffix in (("WHAT_IT_IS", "_WHAT_IT_IS.md"), ("INVENTORY", "_INVENTORY.md")):
+        matches = sorted(p for p in docs.glob(f"*{suffix}") if p.is_file())
+        if len(matches) <= 1:
+            continue
+        if _pin_from_canonical(project, matches, canonical, suffix) is not None:
+            continue
+        rels = [str(p.relative_to(project)) for p in matches]
+        warnings.append(
+            f"WARNING: {len(matches)} {label} candidates found "
+            f"({', '.join(rels)}). Picked '{rels[0]}' alphabetically. "
+            f"To disambiguate, list exactly one of these in "
+            f"`{VERIFY_CONFIG_REL}` under `canonical_docs:`."
+        )
+    return warnings
+
+
+def _load_canonical_docs(project: Path) -> list[str]:
+    """Return the project's ``canonical_docs`` list from verify.yaml.
+
+    Read failures, missing files, and parse errors all return ``[]`` so
+    that orient falls back to suffix-glob behavior. Project-local config
+    is **additive**; its absence must not break older repos.
+
+    The parser is intentionally minimal: line-oriented, no nesting
+    beyond the top-level ``canonical_docs:`` list. It mirrors the
+    conservative parser in ``cli/verify.py`` so the two stay in sync
+    without a hard cross-module dependency.
+    """
+    config_path = project / VERIFY_CONFIG_REL
+    try:
+        text = config_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    canonical: list[str] = []
+    in_canonical = False
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if not line.startswith(" ") and line.endswith(":"):
+            key = line[:-1].strip()
+            in_canonical = key == "canonical_docs"
+            continue
+        if in_canonical and re.match(r"^\s*-\s+", line):
+            item = line.split("-", 1)[1].strip().strip("'\"")
+            if not item:
+                continue
+            value = item.replace("\\", "/")
+            if value.startswith("./"):
+                value = value[2:]
+            while value.startswith("/"):
+                value = value[1:]
+            canonical.append(value)
+    return canonical
 
 
 def _find_pipeline_doc(project: Path) -> Path | None:
