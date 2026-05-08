@@ -79,6 +79,7 @@ def render_orient(project: Path, *, short: bool = False) -> str:
     sections.append(_section_translation_layer(project))
     sections.append(_section_do_nots(project))
     sections.append(_section_latest_handoff(project))
+    sections.append(_section_runtime_state(project))
     sections.append(_section_pattern_pointer(project))
     sections.append(_section_what_to_do_now())
     return "\n\n".join(s for s in sections if s)
@@ -174,6 +175,15 @@ def _render_short(project: Path) -> str:
     if doctor_summary:
         lines.append("## DOCTOR")
         lines.append(doctor_summary)
+        lines.append("")
+
+    # Current runtime state block — version, tests, inventory freshness,
+    # latest handoff, next session, doctor counts, drift summary. Same
+    # contract as the full report so a returning agent gets the same
+    # one-shot answer regardless of mode.
+    runtime_state = _section_runtime_state(project)
+    if runtime_state:
+        lines.append(runtime_state)
         lines.append("")
 
     lines.append(
@@ -779,3 +789,165 @@ def _preview(path: Path, limit: int = PREVIEW_LINES) -> str:
     if len(lines) > limit:
         body += f"\n... ({len(lines) - limit} more lines — open {path.name} to read in full)"
     return body
+
+
+# ---------------------------------------------------------------------------
+# Runtime state section (Truth/State Layer — orient side)
+# ---------------------------------------------------------------------------
+
+
+_MAX_DRIFT_LINES = 6  # Cap on drift-summary lines so the section stays compact.
+
+
+def _section_runtime_state(project: Path) -> str:
+    """Render the ``## CURRENT RUNTIME STATE`` block.
+
+    Pulls runtime facts from :mod:`cli.state` and the doctor's aggregate
+    check results so a returning agent can see — without running anything
+    extra — the package version, test count, inventory freshness, latest
+    handoff, next-expected session number, doctor warning/blocking
+    counts, and a one-line-per-category drift summary.
+
+    Spec sources:
+      - ``00-START-NEXT-SESSION.md`` "Truth/State Layer (orient side)"
+      - ``docs/handoffs/SESSION_015_POST_V0_15_FEATURE_BURST.md``
+      - ``tests/test_truth_state.py::TestOrientRuntimeState`` (the contract)
+
+    Constraints (per the spec):
+      - No CLI argument changes, no external dependencies.
+      - Reuse ``cli.state`` and ``cli.doctor`` helpers; never re-shell
+        ``unittest discover``.
+      - Doctor failures degrade to ``"  Doctor: unavailable"`` rather
+        than crashing orient — runtime-state is informational, not a
+        new gate.
+
+    Lazy imports keep the cold-start cost off the regular orient path
+    when the project hasn't bothered to scaffold a tests/ tree yet.
+    """
+    try:
+        from . import state as _state  # type: ignore
+    except ImportError:
+        return ""
+
+    lines: list[str] = ["## CURRENT RUNTIME STATE"]
+
+    # Version: read from pyproject.toml. Emitted only when a real
+    # version is available — the literal token "version" in an "(unknown)"
+    # placeholder line is enough to tip the audit-response classifier's
+    # token-overlap threshold for unrelated claims, so projects without
+    # a pyproject.toml simply omit this line.
+    try:
+        version = _state.get_current_version(project)
+    except Exception:
+        version = None
+    if version:
+        lines.append(f"  Version: {version}")
+
+    # Tests: actual unittest-discovery count, optionally compared to the
+    # inventory's recorded count. Spec says read inventory first; we
+    # show both when they exist so drift is visible inline.
+    try:
+        actual = _state.get_actual_test_count(project)
+    except Exception:
+        actual = None
+    try:
+        recorded = _state.get_inventory_test_count(project)
+    except Exception:
+        recorded = None
+    if actual is not None and recorded is not None:
+        if actual == recorded:
+            lines.append(f"  Tests: {actual} (matches inventory)")
+        else:
+            lines.append(
+                f"  Tests: {actual} discovered, {recorded} in inventory (drift)"
+            )
+    elif actual is not None:
+        lines.append(f"  Tests: {actual} discovered")
+    elif recorded is not None:
+        lines.append(f"  Tests: {recorded} in inventory (no live count)")
+    else:
+        lines.append("  Tests: (unknown)")
+
+    # Inventory freshness: status + reason from the existing helper.
+    try:
+        inv_status, inv_reason = _state.get_inventory_status(project)
+    except Exception:
+        inv_status, inv_reason = "unknown", ""
+    inv_line = f"  Inventory: {inv_status}"
+    if inv_reason:
+        inv_line += f" — {inv_reason}"
+    lines.append(inv_line)
+
+    # Latest handoff + next expected session number. Both lines are
+    # printed in both full and short modes per the test contract; full
+    # asserts on "Latest handoff: SESSION_NNN" and short asserts on
+    # "Next session: SESSION_NNN+1".
+    try:
+        latest = _state.get_latest_handoff(project)
+    except Exception:
+        latest = None
+    if latest is not None:
+        latest_id = f"SESSION_{latest.number:03d}"
+        next_id = f"SESSION_{latest.number + 1:03d}"
+        lines.append(f"  Latest handoff: {latest_id}")
+        lines.append(f"  Next session: {next_id}")
+    else:
+        lines.append("  Latest handoff: (none yet)")
+        lines.append("  Next session: SESSION_001")
+
+    # Doctor counts + drift summary. Wrapped in try/except so an
+    # internal doctor failure (subprocess, missing tool, etc.) doesn't
+    # crash orient — the section degrades to "Doctor: unavailable".
+    blocking, warnings, drift_lines = _summarize_doctor(project)
+    if blocking is None:
+        lines.append("  Doctor: unavailable")
+    else:
+        lines.append(f"  Doctor: {blocking} blocking, {warnings} warnings")
+        for drift_line in drift_lines:
+            lines.append(f"  - {drift_line}")
+
+    return "\n".join(lines)
+
+
+def _summarize_doctor(
+    project: Path,
+) -> tuple[int | None, int, list[str]]:
+    """Run the doctor in-process and return (blocking, warnings, drift_lines).
+
+    ``blocking`` is ``None`` when the doctor itself fails to load or
+    crashes — :func:`_section_runtime_state` uses that to render the
+    ``Doctor: unavailable`` fallback.
+
+    ``drift_lines`` is one short line per warning, capped at
+    :data:`_MAX_DRIFT_LINES` so the runtime-state block stays compact.
+    Each line is the check label plus, when present, a short tail of
+    the detail string (truncated for readability).
+    """
+    try:
+        from .doctor import run_all_checks  # type: ignore
+    except ImportError:
+        return None, 0, []
+    try:
+        results = run_all_checks(project)
+    except Exception:
+        return None, 0, []
+
+    blocking = sum(1 for r in results if r.status == "blocking")
+    warnings = sum(1 for r in results if r.status == "warning")
+
+    drift_lines: list[str] = []
+    for r in results:
+        if r.status != "warning":
+            continue
+        if len(drift_lines) >= _MAX_DRIFT_LINES:
+            drift_lines.append("...")
+            break
+        line = r.label
+        detail = getattr(r, "detail", "")
+        if detail:
+            short_detail = " ".join(detail.split())
+            if len(short_detail) > 80:
+                short_detail = short_detail[:77] + "..."
+            line = f"{line}: {short_detail}"
+        drift_lines.append(line)
+    return blocking, warnings, drift_lines
