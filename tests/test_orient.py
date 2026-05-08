@@ -446,7 +446,7 @@ class TestBackwardCompatNoNewDocs(unittest.TestCase):
         (self.project / "00-START-NEXT-SESSION.md").write_text("# Start\n")
         (self.project / "docs").mkdir()
         (self.project / "docs" / "OLD_WHAT_IT_IS.md").write_text("# What\n")
-        (self.project / "docs" / "OLD_INVENTORY.md").write_text("# Inv\n")
+        (self.project / "docs" / "BACKUP_INVENTORY.md").write_text("# Inv\n")
         (self.project / "docs" / "handoffs").mkdir()
         (self.project / "docs" / "handoffs" / "SESSION_001_BOOTSTRAP.md").write_text("# 1\n")
 
@@ -523,6 +523,245 @@ class TestNewWarningsAreNeverBlocking(unittest.TestCase):
         for r in new_results:
             self.assertNotEqual(r.status, "blocking", f"{r.id} should never block")
         self.assertEqual(_exit_code(results), 0)
+
+
+# ---------------------------------------------------------------------------
+# Anchor pinning via .context-kit/verify.yaml — fix/orient-canonical-docs-config
+# ---------------------------------------------------------------------------
+
+
+from cli.orient import (  # noqa: E402
+    _anchor_ambiguity,
+    _find_anchor_docs,
+    _load_canonical_docs,
+)
+
+
+class TestAnchorPinFromCanonicalDocs(unittest.TestCase):
+    """When ``docs/`` has multiple ``*_INVENTORY.md`` (or ``*_WHAT_IT_IS.md``)
+    candidates, the alphabetic-first selection is meaningless. This suite
+    verifies that ``.context-kit/verify.yaml``'s ``canonical_docs`` list
+    can pin the intended anchor, that fallback behaviour is preserved,
+    and that ambiguity is surfaced to the report when nothing is pinned.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmp.name) / "p"
+        self.project.mkdir()
+        (self.project / "00-START-NEXT-SESSION.md").write_text("# Start\n")
+        (self.project / "docs").mkdir()
+        (self.project / "docs" / "ALPHA_WHAT_IT_IS.md").write_text("# What\n")
+        # Two ``*_INVENTORY.md`` candidates. Alphabetic-first is
+        # BACKUP, but verify.yaml will pin PRIMARY. Mirrors the
+        # Donkey Betz situation: BACKEND_INVENTORY sorts before
+        # PLATFORM_INVENTORY despite the latter being canonical.
+        (self.project / "docs" / "BACKUP_INVENTORY.md").write_text("# backup\n")
+        (self.project / "docs" / "PRIMARY_INVENTORY.md").write_text("# primary\n")
+        (self.project / "docs" / "handoffs").mkdir()
+        (self.project / "docs" / "handoffs" / "SESSION_001_BOOTSTRAP.md").write_text("# 1\n")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_verify_yaml(self, body: str) -> Path:
+        cfg_dir = self.project / ".context-kit"
+        cfg_dir.mkdir(exist_ok=True)
+        path = cfg_dir / "verify.yaml"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_no_config_falls_back_to_alphabetic_first(self):
+        # Without verify.yaml, behaviour matches the original suffix-glob
+        # selection: alphabetic-first wins.
+        what, inventory = _find_anchor_docs(self.project)
+        self.assertEqual(what.name, "ALPHA_WHAT_IT_IS.md")
+        self.assertEqual(inventory.name, "BACKUP_INVENTORY.md")
+
+    def test_pin_picks_canonical_doc_not_alphabetic_first(self):
+        self._write_verify_yaml(
+            "canonical_docs:\n"
+            "  - docs/PRIMARY_INVENTORY.md\n"
+            "  - docs/ALPHA_WHAT_IT_IS.md\n"
+        )
+        _, inventory = _find_anchor_docs(self.project)
+        self.assertEqual(inventory.name, "PRIMARY_INVENTORY.md")
+
+    def test_orient_report_shows_pinned_inventory_in_source_of_truth(self):
+        self._write_verify_yaml(
+            "canonical_docs:\n"
+            "  - docs/PRIMARY_INVENTORY.md\n"
+        )
+        _, out = _run_orient_capture(self.project)
+        # Pinned doc appears as the runtime anchor.
+        self.assertIn("docs/PRIMARY_INVENTORY.md", out)
+        self.assertIn("PRIMARY_INVENTORY.md    — runtime anchor", out)
+        # Alphabetic-first must NOT be promoted as the runtime anchor.
+        self.assertNotIn("BACKUP_INVENTORY.md    — runtime anchor", out)
+
+    def test_pin_falls_back_when_canonical_lists_multiple_inventories(self):
+        # Two inventories listed → not a unique pin → fallback to glob.
+        self._write_verify_yaml(
+            "canonical_docs:\n"
+            "  - docs/BACKUP_INVENTORY.md\n"
+            "  - docs/PRIMARY_INVENTORY.md\n"
+        )
+        _, inventory = _find_anchor_docs(self.project)
+        self.assertEqual(inventory.name, "BACKUP_INVENTORY.md")
+
+    def test_pin_falls_back_when_canonical_doc_does_not_exist(self):
+        # Config typo: pinned file doesn't exist on disk → fallback.
+        self._write_verify_yaml(
+            "canonical_docs:\n"
+            "  - docs/MISSING_INVENTORY.md\n"
+        )
+        _, inventory = _find_anchor_docs(self.project)
+        self.assertEqual(inventory.name, "BACKUP_INVENTORY.md")
+
+    def test_warning_emitted_when_no_pin_and_multiple_candidates(self):
+        # No verify.yaml: alphabetic-first wins, but the report carries a
+        # WARNING line so the project owner can disambiguate.
+        _, out = _run_orient_capture(self.project)
+        self.assertIn("WARNING", out)
+        self.assertIn("INVENTORY candidates", out)
+        self.assertIn("verify.yaml", out)
+        self.assertIn("canonical_docs", out)
+
+    def test_no_warning_when_only_one_candidate(self):
+        (self.project / "docs" / "BACKUP_INVENTORY.md").unlink()
+        _, out = _run_orient_capture(self.project)
+        self.assertNotIn("WARNING", out)
+
+    def test_no_warning_when_pin_resolves_uniquely(self):
+        self._write_verify_yaml(
+            "canonical_docs:\n"
+            "  - docs/PRIMARY_INVENTORY.md\n"
+        )
+        _, out = _run_orient_capture(self.project)
+        # Pinned cleanly → ambiguity is resolved → no WARNING.
+        self.assertNotIn("WARNING", out)
+
+    def test_invalid_verify_yaml_falls_back_safely(self):
+        # Mangled config: parser must not crash; falls back to glob.
+        self._write_verify_yaml("this is garbage <<<:\n  -\n  - - -\n")
+        rc, out = _run_orient_capture(self.project)
+        self.assertEqual(rc, 0)
+        self.assertIn("docs/BACKUP_INVENTORY.md", out)
+
+
+class TestLoadCanonicalDocsParser(unittest.TestCase):
+    """Direct coverage of the verify.yaml parser. Keeps it conservative
+    so a hand-edited or malformed config doesn't crash orient."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmp.name) / "p"
+        self.project.mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write_yaml(self, body: str) -> None:
+        cfg_dir = self.project / ".context-kit"
+        cfg_dir.mkdir(exist_ok=True)
+        (cfg_dir / "verify.yaml").write_text(body, encoding="utf-8")
+
+    def test_returns_empty_when_no_config_file(self):
+        self.assertEqual(_load_canonical_docs(self.project), [])
+
+    def test_extracts_canonical_docs_only(self):
+        self._write_yaml(
+            "canonical_docs:\n"
+            "  - 00-START-NEXT-SESSION.md\n"
+            "  - docs/PLATFORM_INVENTORY.md\n"
+            "  - docs/PLATFORM_WHAT_IT_IS.md\n"
+            "active_doc_roots:\n"
+            "  - docs/\n"
+            "  - .claude/\n"
+        )
+        self.assertEqual(
+            _load_canonical_docs(self.project),
+            [
+                "00-START-NEXT-SESSION.md",
+                "docs/PLATFORM_INVENTORY.md",
+                "docs/PLATFORM_WHAT_IT_IS.md",
+            ],
+        )
+
+    def test_strips_leading_dot_slash_and_quotes(self):
+        self._write_yaml(
+            "canonical_docs:\n"
+            "  - './docs/PLATFORM_INVENTORY.md'\n"
+            '  - "/docs/PLATFORM_WHAT_IT_IS.md"\n'
+        )
+        self.assertEqual(
+            _load_canonical_docs(self.project),
+            ["docs/PLATFORM_INVENTORY.md", "docs/PLATFORM_WHAT_IT_IS.md"],
+        )
+
+    def test_ignores_comments_and_blank_lines(self):
+        self._write_yaml(
+            "# top comment\n"
+            "canonical_docs:\n"
+            "\n"
+            "  - docs/X_INVENTORY.md  # inline comment\n"
+            "  - docs/Y_WHAT_IT_IS.md\n"
+        )
+        self.assertEqual(
+            _load_canonical_docs(self.project),
+            ["docs/X_INVENTORY.md", "docs/Y_WHAT_IT_IS.md"],
+        )
+
+    def test_returns_empty_when_canonical_docs_absent(self):
+        self._write_yaml(
+            "active_doc_roots:\n"
+            "  - docs/\n"
+        )
+        self.assertEqual(_load_canonical_docs(self.project), [])
+
+
+class TestAnchorAmbiguityHelper(unittest.TestCase):
+    """Direct coverage of the _anchor_ambiguity helper, independent of
+    the orient report rendering."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmp.name) / "p"
+        self.project.mkdir()
+        (self.project / "docs").mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_empty_when_no_docs_dir(self):
+        # Fresh project with no docs/ at all.
+        empty = Path(self._tmp.name) / "empty"
+        empty.mkdir()
+        self.assertEqual(_anchor_ambiguity(empty), [])
+
+    def test_empty_when_single_candidate(self):
+        (self.project / "docs" / "ONLY_INVENTORY.md").write_text("# inv\n")
+        self.assertEqual(_anchor_ambiguity(self.project), [])
+
+    def test_warning_when_multiple_unpinned_candidates(self):
+        (self.project / "docs" / "A_INVENTORY.md").write_text("# a\n")
+        (self.project / "docs" / "B_INVENTORY.md").write_text("# b\n")
+        warnings = _anchor_ambiguity(self.project)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("INVENTORY candidates", warnings[0])
+        self.assertIn("A_INVENTORY.md", warnings[0])
+        self.assertIn("B_INVENTORY.md", warnings[0])
+
+    def test_no_warning_when_pin_resolves_one(self):
+        (self.project / "docs" / "A_INVENTORY.md").write_text("# a\n")
+        (self.project / "docs" / "B_INVENTORY.md").write_text("# b\n")
+        cfg_dir = self.project / ".context-kit"
+        cfg_dir.mkdir()
+        (cfg_dir / "verify.yaml").write_text(
+            "canonical_docs:\n  - docs/B_INVENTORY.md\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(_anchor_ambiguity(self.project), [])
 
 
 if __name__ == "__main__":
