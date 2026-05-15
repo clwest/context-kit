@@ -59,6 +59,11 @@ the guide docs already live at the repo root rather than under
 
 ## Load-bearing conventions
 
+- **Every session starts with a drift sweep.** Run `python3 context_kit.py orient`
+  and read the `## CURRENT RUNTIME STATE` block at the bottom. It surfaces
+  stale inventory, test-count drift, narrative-anchor date drift, handoff
+  numbering gaps, and start-vs-handoff text mismatches before you touch
+  code. Fix anything load-bearing before claiming the next slice.
 - **Every session ends with a handoff** in `docs/handoffs/SESSION_NNN_*.md`
   and overwrites `00-START-NEXT-SESSION.md` with next session's priorities.
 - **Runtime wins.** The inventory is currently hand-maintained — when it

@@ -94,6 +94,7 @@ def run_all_checks(project: Path) -> list[CheckResult]:
         check_inventory(project),
         check_version_drift(project),
         check_test_count_drift(project),
+        check_narrative_anchor_freshness(project),
         check_pipeline_doc(project),
         check_behavior_layer_doc(project),
         check_translation_layer_doc(project),
@@ -665,6 +666,93 @@ def check_test_count_drift(project: Path) -> CheckResult:
         label="Test count drift",
         status="ok",
         detail=f"unittest discovery and inventory both count {actual} tests",
+    )
+
+
+def check_narrative_anchor_freshness(project: Path) -> CheckResult:
+    """Warn when the narrative anchor's frontmatter date is older than the
+    latest handoff's frontmatter date.
+
+    The narrative anchor (``docs/*_WHAT_IT_IS.md``) is the conceptual
+    source of truth. Every handoff that lands real work has the chance to
+    invalidate something it says. When handoffs keep moving forward and
+    the anchor's ``generated:`` / ``last_revised:`` date stops moving,
+    that's the early signal that narrative is decaying — agents reading
+    orient form a stale picture of the project's shape.
+
+    Comparison is on the bare ``YYYY-MM-DD`` portion, lexicographic.
+    Equal dates pass. Anchor newer than handoff passes. Anchor older
+    than handoff warns. Missing / unparseable dates skip.
+    """
+    anchor_path = state.get_narrative_anchor_path(project)
+    if anchor_path is None:
+        return CheckResult(
+            id="narrative_anchor_freshness",
+            label="Narrative anchor freshness",
+            status="skipped",
+            detail="No narrative anchor (docs/*_WHAT_IT_IS.md) found",
+        )
+
+    anchor_date = state.get_narrative_anchor_date(project)
+    if anchor_date is None:
+        return CheckResult(
+            id="narrative_anchor_freshness",
+            label="Narrative anchor freshness",
+            status="skipped",
+            detail=(
+                f"{anchor_path.relative_to(project)} has no parseable "
+                "frontmatter date (last_revised / date / generated)"
+            ),
+        )
+
+    latest = state.get_latest_handoff(project)
+    if latest is None:
+        return CheckResult(
+            id="narrative_anchor_freshness",
+            label="Narrative anchor freshness",
+            status="skipped",
+            detail="No handoffs on disk to compare against",
+        )
+
+    handoff_date = state.get_handoff_date(latest)
+    if handoff_date is None:
+        return CheckResult(
+            id="narrative_anchor_freshness",
+            label="Narrative anchor freshness",
+            status="skipped",
+            detail=(
+                f"{latest.path.relative_to(project)} has no parseable "
+                "frontmatter date"
+            ),
+        )
+
+    if anchor_date >= handoff_date:
+        return CheckResult(
+            id="narrative_anchor_freshness",
+            label="Narrative anchor freshness",
+            status="ok",
+            detail=(
+                f"narrative anchor dated {anchor_date}; "
+                f"latest handoff ({latest.token}) dated {handoff_date}"
+            ),
+        )
+
+    return CheckResult(
+        id="narrative_anchor_freshness",
+        label="Narrative anchor freshness",
+        status="warning",
+        detail=(
+            f"narrative anchor ({anchor_path.relative_to(project)}) "
+            f"dated {anchor_date} is older than latest handoff "
+            f"({latest.token}) dated {handoff_date}. Sessions have "
+            "moved on; the anchor's frontmatter hasn't."
+        ),
+        fix=[
+            "Review the narrative anchor against the latest handoff.",
+            "Update the body where it's drifted, then bump the "
+            "frontmatter date.",
+            "Or rubber-stamp the date if no content change is needed.",
+        ],
     )
 
 

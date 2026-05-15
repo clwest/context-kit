@@ -24,6 +24,13 @@ _SESSION_FILE_RE = re.compile(r"^SESSION_(\d+)_.+\.md$")
 _SESSION_TOKEN_RE = re.compile(r"SESSION_(\d+)\b")
 _INVENTORY_TEST_COUNT_RE = re.compile(r"\|\s*Tests collected\s*\|\s*(\d+)\s*\|")
 
+# Frontmatter date fields, in priority order. The narrative anchor template
+# uses `generated`; handoffs use `date`; some adopt-emitted docs use
+# `last_revised`. We accept any of the three so doctor doesn't need to know
+# which doc shape it's looking at.
+_FRONTMATTER_DATE_FIELDS = ("last_revised", "date", "generated")
+_ISO_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
 
 @dataclass(frozen=True)
 class HandoffInfo:
@@ -199,6 +206,61 @@ def first_task_line(text: str) -> str:
         if stripped and not stripped.startswith("```"):
             return stripped.lstrip("-").strip()
     return ""
+
+
+def parse_frontmatter_date(text: str) -> str | None:
+    """Return the first ISO date found in YAML frontmatter, or None.
+
+    Looks for ``last_revised``, ``date``, or ``generated`` (in that order)
+    inside the leading ``---`` ... ``---`` block. Returns the bare
+    ``YYYY-MM-DD`` portion so callers can compare dates lexicographically
+    without parsing time / timezone.
+    """
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    if end == -1:
+        return None
+    frontmatter = text[3:end]
+    for field in _FRONTMATTER_DATE_FIELDS:
+        pattern = re.compile(rf"^{field}\s*:\s*(.+)$", re.MULTILINE)
+        match = pattern.search(frontmatter)
+        if match is None:
+            continue
+        value = match.group(1).strip().strip('"').strip("'")
+        iso = _ISO_DATE_RE.match(value)
+        if iso is not None:
+            return iso.group(1)
+    return None
+
+
+def get_narrative_anchor_path(project: Path) -> Path | None:
+    """Return the path to the project's narrative anchor doc, or None.
+
+    Matches ``docs/*_WHAT_IT_IS.md``. Mirrors the discovery rule used by
+    orient and the project-state doctor check, so we don't drift on which
+    file counts as "the narrative anchor."
+    """
+    docs = project / "docs"
+    if not docs.is_dir():
+        return None
+    for path in sorted(docs.glob("*_WHAT_IT_IS.md")):
+        if path.is_file():
+            return path
+    return None
+
+
+def get_narrative_anchor_date(project: Path) -> str | None:
+    """Return the narrative anchor's frontmatter date, or None."""
+    path = get_narrative_anchor_path(project)
+    if path is None:
+        return None
+    return parse_frontmatter_date(read_text(path))
+
+
+def get_handoff_date(handoff: HandoffInfo) -> str | None:
+    """Return the frontmatter date of a handoff, or None."""
+    return parse_frontmatter_date(read_text(handoff.path))
 
 
 def _first_section_body(text: str, header_patterns: tuple[str, ...]) -> str:

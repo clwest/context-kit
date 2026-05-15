@@ -18,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from cli.doctor import (  # noqa: E402
     check_handoff_numbering,
+    check_narrative_anchor_freshness,
     check_start_handoff_conflict,
     check_test_count_drift,
     check_version_drift,
@@ -157,6 +158,68 @@ class TestHandoffContinuity(TruthStateTestCase):
         self.assertIn("Verify", result.detail)
         self.assertIn("found verbatim", result.detail)
         self.assertIn("intentionally supersedes", " ".join(result.fix or []))
+
+
+class TestNarrativeAnchorFreshness(TruthStateTestCase):
+    def _write_anchor(self, date_value: str | None) -> None:
+        docs = self.project / "docs"
+        frontmatter = (
+            f"---\ntitle: \"Demo\"\ngenerated: {date_value}\n---\n"
+            if date_value is not None
+            else "---\ntitle: \"Demo\"\n---\n"
+        )
+        (docs / "PROJECT_WHAT_IT_IS.md").write_text(
+            frontmatter + "\n# Demo\n", encoding="utf-8"
+        )
+
+    def _write_handoff_date(self, date_value: str | None) -> None:
+        handoff = self.project / "docs" / "handoffs" / "SESSION_001_BOOTSTRAP.md"
+        frontmatter = (
+            f"---\ntitle: \"Session 001\"\ndate: {date_value}\n---\n"
+            if date_value is not None
+            else ""
+        )
+        handoff.write_text(frontmatter + "# Session 001\n", encoding="utf-8")
+
+    def test_skipped_when_no_narrative_anchor(self):
+        result = check_narrative_anchor_freshness(self.project)
+        self.assertEqual(result.status, "skipped")
+        self.assertIn("WHAT_IT_IS", result.detail)
+
+    def test_skipped_when_anchor_has_no_date(self):
+        self._write_anchor(None)
+        self._write_handoff_date("2026-05-01")
+        result = check_narrative_anchor_freshness(self.project)
+        self.assertEqual(result.status, "skipped")
+        self.assertIn("frontmatter date", result.detail)
+
+    def test_skipped_when_handoff_has_no_date(self):
+        self._write_anchor("2026-05-01")
+        self._write_handoff_date(None)
+        result = check_narrative_anchor_freshness(self.project)
+        self.assertEqual(result.status, "skipped")
+        self.assertIn("frontmatter date", result.detail)
+
+    def test_ok_when_anchor_date_equals_handoff_date(self):
+        self._write_anchor("2026-05-01")
+        self._write_handoff_date("2026-05-01")
+        result = check_narrative_anchor_freshness(self.project)
+        self.assertEqual(result.status, "ok")
+
+    def test_ok_when_anchor_is_newer_than_handoff(self):
+        self._write_anchor("2026-06-01")
+        self._write_handoff_date("2026-05-01")
+        result = check_narrative_anchor_freshness(self.project)
+        self.assertEqual(result.status, "ok")
+
+    def test_warns_when_anchor_is_older_than_handoff(self):
+        self._write_anchor("2026-04-01")
+        self._write_handoff_date("2026-05-07")
+        result = check_narrative_anchor_freshness(self.project)
+        self.assertEqual(result.status, "warning")
+        self.assertIn("2026-04-01", result.detail)
+        self.assertIn("2026-05-07", result.detail)
+        self.assertIn("SESSION_001", result.detail)
 
 
 class TestOrientRuntimeState(TruthStateTestCase):
