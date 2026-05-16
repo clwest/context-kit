@@ -66,6 +66,12 @@ the guide docs already live at the repo root rather than under
   code. Fix anything load-bearing before claiming the next slice.
 - **Every session ends with a handoff** in `docs/handoffs/SESSION_NNN_*.md`
   and overwrites `00-START-NEXT-SESSION.md` with next session's priorities.
+  Pair the handoff with `python3 context_kit.py handoff write <N>` to
+  re-stamp every anchor doc's `last_revised:` frontmatter and audit
+  whether the handoff's `## Calibration moments` subsections are
+  present in `docs/TRUST_CALIBRATION.md`. Removes the per-slice
+  doc-staleness surface the SESSION_016 narrative-anchor freshness
+  check was a *detector* for.
 - **Runtime wins.** The inventory is currently hand-maintained — when it
   drifts from the code, fix the inventory rather than the other way round.
 - **Verification config wins for doc claims.** Use `.context-kit/verify.yaml`

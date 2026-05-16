@@ -914,6 +914,56 @@ def build_parser() -> argparse.ArgumentParser:
     from cli.refactor import add_subparser as _add_refactor_subparser
     _add_refactor_subparser(sub)
 
+    # handoff (group)
+    handoff = sub.add_parser(
+        "handoff",
+        help="Session-end housekeeping (re-stamp anchor docs + audit calibration)",
+        description=(
+            "Session-end housekeeping. Today only one subcommand: "
+            "`handoff write <N>` re-stamps every anchor doc's "
+            "`last_revised:` frontmatter to session N's date in one shot, "
+            "and reports whether the handoff's `## Calibration moments` "
+            "subsections are present in `docs/TRUST_CALIBRATION.md`."
+        ),
+    )
+    handoff_sub = handoff.add_subparsers(dest="handoff_action", required=True, metavar="ACTION")
+
+    handoff_write = handoff_sub.add_parser(
+        "write",
+        help="Re-stamp anchor doc frontmatter for session N and audit calibration",
+        description=(
+            "Re-stamp `last_revised:` (and bump `covers_sessions:` upper "
+            "bound when present) on every `docs/*_WHAT_IT_IS.md`, "
+            "`*_PIPELINE.md`, `*_BEHAVIOR_LAYER.md`, `*_TRANSLATION_LAYER.md`, "
+            "and `*_SESSION_START.md` to session N's date. Then parse "
+            "`docs/handoffs/SESSION_<N>_*.md` for a `## Calibration "
+            "moments worth carrying` or `## AI Notes` section and report "
+            "which subsections are already in `docs/TRUST_CALIBRATION.md` "
+            "and which are missing. Read-only on TRUST_CALIBRATION."
+        ),
+    )
+    handoff_write.add_argument(
+        "session",
+        help="Session number, e.g. 159",
+    )
+    handoff_write.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    handoff_write.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="Print what would change; don't write any files",
+    )
+    handoff_write.add_argument(
+        "--date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Override the date stamped into anchor docs (default: handoff frontmatter, else today UTC)",
+    )
+
     return parser
 
 
@@ -1031,6 +1081,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "start-codex":
         from cli.start_codex import run_start_codex
         return run_start_codex(args)
+
+    if args.command == "handoff":
+        if args.handoff_action == "write":
+            from cli.handoff import run_handoff_write
+            return run_handoff_write(args)
+        # argparse `required=True` on the subparser already prevents this,
+        # but stay defensive.
+        parser.parse_args(["handoff", "--help"])
+        return 2
 
     parser.print_help()
     return 1
