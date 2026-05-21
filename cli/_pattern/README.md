@@ -38,6 +38,17 @@ docs:
 - `SESSION_HANDOFF.template.md` — handoff template
 - `verify_doc_claims.skeleton.py` — drift verifier skeleton (Python)
 
+## Sub-patterns
+
+Larger composed patterns that build on the core. Optional — use when applicable.
+
+| Folder | What it produces | When to use |
+|---|---|---|
+| `spokesperson-corpus/` | A public-voice markdown corpus that grounds a spokesperson AI (Character OS, chat widget, support agent) in the project's source-of-truth — small embedding-friendly chunks with structured facts + pre-written voice prose + explicit off-limits | The project has a public-facing surface where an AI represents it to people who don't work on it |
+
+Each sub-pattern ships with its own `README.md`, `RECIPE.md`, `VOICE_GUIDE.md`, and
+templates. `cp -r` the folder into your project's `docs/` directory and follow the recipe.
+
 ## Where these came from
 
 Distilled from ~1,100 AI-assisted build sessions. Every rule in the
