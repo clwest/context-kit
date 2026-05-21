@@ -3,8 +3,8 @@
 > **Source of truth (read in this order):**
 > 1. `docs/CONTEXT_KIT_WHAT_IT_IS.md` — narrative anchor
 > 2. `docs/CONTEXT_KIT_INVENTORY.md` — runtime anchor (auto-generated; wins on counts)
-> 3. `docs/handoffs/SESSION_018_SPOKESPERSON_CORPUS_PATTERN.md` — current continuity handoff
-> 4. `docs/handoffs/SESSION_017_HANDOFF_WRITE_SUBCOMMAND.md` — prior session, handoff-write subcommand
+> 3. `docs/handoffs/SESSION_019_FLEET_NETWORK_PATTERN.md` — current continuity handoff
+> 4. `docs/handoffs/SESSION_018_SPOKESPERSON_CORPUS_PATTERN.md` — prior session, sibling sub-pattern bundle
 >
 > When narrative and runtime disagree, runtime wins.
 
@@ -12,22 +12,22 @@
 
 - **Package version:** `0.15.0` in `pyproject.toml` (unchanged; post-v0.15.0 work is unreleased).
 - **Latest tag:** `v0.15.0`.
-- **Branch:** `main` (SESSIONS 016–018 merged in from `feat/spokesperson-corpus-pattern`).
+- **Branch:** `main`. SESSION_019 commit pending push (or already pushed depending on operator).
 - **Tests:** **1076 / 1076 passing** via `python3 -m unittest discover -s tests -t .`.
-- **Inventory:** fresh (regenerated at the end of SESSION_018 — 25 CLI subcommands, 28 cli modules, 17 handoffs, 1076 tests).
-- **Doctor:** 0 blocking, 3 carried warnings — PIPELINE.md missing, BEHAVIOR_LAYER.md missing, SESSION_005 numbering gap. (Narrative-anchor freshness + test-count drift + start-vs-handoff drift cleared in SESSION_018.)
-- **Latest handoff:** `SESSION_018` (`docs/handoffs/SESSION_018_SPOKESPERSON_CORPUS_PATTERN.md`).
+- **Inventory:** fresh — regenerated at the end of SESSION_019 to absorb the four new fleet-network bundle files.
+- **Doctor:** 0 blocking, 3 carried warnings — PIPELINE.md missing, BEHAVIOR_LAYER.md missing, SESSION_005 numbering gap. (Test count, inventory freshness, narrative anchor freshness, start-vs-handoff all cleared.)
+- **Latest handoff:** `SESSION_019` (`docs/handoffs/SESSION_019_FLEET_NETWORK_PATTERN.md`).
 
 ## Next Task — in strict order
 
 ### FIRST THING: decide on PIPELINE / BEHAVIOR_LAYER docs for context-kit itself
 
-Both warnings have been pending across SESSIONS 015 → 018. Either:
+Pending across SESSIONS 015 → 019 — five sessions of deliberate defer is itself a drift signal. Either:
 
-- **Write them.** `docs/CONTEXT_KIT_PIPELINE.md` (how `orient`, `doctor`, `handoff write`, `inventory` actually flow from invocation → output) and `docs/CONTEXT_KIT_BEHAVIOR_LAYER.md` (voice + UI source-of-truth contract for `chat` and `inspect`). Templates ship in `cli/_pattern/templates/`.
-- **Document the deliberate skip.** Add a short paragraph to `CLAUDE.md` or to the narrative anchor explaining why these two doc types don't apply to context-kit itself (no LLM pipeline runs server-side here; no persona surface), then teach `doctor` to suppress them when the project opts out.
+- **Write them.** `docs/CONTEXT_KIT_PIPELINE.md` (how `orient`, `doctor`, `handoff write`, `inventory`, the bundled sub-patterns flow from invocation → output) and `docs/CONTEXT_KIT_BEHAVIOR_LAYER.md` (voice + UI source-of-truth contract for `chat` and `inspect`). Templates ship in `cli/_pattern/templates/`.
+- **Document the deliberate skip.** Add a short paragraph to `CLAUDE.md` or the narrative anchor explaining why these two doc types don't apply to context-kit itself (no LLM pipeline runs server-side; no persona surface), then teach `doctor` to suppress them when the project opts out.
 
-Either path closes two of the three remaining doctor warnings. Pick one this session — repeatedly deferring this warning is itself a drift signal.
+The cost of repeatedly carrying these is now visible — every session's handoff has to acknowledge them. Pick one this session. The decision matters more than the choice.
 
 ### Then: backfill SESSION_005 numbering gap
 
@@ -37,7 +37,7 @@ Cheapest clear is a placeholder:
 $EDITOR docs/handoffs/SESSION_005_INTENTIONAL_GAP.md
 ```
 
-One paragraph explaining the gap (cross-reference CHANGELOG / git log around that window). Or add a `Numbering gaps:` line in the narrative anchor calling out `SESSION_005` and teach `check_handoff_numbering` to suppress it.
+One paragraph explaining the gap (cross-reference CHANGELOG / git log around 2026-02 or whenever that window was). Or add a `Numbering gaps:` line in the narrative anchor and teach `check_handoff_numbering` to suppress it.
 
 ### Then: INVENTORY git-SHA drift check (carried from SESSION_016)
 
@@ -48,19 +48,26 @@ Small change:
 
 Closes the second half of SESSION_016's rec 1.
 
-### Then: stress-test the spokesperson-corpus pattern on a second project
+### Then: stress-test the fleet-network pattern on a second instance
 
-The pattern bundled in SESSION_018 has only one worked instance (`unified-donkey-betz`). The CLI proposal at `docs/proposals/spokesperson-corpus-subcommand.md` recommends waiting for a second instance before locking the `context-kit spokesperson` API surface. Suggested next target: pick any sibling project with a public-facing surface and run the manual `cp -r` recipe, then capture which template shapes felt right vs forced.
+The CLI proposal at `docs/proposals/fleet-network-subcommand.md` explicitly gates implementation on a second worked instance (different operator/OS/stack mix). Suggested target: a sibling project on a different laptop, or a setup that doesn't include Docker Desktop (the multi-network caveat is Docker-Desktop-specific and may not generalize).
 
-## Carried context
+### Then: stress-test the spokesperson-corpus pattern on a second instance
 
-The drift-prevention thread is now fully closed:
+Same validation gate from SESSION_018. Currently only one worked instance (`unified-donkey-betz`). Run the manual `cp -r` recipe against any sibling project with a public-facing AI surface and capture which template shapes felt right vs forced.
 
-| Rec | What | Status |
+## Carried context — sub-pattern bundling workflow
+
+SESSIONS 018 + 019 establish a deliberate workflow for new
+sub-patterns:
+
+| Step | What happens | Example |
 |---|---|---|
-| 1a | Narrative-anchor freshness doctor check | Done (SESSION 016) |
-| 1b | INVENTORY git-SHA drift check | Carried above |
-| 2  | `handoff write <N>` subcommand re-stamps anchors | Done (SESSION 017) |
-| 3  | Promote calibration entries at handoff-write time | Done (SESSION 017, detect-and-report) |
+| 1 | Pattern emerges in a sibling project as a worked instance | u-d-b session 158 (spokesperson), u-d-b session 1117 (fleet-network) |
+| 2 | Sibling distills it into `docs/docs-pattern/<name>/` | u-d-b/docs/docs-pattern/spokesperson-corpus/, fleet-network/ |
+| 3 | context-kit lifts it into `cli/_pattern/<name>/` so `init` ships it | SESSION_018 (spokesperson), SESSION_019 (fleet-network) |
+| 4 | Proposal doc captures the future CLI surface | docs/proposals/spokesperson-corpus-subcommand.md, fleet-network-subcommand.md |
+| 5 | Wait for a second worked instance | (gate, not yet crossed for either) |
+| 6 | Ship the CLI subcommand | (not yet done for either) |
 
-SESSION_018's contribution was content (`cli/_pattern/spokesperson-corpus/`) plus housekeeping, not new infrastructure. The bundled sub-pattern shape is new and worth watching as more sub-patterns emerge.
+This shape doesn't need a guide doc yet — two data points isn't a pattern — but worth watching as a third sub-pattern emerges.

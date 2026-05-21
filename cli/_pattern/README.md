@@ -45,6 +45,7 @@ Larger composed patterns that build on the core. Optional — use when applicabl
 | Folder | What it produces | When to use |
 |---|---|---|
 | `spokesperson-corpus/` | A public-voice markdown corpus that grounds a spokesperson AI (Character OS, chat widget, support agent) in the project's source-of-truth — small embedding-friendly chunks with structured facts + pre-written voice prose + explicit off-limits | The project has a public-facing surface where an AI represents it to people who don't work on it |
+| `fleet-network/` | A discoverable `infra/` directory at the laptop's app-fleet root with a docker-compose anchor declaring an external `fleet-net` network + a manifest README codifying the host-port convention and the Docker Desktop multi-network caveat | Two or more apps on the same laptop need to talk to each other locally, at least one currently hardcodes `http://localhost:<port>`, and you want stable cross-app hostnames without containerising the apps themselves |
 
 Each sub-pattern ships with its own `README.md`, `RECIPE.md`, `VOICE_GUIDE.md`, and
 templates. `cp -r` the folder into your project's `docs/` directory and follow the recipe.

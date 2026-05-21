@@ -1,0 +1,27 @@
+# Fleet network anchor — declares fleet-net as an external network owned
+# by the host. Each app's own docker-compose stays in its own repo and
+# attaches services to this network for cross-app reachability.
+#
+# Create / rebuild the network with:
+#   docker network create fleet-net
+#
+# Attach an existing container without recreating it:
+#   docker network connect fleet-net <container_name>
+#
+# This file itself defines no services — it exists to:
+#   1. Provide a stable network name (`fleet-net`) other compose files
+#      reference via `networks: { fleet-net: { external: true } }`.
+#   2. Make `docker compose -f <this-file> ps` useful as a fleet-wide
+#      overview once apps start declaring it.
+#   3. Serve as a discoverable anchor — anyone running `ls` in the
+#      fleet root sees there is one.
+#
+# See README.md in this directory for the broader fleet networking
+# convention.
+
+name: fleet
+
+networks:
+  fleet-net:
+    external: true
+    name: fleet-net
