@@ -509,7 +509,7 @@ def _print_calibration_summary(entries: list[CalibrationEntry]) -> None:
                 print(f"               (matched TRUST_CALIBRATION: {entry.matched_against})")
         else:
             print(f"  ⚠ MISSING    {entry.heading}")
-            print(f"               (appears in handoff; no same-date TRUST_CALIBRATION entry)")
+            print("               (appears in handoff; no same-date TRUST_CALIBRATION entry)")
     missing = sum(1 for e in entries if not e.matched)
     if missing:
         print(

@@ -39,8 +39,13 @@ Verbose output:
 python3 -m unittest discover -s tests -t . -v
 ```
 
-All 49 tests should pass in under a second. CI runs the same command across
-Python 3.9, 3.10, 3.11, and 3.12.
+All tests should pass in a few seconds on a modern laptop. CI runs the
+same command across Python 3.9, 3.10, 3.11, and 3.12 on Linux, plus a
+macOS + Windows job on the latest supported Python.
+
+If you want the exact test count and wall time, run the command above —
+context-kit's own anti-drift ethos is that hand-maintained counts rot,
+so this file deliberately doesn't pin one.
 
 ---
 

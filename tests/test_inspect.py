@@ -362,10 +362,13 @@ class TestContextKitCliCapabilities(unittest.TestCase):
         self.assertIn("capability: inspect", out)
         self.assertIn("capability: capabilities", out)
         self.assertIn("capability: chat", out)
-        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"orient\":")
-        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"inspect\":")
-        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"capabilities\":")
-        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"chat\":")
+        # Dispatch-table detection: each entry in context_kit.py's ``_COMMANDS``
+        # dict maps a command name to a (module, function) tuple. See
+        # ``_group_cli_capabilities`` in cli/inspect.py.
+        self.assertRegex(out, r"context_kit\.py:\d+ \"orient\":\s+\(\"cli\.")
+        self.assertRegex(out, r"context_kit\.py:\d+ \"inspect\":\s+\(\"cli\.")
+        self.assertRegex(out, r"context_kit\.py:\d+ \"capabilities\":\s+\(\"cli\.")
+        self.assertRegex(out, r"context_kit\.py:\d+ \"chat\":\s+\(\"cli\.")
         self.assertRegex(out, r"cli/chat\.py:\d+ def run_chat\(args: argparse\.Namespace\) -> int:")
         self.assertRegex(out, r"cli/inspect\.py:\d+ def run_inspect\(args: argparse\.Namespace\) -> int:")
         self.assertRegex(out, r"cli/capabilities\.py:\d+ def run_capabilities\(args: argparse\.Namespace\) -> int:")

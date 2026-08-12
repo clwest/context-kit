@@ -344,7 +344,7 @@ def _docs_tail(path: Path) -> list[str] | None:
 
 
 def _is_config_deployment(path: Path) -> bool:
-    lowered = path.as_posix().lower()
+    _lowered = path.as_posix().lower()
     name = path.name.lower()
     parts = set(path.parts)
     if name in {"dockerfile", "procfile"}:

@@ -51,8 +51,6 @@ from cli.adopt import (  # noqa: E402
     plan_files,
     render_adopt_html,
     run_adopt,
-    scan_unclassified_subdirs,
-    scan_workspace_children,
 )
 
 
@@ -772,7 +770,7 @@ class TestAdoptHtmlReport(unittest.TestCase):
     def test_rerun_overwrites_default_path_in_place(self):
         run_adopt(_ns_html(self.repo, html=True))
         out = _default_html_path(self.repo)
-        first_mtime = out.stat().st_mtime_ns
+        _first_mtime = out.stat().st_mtime_ns
         # Mtime resolution can be coarse — sleep briefly so the second
         # write definitely produces a newer mtime, OR just check that
         # the file is still the only contextkit-adopt-report-* in the
@@ -4727,7 +4725,6 @@ class TestEcosystemCoverage(unittest.TestCase):
         # .tsx must NOT classify as "Next.js / React web app".
         # The fix would have left react-native broken without this.
         from cli.adopt import _classify_workspace_child
-        from cli.adopt import WorkspaceChild
         c = WorkspaceChild(
             name="packages/some-rn-pkg",
             manifest_files=["metro.config.js", "package.json"],
@@ -4820,9 +4817,9 @@ class TestAgentLaunchPrompt(unittest.TestCase):
         prelim = analyze_failures(self.repo, stack, [])
         reality = derive_stack_reality(stack, prelim)
         ptype = derive_project_type(stack, reality, prelim)
-        prelim_plan = plan_files(self.repo, self.inputs and self.inputs,
-                                 stack, reality=reality,
-                                 project_type=ptype) if False else None
+        _prelim_plan = plan_files(self.repo, self.inputs and self.inputs,
+                                  stack, reality=reality,
+                                  project_type=ptype) if False else None
         actions = derive_suggested_actions(stack, reality, ptype, prelim)
         summary = derive_adopt_summary(stack, reality, ptype, actions)
         prompt = derive_agent_launch_prompt(stack, reality, ptype, summary)
@@ -4888,7 +4885,7 @@ class TestAgentLaunchPrompt(unittest.TestCase):
         (self.repo / "go.mod").write_text("module foo\n", encoding="utf-8")
         for d in ("cmd", "pkg"):
             (self.repo / d).mkdir()
-            (self.repo / d / f"main.go").write_text("// go\n", encoding="utf-8")
+            (self.repo / d / "main.go").write_text("// go\n", encoding="utf-8")
         _, _, _, _, prompt = self._derive_full_chain()
         text = prompt.prompt_text
         self.assertIn("go.mod", text)

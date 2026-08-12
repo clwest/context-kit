@@ -21,7 +21,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -29,7 +29,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from cli.bootstrap import run_init  # noqa: E402
 from cli.doctor import (  # noqa: E402
-    KNOWN_STABLE_NODE_MAJORS,
     CheckResult,
     check_expo,
     check_file_watcher,
@@ -453,7 +452,7 @@ class TestExitCode(unittest.TestCase):
         self.assertEqual(rc, 0)
 
     def test_exit_one_when_blocking_present(self):
-        project = _scaffold(self.tmpdir)
+        _project = _scaffold(self.tmpdir)
         # Inject a blocking result directly via the json path's check list,
         # but easier: simulate by making the python_version check block.
         # Use the check function directly.

@@ -127,7 +127,7 @@ def _render_short(project: Path) -> str:
     report (with anchor previews) would burn context for nothing.
     """
     lines: list[str] = []
-    lines.append(f"# context-kit orient (short)")
+    lines.append("# context-kit orient (short)")
     lines.append(f"Project: {project.name}")
     lines.append(f"Path:    {project}")
     lines.append("")
@@ -141,7 +141,7 @@ def _render_short(project: Path) -> str:
     session_start = _find_session_start_doc(project)
     if session_start is not None:
         rel = session_start.relative_to(project)
-        lines.append(f"## SESSION START INDEX")
+        lines.append("## SESSION START INDEX")
         lines.append(f"  {rel}    (open and read first)")
         lines.append("")
 

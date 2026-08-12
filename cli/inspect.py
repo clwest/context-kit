@@ -24,7 +24,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1961,11 +1960,11 @@ def _render_legacy_text(r: InspectionResult) -> str:
         lines.append(f"  Session handoffs:           {di.session_handoff_count:,}")
         if di.anchor_docs:
             lines.append(
-                f"  Anchor docs:                {', '.join(p.split('/')[-1] for p in di.anchor_docs)}"
+                f"  Anchor docs:                {', '.join(Path(p).name for p in di.anchor_docs)}"
             )
         if di.audit_folders:
             lines.append(
-                f"  Audit/cleanup folders:      {', '.join(p.split('/')[-1] + '/' for p in di.audit_folders)}"
+                f"  Audit/cleanup folders:      {', '.join(Path(p).name + '/' for p in di.audit_folders)}"
             )
         if di.process_docs_present:
             lines.append("  Process docs:               docs/docs-pattern/ (or similar)")
@@ -2244,6 +2243,14 @@ def _format_structured_implementation_facts(facts: list[dict[str, list[str]]]) -
     return lines[:-1] if lines and not lines[-1] else lines
 
 
+_CONTEXT_KIT_DISPATCH_PATTERNS = (
+    # Legacy if/elif dispatch: ``if args.command == "foo":``
+    re.compile(r'if\s+args\.command\s*==\s*"([^"]+)"'),
+    # Dispatch-table entry: ``    "foo":            ("cli.foo", "run_foo"),``
+    re.compile(r'^\s*"([a-z][a-z0-9-]*)"\s*:\s*\(\s*"cli\.'),
+)
+
+
 def _group_cli_capabilities(project: Path, files: list[Path]) -> list[tuple[str, list[str]]]:
     evidence_by_capability: dict[str, list[str]] = {}
     for path in files:
@@ -2256,10 +2263,14 @@ def _group_cli_capabilities(project: Path, files: list[Path]) -> list[tuple[str,
             except OSError:
                 continue
             for i, line in enumerate(text.splitlines(), 1):
-                match = re.search(r'if\s+args\.command\s*==\s*"([^"]+)"', line)
-                if not match:
+                capability = None
+                for pattern in _CONTEXT_KIT_DISPATCH_PATTERNS:
+                    match = pattern.search(line)
+                    if match:
+                        capability = match.group(1)
+                        break
+                if capability is None:
                     continue
-                capability = match.group(1)
                 evidence_by_capability.setdefault(capability, []).append(f"{rel}:{i} {line.strip()}")
             continue
         if not rel.startswith("cli/"):

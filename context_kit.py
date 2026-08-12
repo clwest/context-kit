@@ -797,7 +797,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # translation-init
-    translation_init = sub.add_parser(
+    # translation-init takes no extra flags; parser registration via
+    # sub.add_parser is the only side effect we need.
+    sub.add_parser(
         "translation-init",
         help="Print a structured prompt for an AI to populate the project's TRANSLATION_LAYER doc",
         description=(
@@ -812,7 +814,6 @@ def build_parser() -> argparse.ArgumentParser:
             "layer doc."
         ),
     )
-    del translation_init  # parser registration is the side effect
 
     # codex
     codex = sub.add_parser(
@@ -967,129 +968,100 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Subcommand → (module_path, function_name).
+#
+# All entries are lazy-imported at dispatch time. This matters because
+# generated projects ship only the subset of `cli/` listed in
+# `cli.bootstrap.RUNTIME_COPY`; importing every subcommand at module
+# load would break `context-kit orient` inside a generated project.
+#
+# Two commands are NOT in this table because they need special handling:
+#   * `init` — its module may not exist in a generated project; we
+#     translate the ImportError into a helpful error message instead
+#     of a stack trace. See `_run_init`.
+#   * `handoff` — has a sub-action layer (`handoff write`) that argparse
+#     already enforces. See `_run_handoff`.
+_COMMANDS: dict[str, tuple[str, str]] = {
+    "start":            ("cli.server",           "run_start"),
+    "orient":           ("cli.orient",           "run_orient"),
+    "chat":             ("cli.chat",             "run_chat"),
+    "hotpath":          ("cli.hotpath",          "run_hotpath"),
+    "inventory":        ("cli.inventory",        "run_inventory"),
+    "seed":             ("cli.seed",             "run_seed"),
+    "doctor":           ("cli.doctor",           "run_doctor"),
+    "recommend-stack":  ("cli.recommend_stack",  "run_recommend_stack"),
+    "adopt":            ("cli.adopt",            "run_adopt"),
+    "audit":            ("cli.audit",            "run_audit"),
+    "audit-response":   ("cli.audit_response",   "run_audit_response"),
+    "fix":              ("cli.fix",              "run_fix"),
+    "exec":             ("cli.exec",             "run_exec"),
+    "inspect":          ("cli.inspect",          "run_inspect"),
+    "capabilities":     ("cli.capabilities",     "run_capabilities"),
+    "coverage":         ("cli.coverage",         "run_coverage"),
+    "behavior":         ("cli.behavior",         "run_behavior"),
+    "connections":      ("cli.connections",      "run_connections"),
+    "verify":           ("cli.verify",           "run_verify"),
+    "codex":            ("cli.start_codex",      "run_codex"),
+    "refactor":         ("cli.refactor",         "run_refactor"),
+    "translation-init": ("cli.translation_init", "run_translation_init"),
+    "start-codex":      ("cli.start_codex",      "run_start_codex"),
+}
+
+
+def _load_and_run(module_path: str, func_name: str, args: argparse.Namespace) -> int:
+    """Import a subcommand module lazily and invoke its runner."""
+    import importlib
+
+    module = importlib.import_module(module_path)
+    return getattr(module, func_name)(args)
+
+
+def _run_init(args: argparse.Namespace) -> int:
+    """`init` may not be shipped inside generated projects; translate that
+    ImportError into a helpful message rather than a stack trace."""
+    try:
+        from cli.bootstrap import run_init
+    except ImportError:
+        sys.stderr.write(
+            "error: `init` is not available in this context.\n"
+            "You appear to be running context-kit from inside a generated "
+            "project, which only ships the runtime subcommands. To create "
+            "a new project, install the full package (`pip install contextkit-ai`) "
+            "and run `context-kit init` from anywhere.\n"
+        )
+        return 2
+    return run_init(args)
+
+
+def _run_handoff(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """`handoff` has a sub-action layer; only `write` is implemented today."""
+    if getattr(args, "handoff_action", None) == "write":
+        from cli.handoff import run_handoff_write
+        return run_handoff_write(args)
+    # argparse `required=True` on the subparser already prevents this,
+    # but stay defensive.
+    parser.parse_args(["handoff", "--help"])
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "init":
-        # Imported lazily so generated projects — which ship only the
-        # subset of cli/ in RUNTIME_COPY — don't crash on the other
-        # subcommands. If bootstrap is unavailable, the user is most
-        # likely running this from inside a generated project; tell
-        # them where to go.
-        try:
-            from cli.bootstrap import run_init
-        except ImportError:
-            sys.stderr.write(
-                "error: `init` is not available in this context.\n"
-                "You appear to be running context-kit from inside a generated "
-                "project, which only ships the runtime subcommands. To create "
-                "a new project, install the full package (`pip install contextkit-ai`) "
-                "and run `context-kit init` from anywhere.\n"
-            )
-            return 2
-        return run_init(args)
+    command = getattr(args, "command", None)
+    if command is None:
+        parser.print_help()
+        return 1
 
-    if args.command == "start":
-        from cli.server import run_start
-        return run_start(args)
+    if command == "init":
+        return _run_init(args)
 
-    if args.command == "orient":
-        from cli.orient import run_orient
-        return run_orient(args)
+    if command == "handoff":
+        return _run_handoff(args, parser)
 
-    if args.command == "chat":
-        from cli.chat import run_chat
-        return run_chat(args)
-
-    if args.command == "hotpath":
-        from cli.hotpath import run_hotpath
-        return run_hotpath(args)
-
-    if args.command == "inventory":
-        from cli.inventory import run_inventory
-        return run_inventory(args)
-
-    if args.command == "seed":
-        from cli.seed import run_seed
-        return run_seed(args)
-
-    if args.command == "doctor":
-        from cli.doctor import run_doctor
-        return run_doctor(args)
-
-    if args.command == "recommend-stack":
-        from cli.recommend_stack import run_recommend_stack
-        return run_recommend_stack(args)
-
-    if args.command == "adopt":
-        from cli.adopt import run_adopt
-        return run_adopt(args)
-
-    if args.command == "audit":
-        from cli.audit import run_audit
-        return run_audit(args)
-
-    if args.command == "audit-response":
-        from cli.audit_response import run_audit_response
-        return run_audit_response(args)
-
-    if args.command == "fix":
-        from cli.fix import run_fix
-        return run_fix(args)
-
-    if args.command == "exec":
-        from cli.exec import run_exec
-        return run_exec(args)
-
-    if args.command == "inspect":
-        from cli.inspect import run_inspect
-        return run_inspect(args)
-
-    if args.command == "capabilities":
-        from cli.capabilities import run_capabilities
-        return run_capabilities(args)
-
-    if args.command == "coverage":
-        from cli.coverage import run_coverage
-        return run_coverage(args)
-
-    if args.command == "behavior":
-        from cli.behavior import run_behavior
-        return run_behavior(args)
-
-    if args.command == "connections":
-        from cli.connections import run_connections
-        return run_connections(args)
-
-    if args.command == "verify":
-        from cli.verify import run_verify
-        return run_verify(args)
-
-    if args.command == "codex":
-        from cli.start_codex import run_codex
-        return run_codex(args)
-
-    if args.command == "refactor":
-        from cli.refactor import run_refactor
-        return run_refactor(args)
-
-    if args.command == "translation-init":
-        from cli.translation_init import run_translation_init
-        return run_translation_init(args)
-
-    if args.command == "start-codex":
-        from cli.start_codex import run_start_codex
-        return run_start_codex(args)
-
-    if args.command == "handoff":
-        if args.handoff_action == "write":
-            from cli.handoff import run_handoff_write
-            return run_handoff_write(args)
-        # argparse `required=True` on the subparser already prevents this,
-        # but stay defensive.
-        parser.parse_args(["handoff", "--help"])
-        return 2
+    if command in _COMMANDS:
+        module_path, func_name = _COMMANDS[command]
+        return _load_and_run(module_path, func_name, args)
 
     parser.print_help()
     return 1

@@ -139,8 +139,8 @@ def run_init(args: argparse.Namespace) -> int:
         if written:
             print("\nNext:")
             print(f"  cd {target}")
-            print(f"  python3 context_kit.py start    # onboarding server")
-            print(f"  open 00-START-NEXT-SESSION.md   # or read it directly")
+            print("  python3 context_kit.py start    # onboarding server")
+            print("  open 00-START-NEXT-SESSION.md   # or read it directly")
         else:
             print("\nNo files written (already scaffolded). Re-run with --force to overwrite.")
 

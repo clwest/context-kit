@@ -188,7 +188,7 @@ class FrontmatterHelpersTest(unittest.TestCase):
         self.assertIsNone(prev)
         # Inserted right after generated:
         lines = new.splitlines()
-        gen_idx = next(i for i, l in enumerate(lines) if l.startswith("generated:"))
+        gen_idx = next(i for i, line in enumerate(lines) if line.startswith("generated:"))
         self.assertTrue(lines[gen_idx + 1].startswith("last_revised: 2026-05-15"))
 
     def test_set_or_insert_appends_when_anchor_missing(self):
@@ -286,7 +286,7 @@ class RestampSemanticsTest(unittest.TestCase):
         )
         text = (self.project / "docs" / "DEMO_PIPELINE.md").read_text(encoding="utf-8")
         lines = text.splitlines()
-        gen_idx = next(i for i, l in enumerate(lines) if l.startswith("generated:"))
+        gen_idx = next(i for i, line in enumerate(lines) if line.startswith("generated:"))
         self.assertTrue(lines[gen_idx + 1].startswith("last_revised: 2026-05-15"))
 
     def test_skips_no_frontmatter(self):

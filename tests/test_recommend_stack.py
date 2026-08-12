@@ -25,9 +25,7 @@ from cli.bootstrap import run_init  # noqa: E402
 from cli.recommend_stack import (  # noqa: E402
     FALLBACK_RECOMMENDATION,
     RULES,
-    Recommendation,
     Rule,
-    format_human,
     recommend,
     run_recommend_stack,
 )

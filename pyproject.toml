@@ -47,6 +47,13 @@ classifiers = [
 # Zero runtime dependencies by design.
 dependencies = []
 
+# Development-time tools only. The CLI itself never imports these.
+# Install with: ``pip install -e ".[dev]"``.
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.5",
+]
+
 [project.scripts]
 context-kit = "context_kit:main"
 
@@ -83,3 +90,38 @@ cli = [
     "_skills/context-kit/*",
     "_static/*",
 ]
+
+# ---------------------------------------------------------------------------
+# Ruff — deliberately-conservative quality gate.
+#
+# Selected rule groups:
+#   E    pycodestyle errors        (real style issues, not line-length)
+#   F    pyflakes                  (undefined names, unused imports, F-strings)
+#   W    pycodestyle warnings      (trailing whitespace, invalid escapes, etc.)
+#
+# Deliberately NOT selected:
+#   E501 line-too-long             — 1400+ historical hits; enforcing it now
+#                                    would trigger a giant cosmetic rewrite
+#                                    for no correctness benefit.
+#   I    unsorted-imports          — pre-existing import ordering; not worth
+#                                    the churn today, revisit as a P2 item.
+#   UP   pyupgrade                 — many would rewrite ``Optional[X]`` to
+#                                    ``X | None`` which we can't do while
+#                                    supporting Python 3.9.
+#   B    bug-bear                  — mostly opinionated; consider later.
+#
+# Run:
+#   ruff check .           (verify)
+#   ruff check --fix .     (auto-fix the safe ones)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test-only fixtures may re-import symbols under different names.
+"tests/*" = ["F401"]

@@ -575,7 +575,7 @@ def _verify_celery_beat(project: Path, files: list[Path], *, include_archive: bo
     historical_doc_sources = _scope_values(docs_sources_by_scope, _HISTORICAL_SCOPES)
     split_runtime_supported = bool(schedule_sources and (db_store_sources or bridge_sources or routing_sources))
     split_runtime_supported = split_runtime_supported and bool(db_store_sources or bridge_sources)
-    routing_supported = bool(routing_sources)
+    _routing_supported = bool(routing_sources)
 
     if doc_exclusive_settings_claim or doc_exclusive_celery_claim:
         if owner_sources:
@@ -1097,7 +1097,7 @@ def _scope_for_path(path: Path) -> str:
     if _is_doc_file(path):
         lowered_parts = [part.lower() for part in path.parts]
         lowered_path = path.as_posix().lower()
-        name = path.name.lower()
+        _name = path.name.lower()
         if any(
             marker in lowered_parts
             for marker in {"archive", "archives", "historical", "history", "legacy", "old", "handoff", "handoffs", "session", "sessions", "case-studies", "case_studies"}

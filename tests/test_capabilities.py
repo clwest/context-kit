@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import os
 import sys
 import tempfile
 import unittest
@@ -213,8 +212,11 @@ class TestCapabilitiesCommand(unittest.TestCase):
         self.assertIn("### inspect", out)
         self.assertIn("### capabilities", out)
         self.assertIn("### chat", out)
-        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"orient\":")
-        self.assertRegex(out, r"context_kit\.py:\d+ if args\.command == \"inspect\":")
+        # Dispatch-table detection: each entry in context_kit.py's ``_COMMANDS``
+        # dict maps a command name to a (module, function) tuple. See
+        # ``_group_cli_capabilities`` in cli/inspect.py.
+        self.assertRegex(out, r"context_kit\.py:\d+ \"orient\":\s+\(\"cli\.")
+        self.assertRegex(out, r"context_kit\.py:\d+ \"inspect\":\s+\(\"cli\.")
         self.assertRegex(out, r"cli/chat\.py:\d+ def run_chat\(args: argparse\.Namespace\) -> int:")
         self.assertIn("### connections", out)
         self.assertIn("command_name: `connections`", out)

@@ -1269,7 +1269,7 @@ def derive_stack_reality(stack: StackProfile,
 
     if stack.parts:
         names = sorted(stack.parts.keys())
-        labels = sorted({_lang_label(l) for l in stack.parts.values()})
+        labels = sorted({_lang_label(lang) for lang in stack.parts.values()})
         why = (
             f"Recognized subdirs ({', '.join(names)}) carry distinct "
             f"stacks ({', '.join(labels)})."
@@ -1454,8 +1454,8 @@ def derive_project_type(stack: StackProfile,
             bits.append(f"{heavy_sol_dir.name}/ contains {cnt} .sol files")
         if has_solidity:
             sol_kids = [
-                name for name, l in _workspace_stack_pairs(stack)
-                if l == "Solidity / EVM smart contracts"
+                name for name, lang in _workspace_stack_pairs(stack)
+                if lang == "Solidity / EVM smart contracts"
             ]
             if sol_kids:
                 bits.append(
@@ -1501,9 +1501,9 @@ def derive_project_type(stack: StackProfile,
     # ---- Rule 4: Mobile app suite (Flutter or React Native, no web/contract) ----
     if (has_flutter or has_react_native) and not has_solidity and not has_nextjs:
         mobile_kids = [
-            name for name, l in _workspace_stack_pairs(stack)
-            if l in ("Flutter / Dart app",
-                     "React Native / mobile framework")
+            name for name, lang in _workspace_stack_pairs(stack)
+            if lang in ("Flutter / Dart app",
+                        "React Native / mobile framework")
         ]
         if mobile_kids:
             sample = ", ".join(mobile_kids[:3])
@@ -1542,8 +1542,8 @@ def derive_project_type(stack: StackProfile,
     )
     if rust_is_primary and not has_smart_contract:
         rust_kids = [
-            name for name, l in _workspace_stack_pairs(stack)
-            if l == "Rust crate"
+            name for name, lang in _workspace_stack_pairs(stack)
+            if lang == "Rust crate"
         ]
         if rust_kids:
             sample = ", ".join(rust_kids[:3])
@@ -1656,7 +1656,7 @@ def derive_suggested_actions(
     out: list[SuggestedAction] = []
 
     def children_with_label(label: str) -> list[str]:
-        return [name for name, l in pairs if l == label]
+        return [name for name, lang in pairs if lang == label]
 
     # Web3 dApp — name the Solidity vs frontend children.
     if project_type.label == "Web3 dApp":
@@ -1928,7 +1928,7 @@ def _agent_first_action_for(project_type: ProjectType,
     pairs = summary.workspace_pairs
 
     def kids_with(target_label: str) -> list[str]:
-        return [n for n, l in pairs if l == target_label]
+        return [n for n, lang in pairs if lang == target_label]
 
     if label == "Web3 dApp":
         sol = kids_with("Solidity / EVM smart contracts")
@@ -1967,14 +1967,14 @@ def _agent_first_action_for(project_type: ProjectType,
 
     if label == "Full-stack web app":
         return (
-            f"Inspect the backend/frontend boundary first.\n"
-            f"- Read the backend code to understand the API "
-            f"surface, models, and ownership.\n"
-            f"- Read the frontend workspace to see how it "
-            f"consumes the backend.\n"
-            f"- Confirm the local-dev startup order (which side "
-            f"starts first, on what ports) and the deployment "
-            f"boundary."
+            "Inspect the backend/frontend boundary first.\n"
+            "- Read the backend code to understand the API "
+            "surface, models, and ownership.\n"
+            "- Read the frontend workspace to see how it "
+            "consumes the backend.\n"
+            "- Confirm the local-dev startup order (which side "
+            "starts first, on what ports) and the deployment "
+            "boundary."
         )
 
     if label == "Mobile app suite":
@@ -2030,38 +2030,38 @@ def _agent_first_action_for(project_type: ProjectType,
 
     if label == "Go project":
         return (
-            f"Inspect go.mod, cmd/, and pkg/ first.\n"
-            f"- Read go.mod to understand the module path and "
-            f"external dependencies.\n"
-            f"- Read cmd/ to find the binary entrypoints (each "
-            f"subdirectory is typically one binary).\n"
-            f"- Read pkg/ (or internal/) to understand the "
-            f"package layout before touching anything."
+            "Inspect go.mod, cmd/, and pkg/ first.\n"
+            "- Read go.mod to understand the module path and "
+            "external dependencies.\n"
+            "- Read cmd/ to find the binary entrypoints (each "
+            "subdirectory is typically one binary).\n"
+            "- Read pkg/ (or internal/) to understand the "
+            "package layout before touching anything."
         )
 
     if label == "Unclear project type":
         return (
-            f"Do not write code yet. Infer the project shape "
-            f"first.\n"
-            f"- Perform a structured read-through of the "
-            f"repository (README, main files, routing, "
-            f"configs) to infer the system on your own.\n"
-            f"- Read any generated docs and the user's project "
-            f"description for additional signal.\n"
-            f"- Only ask the user for clarification after this "
-            f"inspection, and only for specific gaps that "
-            f"cannot be determined from the codebase."
+            "Do not write code yet. Infer the project shape "
+            "first.\n"
+            "- Perform a structured read-through of the "
+            "repository (README, main files, routing, "
+            "configs) to infer the system on your own.\n"
+            "- Read any generated docs and the user's project "
+            "description for additional signal.\n"
+            "- Only ask the user for clarification after this "
+            "inspection, and only for specific gaps that "
+            "cannot be determined from the codebase."
         )
 
     # Generic fallback for JS app/tooling, Python app/tooling,
     # and any project type added later without a tailored rule.
     return (
-        f"Inspect the project layout before writing code.\n"
-        f"- Read the project's manifests (package.json / "
-        f"pyproject.toml / etc.) to understand dependencies and "
-        f"entry points.\n"
-        f"- Read the major modules to learn the architecture.\n"
-        f"- Propose a concrete first task before making changes."
+        "Inspect the project layout before writing code.\n"
+        "- Read the project's manifests (package.json / "
+        "pyproject.toml / etc.) to understand dependencies and "
+        "entry points.\n"
+        "- Read the major modules to learn the architecture.\n"
+        "- Propose a concrete first task before making changes."
     )
 
 
@@ -3180,7 +3180,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
         det_color = "ok"
     detection_html = [
         f'<section class="card card-{det_color}">',
-        f'  <h2>Detection</h2>',
+        '  <h2>Detection</h2>',
         f'  <p class="lede">{_esc(det_label)}</p>',
     ]
     if stack.signals:
@@ -3301,9 +3301,9 @@ def render_adopt_html(repo: Path, stack: StackProfile,
             f'  <pre class="prompt-block" '
             f'id="agent-launch-prompt-text">'
             f'<code>{_esc(agent_prompt.prompt_text)}</code></pre>',
-            f'  <button class="copy" '
-            f'data-copy-target="agent-launch-prompt-text">'
-            f'Copy prompt</button>',
+            '  <button class="copy" '
+            'data-copy-target="agent-launch-prompt-text">'
+            'Copy prompt</button>',
             '</section>',
         ]
 
@@ -3372,11 +3372,11 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     # assessment/confidence/why triad, once as a single human-
     # readable label. Card color tracks confidence the same way
     # Stack reality does.
-    project_type_html: list[str] = []
+    _project_type_html: list[str] = []
     if project_type is not None:
         pt_card = {"high": "card-ok", "medium": "card-warn",
                    "low": "card-warn"}.get(project_type.confidence, "card-warn")
-        project_type_html = [
+        _project_type_html = [
             f'<section class="card {pt_card}">',
             '  <h2>Project type</h2>',
             '  <ul class="parts">',
