@@ -21,31 +21,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
-def _configure_stdio_utf8() -> None:
-    """Force UTF-8 encoding on stdout/stderr so CLI output is portable.
-
-    Motivation: on Windows, the default console encoding is cp1252, which
-    raises ``UnicodeEncodeError`` when the CLI prints any character
-    outside that codepage (e.g. ``≤``, ``—``, ``…``). Ubuntu and macOS
-    default to UTF-8 so this is a no-op there.
-
-    Uses ``errors='replace'`` rather than ``'strict'`` so a genuinely
-    un-mappable character on some future exotic stream prints as ``?``
-    instead of crashing the command mid-output. This preserves the
-    principle that CLI output is best-effort human-readable text, while
-    still surfacing the mismatch visually so the user notices.
-    """
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is None:
-            continue
-        try:
-            reconfigure(encoding="utf-8", errors="replace")
-        except (LookupError, ValueError, OSError):
-            # Non-text streams (redirected to a BytesIO, closed, etc.) —
-            # skip silently. The check is best-effort; failure here must
-            # not prevent the CLI from running.
-            pass
+# Re-export the CLI package's stdio-configuration helper so the existing
+# entry-point contract (``context_kit._configure_stdio_utf8``) and the
+# regression tests in ``tests/test_dispatch.py`` continue to work. The
+# canonical implementation lives in ``cli/__init__.py`` and also runs at
+# package-import time so any caller that imports a ``cli.*`` module
+# (tests calling ``run_adopt`` directly, downstream tools) inherits
+# UTF-8-safe streams without depending on ``context_kit.main``.
+from cli import _configure_stdio_utf8  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:

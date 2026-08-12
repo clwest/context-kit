@@ -753,9 +753,12 @@ def _scan_subdir_contents(d: Path) -> tuple[list[str], dict[str, int], dict[str,
                         # Path relative to the repo root, anchored at
                         # the subdir's name. So a Foo.sol inside
                         # repo/contracts/Mocks/ surfaces as
-                        # "contracts/Mocks/Foo.sol".
+                        # "contracts/Mocks/Foo.sol". Force POSIX-style
+                        # separators so downstream depth checks (which
+                        # count "/") and cross-platform tests behave
+                        # identically on Linux, macOS, and Windows.
                         rel_path = (rel / name) if rel.parts else Path(name)
-                        example_paths[ext] = str(Path(d.name) / rel_path)
+                        example_paths[ext] = (Path(d.name) / rel_path).as_posix()
             if file_count > MAX_FILES_PER_SUBDIR:
                 break
     except OSError:

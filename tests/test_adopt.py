@@ -242,7 +242,9 @@ class TestPlanAndApply(unittest.TestCase):
     def test_plan_produces_four_files(self):
         stack = detect_stack(self.repo)
         plan = plan_files(self.repo, stack, self.inputs)
-        rel_paths = sorted(str(p.path.relative_to(self.repo)) for p in plan)
+        # Compare in POSIX form so this contract holds on Windows too,
+        # where the raw ``str(Path)`` would produce backslashes.
+        rel_paths = sorted(p.path.relative_to(self.repo).as_posix() for p in plan)
         self.assertEqual(
             rel_paths,
             sorted([

@@ -320,9 +320,9 @@ class TestOrientLowSignalInventoryFraming(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.project = Path(self._tmp.name) / "p"
         self.project.mkdir()
-        (self.project / "00-START-NEXT-SESSION.md").write_text("# Start\n")
+        (self.project / "00-START-NEXT-SESSION.md").write_text("# Start\n", encoding="utf-8")
         (self.project / "docs").mkdir()
-        (self.project / "docs" / "FF_WHAT_IT_IS.md").write_text("# What\n")
+        (self.project / "docs" / "FF_WHAT_IT_IS.md").write_text("# What\n", encoding="utf-8")
         # Render an actual inventory body via collect+render so the
         # marker is the real one, not a hand-crafted string.
         from cli.inventory import (  # noqa: E402
@@ -333,8 +333,14 @@ class TestOrientLowSignalInventoryFraming(unittest.TestCase):
         )
         inv = collect_inventory(self.project)
         body = render_block_body(inv)
+        # Explicit UTF-8: the rendered inventory body contains an
+        # em-dash (`—`), which is not encodable in the Windows default
+        # write encoding (cp1252). Without the explicit encoding the
+        # file gets written as latin-1 bytes that orient's UTF-8
+        # reader then can't decode.
         (self.project / "docs" / "FF_INVENTORY.md").write_text(
-            f"---\ntitle: 'inv'\n---\n\n{START_MARKER}\n{body}\n{END_MARKER}\n"
+            f"---\ntitle: 'inv'\n---\n\n{START_MARKER}\n{body}\n{END_MARKER}\n",
+            encoding="utf-8",
         )
 
     def tearDown(self):
