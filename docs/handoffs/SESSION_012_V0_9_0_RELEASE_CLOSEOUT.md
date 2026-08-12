@@ -90,7 +90,7 @@ every run. Test went from flaky 2/5 to stable 5/5.
   ripgrep:               Unclear / Low        -> Rust workspace / library
   kubernetes:            Unclear / Low        -> Go project (High)
   transformers:          unchanged (Python / High)
-  fns-monorepo:          unchanged (Web3 dApp)
+  example-web3-monorepo:          unchanged (Web3 dApp)
 
 Beneficial side effects on existing dogfood repos: aave-v3-core,
 solidity-template, and v3-core all flipped from "JavaScript
@@ -197,7 +197,7 @@ feedback session, then fold the results into the next handoff.
 | v0.7.0 release context | `docs/handoffs/SESSION_009_ADOPT_AND_0_7_0.md` |
 | Adopt code | `cli/adopt.py` |
 | Adopt tests | `tests/test_adopt.py` |
-| Dogfood repos | `/Users/donkeyking/development/context-kit-dogfood-repos/` |
+| Dogfood repos | `~/dev/context-kit-dogfood-repos/` |
 
 ## AI Notes
 

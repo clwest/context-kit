@@ -10,9 +10,9 @@ previous_handoff: ./SESSION_017_HANDOFF_WRITE_SUBCOMMAND.md
 ## Why this handoff exists
 
 The 24/7 Global AI spokesperson corpus in
-`unified-donkey-betz` was the first worked instance of a
+`example-monorepo` was the first worked instance of a
 generalizable pattern: a public-voice markdown corpus that
-grounds a spokesperson AI (Character OS, chat widget, support
+grounds a spokesperson AI (example-agent-os, chat widget, support
 agent) in the project's source-of-truth. That project kept
 its working spec at `docs/docs-pattern/spokesperson-corpus/`.
 
@@ -167,6 +167,6 @@ worth flagging. The temptation was to ship the CLI in the same
 PR as the bundle. Resisting that keeps the API surface
 provisional until a second worked instance proves the shape.
 This matches the discipline that produced `handoff write`:
-two stress-test projects (character-os SESSION 158 + this
+two stress-test projects (example-agent-os SESSION 158 + this
 repo) before locking the contract. One instance is data; two
 is a pattern.

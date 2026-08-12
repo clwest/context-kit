@@ -103,7 +103,7 @@ class UnclassifiedSubdir:
       Empty for generic-language-only subdirs (.py / .js / .ts) —
       the manifest filenames already tell that story.
     - ``is_empty``: dir exists but the scan found nothing inside.
-      Worth surfacing explicitly (see flow-name-service's empty
+      Worth surfacing explicitly (see example-name-service's empty
       ``api/`` placeholder in SESSION_009_ADOPT.md §19).
     """
 
@@ -120,12 +120,12 @@ class UnclassifiedSubdir:
     # signal. Not a full framework detector — see _manifest_hint.
     manifest_hint: Optional[str] = None
     # True only when the dir literally has zero files (rare — usually
-    # an empty placeholder like flow-name-service's ``api/``).
+    # an empty placeholder like example-name-service's ``api/``).
     is_empty: bool = False
     # Total file count seen during the scan (capped at MAX_FILES_PER_SUBDIR).
     # Lets the dry-run distinguish "truly empty" from "has files but
     # none with extensions we recognize" — the second case shows up for
-    # dirs full of .json / .md / config files (e.g. dbao-studio's
+    # dirs full of .json / .md / config files (e.g. example-django-app's
     # agents/ contains JSON dumps but no .py source).
     total_file_count: int = 0
 
@@ -206,7 +206,7 @@ FAILURE_MISLEADING_CLASSIFICATION = "MISLEADING_CLASSIFICATION"
 FAILURE_MISSING_FRAMEWORK_DETECTION = "MISSING_FRAMEWORK_DETECTION"
 FAILURE_STRUCTURE_UNDERREPRESENTED = "STRUCTURE_UNDERREPRESENTED"
 # v0.3 — proposed in SESSION_009_ADOPT.md §22 after the
-# context-kit-dogfood-repos batch (fns-monorepo / expo-monorepo-example /
+# context-kit-dogfood-repos batch (example-web3-monorepo / expo-monorepo-example /
 # turborepo-next-django-starter / flutter-monorepo-example) showed
 # 3 of 5 monorepo clones emitting zero failure records under v0.2.x
 # despite obvious depth-2 invisibility.
@@ -415,7 +415,7 @@ def _pick_primary(parts: dict[str, str]) -> str:
     """Backend wins by convention; otherwise first detected in scan order.
 
     The "backend wins" rule comes from the dogfood split-monorepo
-    shape (focus-flow, dealflowtracker, etc.). Backend is where the
+    shape (example-web-app, example-tracker-app, etc.). Backend is where the
     domain logic lives, so the AI session's default frame is best
     anchored there. A user who disagrees can edit BUILD_PLAN.md.
     """
@@ -541,8 +541,8 @@ def derive_project_title(repo: Path) -> str:
 # classification *missed* so an AI session reading the generated docs
 # can't be unaware of (say) a contracts/ directory full of .sol files
 # in a project the classifier called "JavaScript". See §19's worked
-# examples for dbao-studio, donkey_betz_world, clarity-timelock,
-# flow-name-service, and tornado-core.
+# examples for example-django-app, example-mobile-app, example-clarity-contract,
+# example-name-service, and example-solidity-app.
 #
 # Per-ecosystem detection is deferred. The data tables below say what
 # files *suggest* without committing to what they *are* — a deliberate
@@ -566,7 +566,7 @@ NOISE_EXACT = frozenset({
 # prefixes followed by EOL or a separator (-, _, .) is treated as a
 # variant of the prefix. So "venv_ml", "venv-prod", "venv.old" all match
 # the "venv" prefix, but "venvelope" doesn't (no separator after the
-# prefix) and stays visible. Lesson from the unified-donkey-betz dogfood
+# prefix) and stays visible. Lesson from the example-monorepo dogfood
 # where ``venv_ml/`` slipped past exact-name matching.
 NOISE_PREFIXES = ("venv", "env", "pyenv", "virtualenv")
 
@@ -767,7 +767,7 @@ def _scan_subdir_contents(d: Path) -> tuple[list[str], dict[str, int], dict[str,
 def _manifest_hint(manifests: list[str]) -> Optional[str]:
     """Lightweight pattern hint from a combination of manifest filenames.
 
-    Three patterns chosen from the unified-donkey-betz dogfood, where
+    Three patterns chosen from the example-monorepo dogfood, where
     pure Python+JS repos produced no DOMAIN_HINTS notes and the
     visual hierarchy collapsed to "everything is amber". These hints
     re-introduce some color contrast without being a full framework
@@ -1398,7 +1398,7 @@ def derive_project_type(stack: StackProfile,
     # workspace-based has_nextjs check above only fires when a
     # Phase 3 workspace child carries the Next.js label; it
     # misses the classic backend/ + frontend/ split monorepo
-    # (contract-concierge, focus-flow, etc.). Recognize that
+    # (example-contract-app, example-web-app, etc.). Recognize that
     # shape via the stack.parts table directly: a Python
     # backend role AND a JavaScript frontend role.
     _BACKEND_ROLES = ("backend", "server", "api")
@@ -1478,8 +1478,8 @@ def derive_project_type(stack: StackProfile,
     #       Python signal anywhere (turborepo + Django shape).
     #   (b) v0.1 split-monorepo with a Python backend role
     #       (backend/server/api) AND a JavaScript frontend role
-    #       (frontend/web/client). Catches contract-concierge /
-    #       focus-flow / dealflowtracker / sellerpilot etc.
+    #       (frontend/web/client). Catches example-contract-app /
+    #       example-web-app / example-tracker-app / example-pilot-app etc.
     if (python_anywhere and has_nextjs) or has_full_stack_via_parts:
         if has_full_stack_via_parts:
             reason = (
@@ -2437,7 +2437,7 @@ def _format_unclassified_for_dryrun(u: UnclassifiedSubdir) -> list[str]:
 def _is_data_only_subdir(u: UnclassifiedSubdir) -> bool:
     """True iff ``u`` has only the 'no recognized source extensions' signal.
 
-    Lesson from the unified-donkey-betz dogfood: large repos generated
+    Lesson from the example-monorepo dogfood: large repos generated
     24 cards reading "N files (no recognized source extensions)" — all
     visually identical, all crowding out the cards with real signal.
     The renderers group these into a single collapsible "Data /
@@ -2728,7 +2728,7 @@ def _wrap_in_managed_block(content: str) -> str:
     and end markers and preserve everything outside. This is what
     makes BUILD_PLAN.md / PROJECT_WHAT_IT_IS.md / 00-START-NEXT-SESSION.md
     safe to re-generate without destroying user edits — exactly the
-    safety gap the unified-donkey-betz dogfood exposed (the existing
+    safety gap the example-monorepo dogfood exposed (the existing
     00-START doc would have been clobbered).
 
     The brief explainer at the top is part of the managed content
@@ -3423,7 +3423,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     # vs "data-only" (just a file count, no recognized signals). The
     # signal cards render individually; the data-only ones get
     # collapsed into a single "Data / content / non-code" block at the
-    # bottom so a 70-card output (unified-donkey-betz) doesn't bury the
+    # bottom so a 70-card output (example-monorepo) doesn't bury the
     # high-signal directories under a wall of identical "N files (no
     # recognized source extensions)" cards.
     signal_subdirs, data_only_subdirs = _partition_unclassified(stack)
@@ -3953,7 +3953,7 @@ def _plan_managed_doc(path: Path, content: str) -> PlannedFile:
       adopt is not authorized to clobber)
 
     The third outcome is the load-bearing safety case from the
-    unified-donkey-betz dogfood: an existing 00-START-NEXT-SESSION.md
+    example-monorepo dogfood: an existing 00-START-NEXT-SESSION.md
     that v0.2 would have overwritten on --write. SKIP makes adopt
     safe to re-run on any project, including legacy ones with their
     own hand-written copies of these files.
@@ -4243,7 +4243,7 @@ _STRONG_FRAMEWORK_MANIFESTS = (
 
 # Threshold for NOISE_DIRECTORY_POLLUTION — projects with this many
 # data-only dirs are noisy enough to flag as a UX concern even after
-# the v0.2.x grouping (35 in unified-donkey-betz; 1 in tornado-core).
+# the v0.2.x grouping (35 in example-monorepo; 1 in example-solidity-app).
 _NOISE_POLLUTION_THRESHOLD = 5
 
 # Threshold for STRUCTURE_UNDERREPRESENTED — number of signal subdirs
@@ -4281,7 +4281,7 @@ def analyze_failures(repo: Path, stack: StackProfile,
 
     # ROOT_SIGNAL_OVERRIDE — root won classification but a subdir has
     # a strictly stronger framework manifest (manage.py, foundry.toml,
-    # Clarinet.toml, etc.). dbao-studio is the canonical case.
+    # Clarinet.toml, etc.). example-django-app is the canonical case.
     if stack.signals and not stack.parts:
         for u in stack.unclassified_subdirs:
             strong = next(
@@ -4307,8 +4307,8 @@ def analyze_failures(repo: Path, stack: StackProfile,
                 break  # one card is enough; no need to spam per-subdir
 
     # UNRECOGNIZED_ECOSYSTEM — a subdir has a manifest from an entire
-    # language family adopt doesn't classify. clarity-timelock,
-    # donkey_betz_world (mobile/), tornado-core, etc.
+    # language family adopt doesn't classify. example-clarity-contract,
+    # example-mobile-app (mobile/), example-solidity-app, etc.
     seen_eco_dirs: set[str] = set()
     for u in stack.unclassified_subdirs:
         for m in u.manifest_files:
@@ -4363,7 +4363,7 @@ def analyze_failures(repo: Path, stack: StackProfile,
     # SILENT_SUBDIR_DROP — a recognized subdir name (backend, frontend,
     # web, mobile, api, client, server) appears in unclassified_subdirs
     # with content. Classification scan saw the name but couldn't
-    # classify the manifests inside. donkey_betz_world's mobile/.
+    # classify the manifests inside. example-mobile-app's mobile/.
     for u in stack.unclassified_subdirs:
         if (u.name in RECOGNIZED_SUBDIRS
                 and (u.notable_extensions or u.manifest_files)):
@@ -4387,7 +4387,7 @@ def analyze_failures(repo: Path, stack: StackProfile,
 
     # WRAPPER_DIRECTORY_INVISIBILITY — root has nothing AND the
     # actual project lives one level down under a NON-recognized name.
-    # clarity-timelock's timelocked-wallet/.
+    # example-clarity-contract's timelocked-wallet/.
     if stack.language == "unknown":
         signal_subs = [
             u for u in stack.unclassified_subdirs
@@ -4417,7 +4417,7 @@ def analyze_failures(repo: Path, stack: StackProfile,
             ))
 
     # NOISE_DIRECTORY_POLLUTION — many data-only subdirs even after
-    # the v0.2.x grouping. unified-donkey-betz had 35.
+    # the v0.2.x grouping. example-monorepo had 35.
     data_only = [u for u in stack.unclassified_subdirs
                  if _is_data_only_subdir(u)]
     if len(data_only) >= _NOISE_POLLUTION_THRESHOLD:
@@ -4545,7 +4545,7 @@ def analyze_failures(repo: Path, stack: StackProfile,
     # MONOREPO_DEPTH_LIMIT (v0.3) — a workspace-container subdir
     # (apps/, packages/, services/, crates/, members/, workspaces/)
     # contains substantial content but adopt's depth-1 scan can't
-    # enter the child projects. fns-monorepo, expo-monorepo-example,
+    # enter the child projects. example-web3-monorepo, expo-monorepo-example,
     # turborepo-next-django-starter all hit this. See §22.
     #
     # Detection signal: workspace-container name + EITHER

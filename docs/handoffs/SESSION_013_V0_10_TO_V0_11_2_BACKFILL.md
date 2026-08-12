@@ -49,7 +49,7 @@ without a question loop.
   dogfood, recorded demos.
 - Fixed: split-monorepo full-stack classification (`backend/` +
   `frontend/`, `server/` + `web/`, `api/` + `client/`) — closed the
-  contract-concierge gap. Recognized roles live in `_BACKEND_ROLES` /
+  example-contract-app gap. Recognized roles live in `_BACKEND_ROLES` /
   `_FRONTEND_ROLES`.
 - Fixed: pre-`--write` rendering self-fences when generated docs don't
   exist yet. Placeholder soft-framing across three doc generators
@@ -87,7 +87,7 @@ Commits: `2a94fb0`, `69ff38a`.
 ### v0.11.1 — agent-behavior shaping in the launch prompt
 
 Two scoped prompt-body improvements driven by real-repo testing
-(mentorforge, flow-name-service, norman-handyman-mvp). No new flags, no
+(mentorforge, example-name-service, example-mvp-app). No new flags, no
 API changes, no detection logic — just the text agents read.
 
 - New `HOW TO APPROACH THIS REPO` section: three-tier inspection rule

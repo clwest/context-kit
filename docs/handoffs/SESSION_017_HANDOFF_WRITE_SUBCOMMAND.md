@@ -15,7 +15,7 @@ subcommand that re-stamps every anchor doc's frontmatter in
 one shot, and **rec 3** — promote calibration entries from
 handoffs to `TRUST_CALIBRATION.md` at handoff-write time.
 
-This session shipped both. Character-os SESSION 158 (the
+This session shipped both. Example-agent-os SESSION 158 (the
 sibling project that surfaced the original drift class)
 served as the live target.
 
@@ -56,7 +56,7 @@ The module owns two side-effects under a single CLI verb:
 Fuzzy matching: tokenize headline → lowercase → strip
 stopwords (`the`, `a`, `ai`, `operator`, `session`, ...) and
 digit-only tokens → require ≥ 0.4 overlap. The smoke test
-against character-os SESSION 158 matched all 3 calibration
+against example-agent-os SESSION 158 matched all 3 calibration
 moments correctly despite headline-shape differences between
 handoff prose (`1. AI overstated "shipped" before operator
 viewed the output`) and TRUST_CALIBRATION classification
@@ -94,17 +94,17 @@ Coverage:
 
 `python3 -m unittest discover -s tests -t .` → **1076 OK**.
 
-## Smoke test — character-os SESSION 158
+## Smoke test — example-agent-os SESSION 158
 
 The original drift surface. Dry-run output:
 
 ```
 Anchor doc frontmatter:
-  unchanged          docs/CHARACTER_OS_WHAT_IT_IS.md (already at 2026-05-15 (SESSION 158))
-  would restamp   docs/CHARACTER_OS_PIPELINE.md (last_revised: (missing) → 2026-05-15 (SESSION 158))
-  would restamp   docs/CHARACTER_OS_BEHAVIOR_LAYER.md (last_revised: (missing) → 2026-05-15 (SESSION 158))
-  would restamp   docs/CHARACTER_OS_TRANSLATION_LAYER.md (last_revised: (missing) → 2026-05-15 (SESSION 158))
-  would restamp   docs/CHARACTER_OS_SESSION_START.md (last_revised: (missing) → 2026-05-15 (SESSION 158))
+  unchanged          docs/EXAMPLE_AGENT_OS_WHAT_IT_IS.md (already at 2026-05-15 (SESSION 158))
+  would restamp   docs/EXAMPLE_AGENT_OS_PIPELINE.md (last_revised: (missing) → 2026-05-15 (SESSION 158))
+  would restamp   docs/EXAMPLE_AGENT_OS_BEHAVIOR_LAYER.md (last_revised: (missing) → 2026-05-15 (SESSION 158))
+  would restamp   docs/EXAMPLE_AGENT_OS_TRANSLATION_LAYER.md (last_revised: (missing) → 2026-05-15 (SESSION 158))
+  would restamp   docs/EXAMPLE_AGENT_OS_SESSION_START.md (last_revised: (missing) → 2026-05-15 (SESSION 158))
 
 Calibration promotion check (read-only):
   ✓ promoted   1. AI overstated "shipped" before operator viewed the output
@@ -113,7 +113,7 @@ Calibration promotion check (read-only):
 ```
 
 This proves out the original drift hypothesis: across
-character-os's 50+ sessions, only the `WHAT_IT_IS.md` anchor
+example-agent-os's 50+ sessions, only the `WHAT_IT_IS.md` anchor
 got its `last_revised:` field stamped. Four secondary anchors
 (`PIPELINE`, `BEHAVIOR_LAYER`, `TRANSLATION_LAYER`,
 `SESSION_START`) had been silently sitting with `generated:
@@ -122,7 +122,7 @@ caught all four in one invocation.
 
 Live write against the sibling project landed all four
 re-stamps. Operator will commit those changes separately in
-character-os.
+example-agent-os.
 
 ## Doctor coverage status
 
@@ -212,7 +212,7 @@ this safe:
 
 The fuzzy headline match (≥ 0.4 token overlap with
 stopword/digit strip) is the most heuristic part of the
-module. The character-os SESSION 158 smoke test happened to
+module. The example-agent-os SESSION 158 smoke test happened to
 match all 3 entries cleanly; pathological cases (very short
 headlines, e.g. `### x`) will still produce false negatives.
 That's the safe failure mode — a missed match reads as

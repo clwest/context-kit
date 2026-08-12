@@ -71,7 +71,7 @@ re-deriving a baseline from memory each session.
 
 ### Real-world calibration
 
-The feature was extracted from the unified-donkey-betz `core/tasks.py`
+The feature was extracted from the example-monorepo `core/tasks.py`
 modularization that ran across this session: 5 stacked PRs (#2040
 through #2044) moved 51 of 356 Celery tasks out of a 12,474-line
 monolith into 5 new sibling modules (diagnostics, boardroom,
@@ -189,7 +189,7 @@ memory infrastructure rather than passive reference material.
 
 ### Real-world calibration
 
-- **unified-donkey-betz** (the dogfood target):
+- **example-monorepo** (the dogfood target):
   `strength=high` (1,901 markdown files, 661 handoffs, 4
   anchor docs, 4 audit folders, process docs, RAG corpus).
   `review-docs-context-first` fires as the first
@@ -356,7 +356,7 @@ output), `inspect` reads the code and prints what it found.
 
 ### Real-world dogfood
 
-- **unified-donkey-betz** (7,904 tracked files, 166 MB tree):
+- **example-monorepo** (7,904 tracked files, 166 MB tree):
   runs in ~0.27s; correctly identifies `python + django` at
   high confidence with 45 apps / 115 models / 2,021 url
   patterns / 430 task decorators / 186 management commands;
@@ -650,7 +650,7 @@ Agent Launch Prompt body.
 
 **Agent-behavior shaping in the launch prompt.** Two scoped
 prompt-body improvements driven by real-repo testing
-(mentorforge, flow-name-service, norman-handyman-mvp). No new
+(mentorforge, example-name-service, example-mvp-app). No new
 flags, no API changes, no detection logic changes — just the
 text agents read.
 
@@ -717,10 +717,10 @@ shallow or generic responses:
 - **mentorforge** — agent now identifies real risks (Stripe
   DB mismatch, CORS, auth issues) and pushes back on an
   inaccurate project summary instead of accepting it
-- **flow-name-service** — agent does deep Cadence + Next.js
+- **example-name-service** — agent does deep Cadence + Next.js
   inspection and finds runtime + logic bugs, not just
   documentation gaps
-- **norman-handyman-mvp** — agent surfaces production-bug-
+- **example-mvp-app** — agent surfaces production-bug-
   level issues (Stripe redirect, customer merge logic) in
   a 3-way Django/Next.js/Expo split
 
@@ -849,7 +849,7 @@ make the whole adopt run non-interactive when paired.
 
 - **Repos with `backend/` + `frontend/` (or `server/` + `web/`,
   `api/` + `client/`) at root now classify as "Full-stack web
-  app".** Closes the contract-concierge gap where adopt fell back
+  app".** Closes the example-contract-app gap where adopt fell back
   to "Unclear project type" despite a clean split. Rule names
   the parts in the reason text and stays Medium confidence.
 - **Recognized roles:** ``_BACKEND_ROLES = ("backend", "server",
@@ -1000,13 +1000,13 @@ without UI changes; the failure taxonomy is unchanged.
   five spec'd fixture shapes (django-shape,
   ripgrep-shape, kubernetes-shape, openzeppelin-shape,
   react-native-shape) plus regression sanity checks
-  (transformers, fns-monorepo) and the JS+Rust-aux guard
+  (transformers, example-web3-monorepo) and the JS+Rust-aux guard
   fixture (next.js-shape).
 
 ### Dogfood validation
 
 Real-world before/after on the seven repos in
-`/Users/donkeyking/development/context-kit-dogfood-repos/`:
+`~/dev/context-kit-dogfood-repos/`:
 
   django:                JS app/tooling High  -> Python app/tooling Medium
   react-native:          Full-stack web app   -> Mobile app suite
@@ -1014,7 +1014,7 @@ Real-world before/after on the seven repos in
   ripgrep:               Unclear / Low        -> Rust workspace / library
   kubernetes:            Unclear / Low        -> Go project (High)
   transformers:          unchanged (Python / High)
-  fns-monorepo:          unchanged (Web3 dApp)
+  example-web3-monorepo:          unchanged (Web3 dApp)
 
 Beneficial side effects on existing dogfood repos:
 aave-v3-core, solidity-template, and v3-core all flipped from
@@ -1175,9 +1175,9 @@ Next.js when the root scan returns "unknown".
 ### Dogfood validation
 
 Verified end-to-end against the eight repos in
-`/Users/donkeyking/development/context-kit-dogfood-repos/`:
+`~/dev/context-kit-dogfood-repos/`:
 
-  fns-monorepo                      → Web3 dApp           (3 actions)
+  example-web3-monorepo                      → Web3 dApp           (3 actions)
   turborepo-next-django-starter     → Full-stack web app  (3 actions)
   flutter-monorepo-example          → Mobile app suite    (3 actions)
   expo-monorepo-example             → Unclear project type (1 action)
@@ -1198,7 +1198,7 @@ top-level command that retrofits context-kit's docs layer onto
 projects that already have code, without ever touching source files.
 Designed and shipped in seven incremental releases (v0 through v0.3
 plus several cross-cutting passes), each driven by real-world
-dogfood against `/development/` projects and a curated set of
+dogfood against `~/dev/` projects and a curated set of
 cloned open-source repos.
 
 The full design lives in `docs/proposals/SESSION_009_ADOPT.md`.
@@ -1224,8 +1224,8 @@ What's in this release:
   (the AI session's default frame anchors where the domain logic
   lives). Generators render a per-subdir bullet table in
   BUILD_PLAN.md and the CLAUDE.md augment block. Verified against
-  `focus-flow`, `dealflowtracker`, `contract-concierge`,
-  `norman-handyman-mvp` (three-part split: backend + web + mobile),
+  `example-web-app`, `example-tracker-app`, `example-contract-app`,
+  `example-mvp-app` (three-part split: backend + web + mobile),
   and `ai-content-studio` (single-stack root, regression-tested to
   confirm root still wins over a same-named subdir).
 - **Visibility-first fallback scan (v0.2 — the load-bearing
@@ -1251,7 +1251,7 @@ What's in this release:
   user edits outside them. If an existing file has *no* markers
   (i.e. user wrote it by hand), adopt now reports `would skip`
   instead of clobbering — the load-bearing fix from the
-  unified-donkey-betz dogfood, where v0.2 would have silently
+  example-monorepo dogfood, where v0.2 would have silently
   overwritten a hand-written `00-START-NEXT-SESSION.md`.
 - **Pattern-based noise filter (v0.2.x).** Replaces exact-name
   filtering with a pattern check that catches `venv_ml/`,
@@ -1271,7 +1271,7 @@ What's in this release:
   but no recognized source extensions (configs, JSON dumps,
   documentation, etc.) collapse into a single "Data / content /
   non-code directories" footer in the markdown docs and a single
-  collapsible block in the HTML report. Unified-donkey-betz had
+  collapsible block in the HTML report. Example-monorepo had
   35 of these — v0.2 rendered them as a wall of identical cards;
   v0.2.x renders them as one entry.
 - **`--html` static review report (§21).** A new opt-in flag that
@@ -1307,7 +1307,7 @@ What's in this release:
   `crates`, `members`, `workspaces`) holds substantial content but
   adopt's depth-1 scan can't enter the child projects. Closes the
   v0.2.x gap exposed by the cloned dogfood batch, where 3 of 5
-  Turborepo-style projects (`expo-monorepo-example`, `fns-monorepo`,
+  Turborepo-style projects (`expo-monorepo-example`, `example-web3-monorepo`,
   `turborepo-next-django-starter`) emitted zero failure records
   despite obvious depth-2 invisibility. Designed in §22 of the
   proposal.
@@ -1355,19 +1355,19 @@ What's in this release:
 
 ### Dogfood validation (read-only, --html --no-browser)
 
-Run during 0.7.0 prep. All five `/development/`-resident
+Run during 0.7.0 prep. All five `~/dev/`-resident
 fixtures plus five cloned `context-kit-dogfood-repos/` clones
 correctly classified or honestly labeled:
 
-  /development/dbao-studio              → ROOT_SIGNAL_OVERRIDE etc.
-  /development/donkey_betz_world        → SILENT_SUBDIR_DROP for mobile/
-  /development/clarity-timelock         → WRAPPER_DIRECTORY_INVISIBILITY
-  /development/unified-donkey-betz      → IDEMPOTENCY_RISK + NOISE_POLLUTION
-  /development/apps/tornado-core        → MISLEADING_CLASSIFICATION + UNRECOGNIZED_ECOSYSTEM (root foundry.toml)
+  ~/dev/example-django-app              → ROOT_SIGNAL_OVERRIDE etc.
+  ~/dev/example-mobile-app        → SILENT_SUBDIR_DROP for mobile/
+  ~/dev/example-clarity-contract         → WRAPPER_DIRECTORY_INVISIBILITY
+  ~/dev/example-monorepo      → IDEMPOTENCY_RISK + NOISE_POLLUTION
+  ~/dev/apps/example-solidity-app        → MISLEADING_CLASSIFICATION + UNRECOGNIZED_ECOSYSTEM (root foundry.toml)
 
   context-kit-dogfood-repos/expo-monorepo-example       → MONOREPO_DEPTH_LIMIT × 2
   context-kit-dogfood-repos/flutter-monorepo-example    → MONOREPO_DEPTH_LIMIT + UNRECOGNIZED_ECOSYSTEM × 2
-  context-kit-dogfood-repos/fns-monorepo                → MONOREPO_DEPTH_LIMIT (the headline win — was 0 in v0.2.x)
+  context-kit-dogfood-repos/example-web3-monorepo                → MONOREPO_DEPTH_LIMIT (the headline win — was 0 in v0.2.x)
   context-kit-dogfood-repos/solidity-template           → MISLEADING_CLASSIFICATION + UNRECOGNIZED_ECOSYSTEM
   context-kit-dogfood-repos/turborepo-next-django-starter → SILENT_SUBDIR_DROP + MONOREPO_DEPTH_LIMIT
 

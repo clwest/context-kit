@@ -54,7 +54,7 @@ The CLI proposal at `docs/proposals/fleet-network-subcommand.md` explicitly gate
 
 ### Then: stress-test the spokesperson-corpus pattern on a second instance
 
-Same validation gate from SESSION_018. Currently only one worked instance (`unified-donkey-betz`). Run the manual `cp -r` recipe against any sibling project with a public-facing AI surface and capture which template shapes felt right vs forced.
+Same validation gate from SESSION_018. Currently only one worked instance (`example-monorepo`). Run the manual `cp -r` recipe against any sibling project with a public-facing AI surface and capture which template shapes felt right vs forced.
 
 ## Carried context — sub-pattern bundling workflow
 
@@ -63,8 +63,8 @@ sub-patterns:
 
 | Step | What happens | Example |
 |---|---|---|
-| 1 | Pattern emerges in a sibling project as a worked instance | u-d-b session 158 (spokesperson), u-d-b session 1117 (fleet-network) |
-| 2 | Sibling distills it into `docs/docs-pattern/<name>/` | u-d-b/docs/docs-pattern/spokesperson-corpus/, fleet-network/ |
+| 1 | Pattern emerges in a sibling project as a worked instance | example-monorepo session 158 (spokesperson), example-monorepo session 1117 (fleet-network) |
+| 2 | Sibling distills it into `docs/docs-pattern/<name>/` | example-monorepo/docs/docs-pattern/spokesperson-corpus/, fleet-network/ |
 | 3 | context-kit lifts it into `cli/_pattern/<name>/` so `init` ships it | SESSION_018 (spokesperson), SESSION_019 (fleet-network) |
 | 4 | Proposal doc captures the future CLI surface | docs/proposals/spokesperson-corpus-subcommand.md, fleet-network-subcommand.md |
 | 5 | Wait for a second worked instance | (gate, not yet crossed for either) |

@@ -1,7 +1,7 @@
 # Spokesperson Corpus Pattern
 
 A reusable shape for turning a project's internal source-of-truth docs into a public-voice
-markdown corpus that can be embedded into a spokesperson AI (Character OS, a chat widget,
+markdown corpus that can be embedded into a spokesperson AI (example-agent-os, a chat widget,
 a customer-support agent, anything that needs grounded knowledge of "what this is and how
 to talk about it").
 
@@ -89,12 +89,12 @@ might have 40.
 The corpus drifts the moment the project ships something new. Bake a refresh step into
 the same place you regenerate inventory / narrative anchor — typically end of session.
 
-If the corpus is embedded in a downstream system (Character OS, a chat widget), re-ingestion
+If the corpus is embedded in a downstream system (example-agent-os, a chat widget), re-ingestion
 is also part of the refresh.
 
 ## How this pattern was distilled
 
-Built first as a project-local pattern in unified-donkey-betz alongside the 24/7 Global AI
+Built first as a project-local pattern in example-monorepo alongside the 24/7 Global AI
 spokesperson — see that project's `docs/docs-pattern/spokesperson-corpus/` for the original
 working spec and `docs/spokesperson/` for the first worked instance. Ported into context-kit
 once the shape stabilized so any context-kit user can `cp -r` it into their project.

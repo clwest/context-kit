@@ -127,7 +127,7 @@ class TestSubdirDetection(unittest.TestCase):
     Root-first behavior is preserved (locked by the regression test
     in TestDetectStack); these tests cover the new split-monorepo
     fallback path that handles real-world dogfood projects like
-    focus-flow / dealflowtracker / norman-handyman-mvp.
+    example-web-app / example-tracker-app / example-mvp-app.
     """
 
     def setUp(self):
@@ -398,8 +398,8 @@ class TestVisibilityFirstScan(unittest.TestCase):
     """Never allow real project structure to be invisible.
 
     Each test wires up a tiny fixture project that mirrors a shape from
-    the dogfood inventory (tornado-core's contracts/circuits, the
-    flow-name-service empty api/, the dbao-studio root-wins pattern,
+    the dogfood inventory (example-solidity-app's contracts/circuits, the
+    example-name-service empty api/, the example-django-app root-wins pattern,
     etc.) and asserts the visibility-first scan surfaces what
     classification missed.
     """
@@ -423,7 +423,7 @@ class TestVisibilityFirstScan(unittest.TestCase):
         return match
 
     def test_contracts_dir_with_sol_files_surfaces(self):
-        # The tornado-core shape: package.json wins classification but
+        # The example-solidity-app shape: package.json wins classification but
         # contracts/ with .sol files must still be visible.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "contracts").mkdir()
@@ -444,7 +444,7 @@ class TestVisibilityFirstScan(unittest.TestCase):
         )
 
     def test_circuits_dir_with_circom_files_surfaces(self):
-        # The tornado-core zk-SNARK circuits — first Circom files in
+        # The example-solidity-app zk-SNARK circuits — first Circom files in
         # the dogfood inventory. Verifies the .circom hint is
         # data-table driven, not code-driven.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
@@ -458,7 +458,7 @@ class TestVisibilityFirstScan(unittest.TestCase):
         self.assertIn("zk-SNARK", m.note or "")
 
     def test_mobile_pubspec_yaml_surfaces_when_not_classified(self):
-        # The donkey_betz_world failure mode: mobile/ has pubspec.yaml
+        # The example-mobile-app failure mode: mobile/ has pubspec.yaml
         # which v0.1's classifier doesn't recognize, but visibility-
         # first must surface it as a manifest-shaped file plus the
         # .dart hint from any Dart sources inside.
@@ -503,7 +503,7 @@ class TestVisibilityFirstScan(unittest.TestCase):
         self.assertNotIn("backend", names, f"backend duplicated in {names!r}")
 
     def test_root_wins_but_subdirs_still_surface(self):
-        # The dbao-studio failure mode: root has both package.json AND
+        # The example-django-app failure mode: root has both package.json AND
         # requirements.txt so root wins (JavaScript), but backend/
         # contains the real Django code. v0.2 must surface backend/ in
         # unclassified-but-present even though root won classification.
@@ -544,7 +544,7 @@ class TestVisibilityFirstScan(unittest.TestCase):
         self.assertIn("real_dir", names)
 
     def test_empty_subdir_reported_as_empty(self):
-        # The flow-name-service api/ case — the directory exists but
+        # The example-name-service api/ case — the directory exists but
         # contains zero files. Worth surfacing as "empty" rather than
         # silently dropping; an empty placeholder dir often signals
         # intent (a planned subsystem that wasn't built yet).
@@ -555,7 +555,7 @@ class TestVisibilityFirstScan(unittest.TestCase):
         self.assertEqual(m.total_file_count, 0)
 
     def test_dir_with_unrecognized_extensions_not_called_empty(self):
-        # The dbao-studio agents/ case — a directory full of .json
+        # The example-django-app agents/ case — a directory full of .json
         # files would have been falsely labelled "EMPTY" if we only
         # tracked recognized extensions. Visibility-first must
         # distinguish "no files at all" (truly empty) from "has files
@@ -709,7 +709,7 @@ class TestAdoptHtmlReport(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self._tmp.name)
         # A minimal project with one classified subdir + one unclassified
-        # one. Matches the donkey_betz_world dogfood shape in miniature.
+        # one. Matches the example-mobile-app dogfood shape in miniature.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "contracts").mkdir()
         for n in ("Foo.sol", "Bar.sol", "Baz.sol"):
@@ -954,7 +954,7 @@ class TestRenderAdoptHtmlPure(unittest.TestCase):
 
 # ---------------------------------------------------------------------------
 # v0.2.x: idempotency + noise patterns + manifest hints + data-only grouping
-# (post unified-donkey-betz dogfood)
+# (post example-monorepo dogfood)
 # ---------------------------------------------------------------------------
 
 
@@ -970,7 +970,7 @@ class TestNoisePatternFiltering(unittest.TestCase):
             self.assertTrue(_is_noise_dir(n), f"{n} should be noise")
 
     def test_venv_variants_match(self):
-        # The bug from the unified-donkey-betz dogfood: venv_ml/ slipped
+        # The bug from the example-monorepo dogfood: venv_ml/ slipped
         # past v0.2's exact-name set. Pattern-based matching catches it
         # AND venv-prod/, venv.old/, .venv* (via the leading-dot
         # filter applied separately at the call site).
@@ -989,7 +989,7 @@ class TestNoisePatternFiltering(unittest.TestCase):
     def test_noise_pattern_filter_applies_to_unclassified_scan(self):
         # End-to-end: a venv_ml/ in a real repo must not appear in
         # unclassified_subdirs. This is the load-bearing test against
-        # the unified-donkey-betz failure mode.
+        # the example-monorepo failure mode.
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             (repo / "venv_ml").mkdir()
@@ -1012,7 +1012,7 @@ class TestManifestHints(unittest.TestCase):
     """
 
     def test_vite_plus_tailwind_hint(self):
-        # The unified-donkey-betz frontend/ shape: package.json +
+        # The example-monorepo frontend/ shape: package.json +
         # vite.config.ts + tailwind.config.js. v0.2 surfaced it as
         # generic "JS / TS files"; v0.2.x adds the framework hint.
         hint = _manifest_hint(["package.json", "vite.config.ts",
@@ -1023,7 +1023,7 @@ class TestManifestHints(unittest.TestCase):
         self.assertIn("verify with user", hint)
 
     def test_expo_hint(self):
-        # The unified-donkey-betz mobile/ shape: package.json +
+        # The example-monorepo mobile/ shape: package.json +
         # app.config.ts. Strong Expo signal without parsing
         # package.json deps.
         hint = _manifest_hint(["package.json", "app.config.ts",
@@ -1032,7 +1032,7 @@ class TestManifestHints(unittest.TestCase):
         self.assertIn("Expo", hint)
 
     def test_isolated_python_subsystem_hint(self):
-        # ml/ and resolve_node/ in unified-donkey-betz both have their
+        # ml/ and resolve_node/ in example-monorepo both have their
         # own requirements.txt — meaningful structural signal that the
         # subsystem is intended to run in isolation.
         hint = _manifest_hint(["requirements.txt"])
@@ -1055,7 +1055,7 @@ class TestManifestHints(unittest.TestCase):
 class TestIdempotencySafety(unittest.TestCase):
     """The load-bearing safety contract: re-running ``adopt --write``
     must NEVER destroy user content. This is the fix for the
-    unified-donkey-betz dogfood gap where the existing
+    example-monorepo dogfood gap where the existing
     00-START-NEXT-SESSION.md would have been clobbered.
     """
 
@@ -1134,7 +1134,7 @@ class TestIdempotencySafety(unittest.TestCase):
         self.assertIn("updated next step", after)
 
     def test_existing_file_without_markers_is_skipped(self):
-        # The unified-donkey-betz scenario: a project already has a
+        # The example-monorepo scenario: a project already has a
         # hand-written 00-START-NEXT-SESSION.md (with no adopt
         # markers because adopt didn't write it). Re-run with --write
         # MUST NOT clobber it.
@@ -1199,7 +1199,7 @@ class TestIdempotencySafety(unittest.TestCase):
 
 class TestDataOnlyGrouping(unittest.TestCase):
     """Group "no recognized source extensions" subdirs into a single
-    collapsible / footer so large repos like unified-donkey-betz
+    collapsible / footer so large repos like example-monorepo
     don't bury the high-signal cards under 24+ identical entries.
     """
 
@@ -1373,8 +1373,8 @@ def _failure_types(failures):
 
 class TestFailureDetectorsRequiredCases(unittest.TestCase):
     """The four required dogfood cases from the spec — each fixture
-    mirrors a real /development/ project's shape in miniature so the
-    test doesn't depend on /development/ paths.
+    mirrors a real ~/dev/ project's shape in miniature so the
+    test doesn't depend on ~/dev/ paths.
     """
 
     def setUp(self):
@@ -1390,9 +1390,9 @@ class TestFailureDetectorsRequiredCases(unittest.TestCase):
         plan = plan_files(self.repo, stack, self.inputs)
         return analyze_failures(self.repo, stack, plan)
 
-    def test_dbao_studio_shape_emits_root_signal_override(self):
+    def test_django_app_shape_emits_root_signal_override(self):
         # Mixed root manifests + a backend/ with stronger framework
-        # signal (Django via manage.py). The hallmark dbao-studio case.
+        # signal (Django via manage.py). The hallmark example-django-app case.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "requirements.txt").write_text("django\n", encoding="utf-8")
         (self.repo / "backend").mkdir()
@@ -1403,7 +1403,7 @@ class TestFailureDetectorsRequiredCases(unittest.TestCase):
         self.assertIn(FAILURE_ROOT_SIGNAL_OVERRIDE, types,
                       f"expected ROOT_SIGNAL_OVERRIDE in {types!r}")
 
-    def test_donkey_betz_world_shape_emits_silent_subdir_drop(self):
+    def test_example_mobile_app_shape_emits_silent_subdir_drop(self):
         # Recognized subdir name (mobile) holds Flutter — pubspec.yaml
         # is not in adopt's classification manifest set, so the dir
         # silently dropped without visibility-first.
@@ -1420,7 +1420,7 @@ class TestFailureDetectorsRequiredCases(unittest.TestCase):
         self.assertIn(FAILURE_SILENT_SUBDIR_DROP, types,
                       f"expected SILENT_SUBDIR_DROP in {types!r}")
 
-    def test_clarity_timelock_shape_emits_wrapper_directory_invisibility(self):
+    def test_clarity_contract_shape_emits_wrapper_directory_invisibility(self):
         # Empty root, single non-recognized child carrying the project.
         (self.repo / "timelocked-wallet").mkdir()
         (self.repo / "timelocked-wallet" / "Clarinet.toml").write_text(
@@ -1432,7 +1432,7 @@ class TestFailureDetectorsRequiredCases(unittest.TestCase):
         self.assertIn(FAILURE_WRAPPER_DIRECTORY_INVISIBILITY, types,
                       f"expected WRAPPER_DIRECTORY_INVISIBILITY in {types!r}")
 
-    def test_unified_donkey_betz_shape_emits_idempotency_and_pollution(self):
+    def test_monorepo_shape_emits_idempotency_and_pollution(self):
         # A Django root + an existing 00-START doc (no adopt markers)
         # + many "data-only" subdirs (config / docs / data files).
         (self.repo / "manage.py").write_text("# d\n", encoding="utf-8")
@@ -1501,7 +1501,7 @@ class TestFailureDetectorEdgeCases(unittest.TestCase):
         self.assertIn(FAILURE_UNRECOGNIZED_ECOSYSTEM, types)
 
     def test_misleading_classification_fires_for_truffle_at_root(self):
-        # tornado-core shape: package.json + truffle-config.js at root.
+        # example-solidity-app shape: package.json + truffle-config.js at root.
         # Adopt classifies as plain JavaScript — label undersells.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "truffle-config.js").write_text("// t\n", encoding="utf-8")
@@ -1635,7 +1635,7 @@ class TestMonorepoDepthLimit(unittest.TestCase):
     def _types(self, failures):
         return {f.failure_type for f in failures}
 
-    def test_fns_monorepo_shape_emits_monorepo_depth_limit(self):
+    def test_web3_monorepo_shape_emits_monorepo_depth_limit(self):
         # The headline §22 case: root package.json + apps/ holding
         # both a Foundry Solidity project and a Next.js app at
         # depth 2. v0.2.x emitted 0 failure records on this shape;
@@ -1834,7 +1834,7 @@ class TestWorkspaceChildren(unittest.TestCase):
     rendering.
 
     Each fixture mirrors a cloned dogfood repo's shape in miniature:
-      - fns-monorepo: apps/forge (Foundry) + apps/next (Next.js)
+      - example-web3-monorepo: apps/forge (Foundry) + apps/next (Next.js)
       - turborepo example: apps/web + apps/docs
       - flutter example: apps/buyer_app + apps/seller_app
 
@@ -1852,9 +1852,9 @@ class TestWorkspaceChildren(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    # ---- fns-monorepo ---------------------------------------------------
+    # ---- example-web3-monorepo ---------------------------------------------------
 
-    def test_fns_monorepo_detects_forge_and_next(self):
+    def test_web3_monorepo_detects_forge_and_next(self):
         # Root package.json + apps/forge (Foundry/Solidity) +
         # apps/next (Next.js TSX). v0.8 must surface BOTH children.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
@@ -1899,9 +1899,9 @@ class TestWorkspaceChildren(unittest.TestCase):
         # .tsx is generic; needs >= MIN_SOURCE_FILES_TO_REPORT (3).
         self.assertEqual(nxt_child.notable_extensions.get(".tsx"), 3)
 
-    def test_fns_monorepo_classification_unchanged_v07_behavior(self):
+    def test_web3_monorepo_classification_unchanged_v07_behavior(self):
         # The v0.8 ship explicitly does NOT touch classification.
-        # Same fns-monorepo shape: language must still be "javascript"
+        # Same example-web3-monorepo shape: language must still be "javascript"
         # (root package.json wins), parts must stay empty, and apps/
         # must still appear in unclassified_subdirs.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
@@ -2063,7 +2063,7 @@ class TestWorkspaceChildren(unittest.TestCase):
 
     def test_workspace_walk_does_not_change_existing_failure_label(self):
         # MONOREPO_DEPTH_LIMIT must continue to fire on the same
-        # fns-monorepo shape — the v0.8 data-model addition is
+        # example-web3-monorepo shape — the v0.8 data-model addition is
         # purely additive and must not silence the v0.3 detector.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "apps").mkdir()
@@ -2104,7 +2104,7 @@ class TestWorkspaceChildrenRendering(unittest.TestCase):
         self._tmp.cleanup()
 
     def _build_fns_fixture(self):
-        # The fns-monorepo shape used in the data-model tests.
+        # The example-web3-monorepo shape used in the data-model tests.
         # Reproduced here so render assertions don't depend on
         # rerunning the data-model class fixtures.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
@@ -2284,9 +2284,9 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
         for n in range(3):
             (nxt / "app" / f"page{n}.tsx").write_text("// tsx\n", encoding="utf-8")
 
-    # ---- Required regression: fns-monorepo dedup ----------------------
+    # ---- Required regression: example-web3-monorepo dedup ----------------------
 
-    def test_fns_monorepo_dedup_apps_not_in_unknown_but_present(self):
+    def test_web3_monorepo_dedup_apps_not_in_unknown_but_present(self):
         # The headline UX bug from the v0.8 dogfood: apps/ rendered
         # in BOTH "Needs clarification" (with truncated/aggregated
         # counts) AND "Workspace children" (with per-child counts).
@@ -2407,7 +2407,7 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
     # ---- MONOREPO_DEPTH_LIMIT description text ------------------------
 
     def test_monorepo_depth_limit_description_updated(self):
-        # The label still fires on the same fns-monorepo shape, but
+        # The label still fires on the same example-web3-monorepo shape, but
         # the description text is updated to reflect that children
         # ARE surfaced (just not classified into the primary stack).
         self._build_fns_fixture()
@@ -2477,7 +2477,7 @@ class TestWorkspaceChildrenRenderingPolish(unittest.TestCase):
 
     def test_workspace_html_body_does_not_duplicate_hint(self):
         # The expanded body must NOT repeat the hint that's already
-        # in the summary's hint-badge. fns-monorepo apps/forge has
+        # in the summary's hint-badge. example-web3-monorepo apps/forge has
         # a Solidity hint — it appears once via the badge and once
         # in the description below the manifest section was the
         # bug. Now: appears once via the badge only.
@@ -2824,9 +2824,9 @@ class TestWorkspaceStackSummary(unittest.TestCase):
                           description="demo", next_step="ship v1"))
         return buf.getvalue()
 
-    # ---- fns-monorepo: Solidity + Next.js ---------------------------
+    # ---- example-web3-monorepo: Solidity + Next.js ---------------------------
 
-    def test_fns_monorepo_workspace_stack_lists_solidity_and_nextjs(self):
+    def test_web3_monorepo_workspace_stack_lists_solidity_and_nextjs(self):
         # apps/forge has foundry.toml + .sol → Solidity.
         # apps/next has next.config.js + package.json → Next.js.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
@@ -3038,7 +3038,7 @@ class TestWorkspaceStackSummary(unittest.TestCase):
     # ---- Phase 3 must not change primary classification -------------
 
     def test_phase3_does_not_change_primary_classification(self):
-        # Same fns-monorepo shape; primary remains "javascript", parts
+        # Same example-web3-monorepo shape; primary remains "javascript", parts
         # remain empty (no v0.7 split-monorepo classification fired).
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "apps").mkdir()
@@ -3103,7 +3103,7 @@ class TestStackRealityCheck(unittest.TestCase):
 
     # ---- assessment categorization ----------------------------------
 
-    def test_fns_monorepo_assessment_is_mixed_workspace_project(self):
+    def test_web3_monorepo_assessment_is_mixed_workspace_project(self):
         # Spec example: primary=JS + workspace=Solidity+Next.js
         # → Mixed workspace project / Medium.
         self._build_fns_fixture()
@@ -3289,9 +3289,9 @@ class TestProjectTypeInference(unittest.TestCase):
                           description="demo", next_step="ship v1"))
         return buf.getvalue()
 
-    # ---- 1. fns-monorepo -> Web3 dApp ------------------------------
+    # ---- 1. example-web3-monorepo -> Web3 dApp ------------------------------
 
-    def test_fns_monorepo_is_web3_dapp(self):
+    def test_web3_monorepo_is_web3_dapp(self):
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "apps").mkdir()
         forge = self.repo / "apps" / "forge"
@@ -3388,7 +3388,7 @@ class TestProjectTypeInference(unittest.TestCase):
     # ---- surface in all four output paths --------------------------
 
     def test_project_type_surfaces_in_all_outputs(self):
-        # Use the fns-monorepo fixture (Web3 dApp).
+        # Use the example-web3-monorepo fixture (Web3 dApp).
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "apps").mkdir()
         forge = self.repo / "apps" / "forge"
@@ -3497,9 +3497,9 @@ class TestSuggestedActions(unittest.TestCase):
                           description="demo", next_step="ship v1"))
         return buf.getvalue()
 
-    # ---- 1. fns-monorepo: Web3 dApp + child workspaces -------------
+    # ---- 1. example-web3-monorepo: Web3 dApp + child workspaces -------------
 
-    def test_fns_monorepo_has_contract_workspace_and_inspect_children(self):
+    def test_web3_monorepo_has_contract_workspace_and_inspect_children(self):
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "apps").mkdir()
         forge = self.repo / "apps" / "forge"
@@ -4037,9 +4037,9 @@ class TestWorkspaceAwarePrimaryDetection(unittest.TestCase):
         self.assertIn("Unknown stack — no manifest detected", out)
         self.assertNotIn("inferred from workspace children", out)
 
-    # ---- 3. fns-monorepo: JS root detection still wins ------------
+    # ---- 3. example-web3-monorepo: JS root detection still wins ------------
 
-    def test_fns_monorepo_root_detection_unchanged(self):
+    def test_web3_monorepo_root_detection_unchanged(self):
         # Root has package.json -> JavaScript wins. Phase 4.5
         # never overrides JS / Python root detections.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
@@ -4211,7 +4211,7 @@ class TestSuggestedActionsContextAware(unittest.TestCase):
 
     # ---- 1. Web3 dApp: reason names Solidity + frontend children ----
 
-    def test_fns_monorepo_action_names_concrete_children(self):
+    def test_web3_monorepo_action_names_concrete_children(self):
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "apps").mkdir()
         forge = self.repo / "apps" / "forge"
@@ -4326,7 +4326,7 @@ class TestSuggestedActionsContextAware(unittest.TestCase):
     # ---- 5. MONOREPO_DEPTH_LIMIT: refined "Review workspace children"
 
     def test_review_workspace_children_action_names_children(self):
-        # fns-monorepo shape — MONOREPO_DEPTH_LIMIT fires; the
+        # example-web3-monorepo shape — MONOREPO_DEPTH_LIMIT fires; the
         # refined action mentions concrete child names.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
         (self.repo / "apps").mkdir()
@@ -4560,7 +4560,7 @@ class TestEcosystemCoverage(unittest.TestCase):
 
     Mirrors the dogfood failures from SESSION_011 in synthesized
     form. Each fixture stands in for a real repo (ripgrep,
-    kubernetes, openzeppelin-contracts, react-native, fns-monorepo,
+    kubernetes, openzeppelin-contracts, react-native, example-web3-monorepo,
     transformers) and locks in the new project-type / detection
     behavior so a future regression is caught early.
     """
@@ -4740,7 +4740,7 @@ class TestEcosystemCoverage(unittest.TestCase):
 
     # ---- Regression sanity: Phase 4.x behavior preserved ---------
 
-    def test_fns_monorepo_shape_still_web3_dapp(self):
+    def test_web3_monorepo_shape_still_web3_dapp(self):
         # Web3 dApp rule (Solidity + Next.js) must still beat the
         # new Smart contract rule on combined fixtures.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")
@@ -5056,7 +5056,7 @@ class TestAgentLaunchPrompt(unittest.TestCase):
     # ---- Pre-write safety: prompt works without generated docs ----
 
     def test_safety_instructions_handle_missing_generated_docs(self):
-        # v0.10.x — real-world testing on contract-concierge
+        # v0.10.x — real-world testing on example-contract-app
         # showed the agent reported BUILD_PLAN.md / PROJECT_WHAT_
         # IT_IS.md / CLAUDE.md as missing because adopt --html
         # without --write doesn't create them. The prompt's
@@ -5084,7 +5084,7 @@ class TestAgentLaunchPrompt(unittest.TestCase):
 
 class TestSplitMonorepoFullStackProjectType(unittest.TestCase):
     """v0.10.x — close the v0.1 split-monorepo gap in
-    ``derive_project_type``. Before this fix, contract-concierge
+    ``derive_project_type``. Before this fix, example-contract-app
     (backend/ Python + frontend/ Vite) classified as "Unclear
     project type" because the Full-stack web app rule only
     handled the workspace-children case (Phase 4.2 Rule 3 a).
@@ -5114,7 +5114,7 @@ class TestSplitMonorepoFullStackProjectType(unittest.TestCase):
         return stack, reality, ptype, summary, prompt
 
     def _build_cc_fixture(self):
-        # contract-concierge shape: backend/ Python + frontend/
+        # example-contract-app shape: backend/ Python + frontend/
         # Vite + .tsx. No root manifest of its own.
         (self.repo / "backend").mkdir()
         (self.repo / "backend" / "requirements.txt").write_text(
@@ -5133,7 +5133,7 @@ class TestSplitMonorepoFullStackProjectType(unittest.TestCase):
             (self.repo / "frontend" / "src" / f"App{n}.tsx").write_text(
                 "// tsx\n", encoding="utf-8")
 
-    def test_contract_concierge_shape_is_full_stack_web_app(self):
+    def test_contract_app_shape_is_full_stack_web_app(self):
         self._build_cc_fixture()
         stack, _, ptype, _, _ = self._derive()
         # Detection unchanged — v0.1 split-monorepo path produces
@@ -5255,7 +5255,7 @@ class TestSplitMonorepoFullStackProjectType(unittest.TestCase):
 class TestPlaceholdersDoNotBlockInspection(unittest.TestCase):
     """v0.10.x — placeholders should not block read-only inspection.
 
-    Real-world testing on contract-concierge after `adopt --write`
+    Real-world testing on example-contract-app after `adopt --write`
     showed agents stopping to ask the user about
     `[adopt: please describe]` placeholders before doing any
     repo inspection. Generated docs should explicitly tell the

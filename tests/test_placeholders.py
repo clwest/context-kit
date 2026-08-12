@@ -29,10 +29,10 @@ class TestDerivePlaceholders(unittest.TestCase):
         self.assertEqual(p["APP_TITLE"], "My App")
 
     def test_kebab_input_unchanged(self):
-        p = derive_placeholders("donkey-betz")
-        self.assertEqual(p["APP_SLUG"], "donkey-betz")
-        self.assertEqual(p["APP_UPPER"], "DONKEY_BETZ")
-        self.assertEqual(p["APP_TITLE"], "Donkey Betz")
+        p = derive_placeholders("example-app")
+        self.assertEqual(p["APP_SLUG"], "example-app")
+        self.assertEqual(p["APP_UPPER"], "EXAMPLE_APP")
+        self.assertEqual(p["APP_TITLE"], "Example App")
 
     def test_two_words_lowercase_with_space_become_hyphenated_slug(self):
         # The user-reported wizard verification bug hinged on "stress test"

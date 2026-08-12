@@ -5,7 +5,7 @@ status: active
 
 # Dos and Don'ts
 
-Rules distilled from building `unified-donkey-betz` with an AI pair across ~1100 sessions. Each has a real incident attached so you know *why* the rule exists.
+Rules distilled from building `example-monorepo` with an AI pair across ~1100 sessions. Each has a real incident attached so you know *why* the rule exists.
 
 ---
 

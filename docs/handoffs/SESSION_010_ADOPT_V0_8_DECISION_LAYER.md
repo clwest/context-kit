@@ -237,11 +237,11 @@ gains exactly one new behavior — workspace-aware primary
 inference for the Flutter / Solidity / Next.js cases when root
 detection is unknown.
 
-## Live dogfood snapshot (per `/development/context-kit-dogfood-repos/`)
+## Live dogfood snapshot (per `~/dev/context-kit-dogfood-repos/`)
 
 | repo | project type | next-action count |
 |---|---|---|
-| fns-monorepo | Web3 dApp | 3 |
+| example-web3-monorepo | Web3 dApp | 3 |
 | turborepo-next-django-starter | Full-stack web app | 3 |
 | flutter-monorepo-example | Mobile app suite | 3 |
 | expo-monorepo-example | Unclear project type | 1 |
@@ -307,7 +307,7 @@ candidate for a future Phase 4.x refinement.
 | Adopt tests | `tests/test_adopt.py` |
 | v0.7.0 design (still authoritative for the foundation) | `docs/proposals/SESSION_009_ADOPT.md` |
 | Recent commits | `git log --oneline efaef43~14..HEAD` |
-| Dogfood repos | `/Users/donkeyking/development/context-kit-dogfood-repos/` |
+| Dogfood repos | `~/dev/context-kit-dogfood-repos/` |
 
 ## AI Notes
 

@@ -10,12 +10,12 @@ previous_handoff: ./SESSION_018_SPOKESPERSON_CORPUS_PATTERN.md
 ## Why this handoff exists
 
 The `infra/fleet-net` networking convention powering
-`/Users/donkeyking/development/infra/` (the local anchor that
-connects unified-donkey-betz + character-os + their data
+`~/dev/infra/` (the local anchor that
+connects example-monorepo + example-agent-os + their data
 services) was distilled into a reusable sub-pattern during
-u-d-b session 1117 (2026-05-21), landed there as a working
+example-monorepo session 1117 (2026-05-21), landed there as a working
 example at
-`unified-donkey-betz/docs/docs-pattern/fleet-network/`. The
+`example-monorepo/docs/docs-pattern/fleet-network/`. The
 README explicitly noted it should be ported into context-kit
 as a sub-pattern — same shape as the spokesperson-corpus port
 that SESSION_018 shipped.
@@ -61,9 +61,9 @@ Four files, ~439 lines total:
 - `templates/README.md` — manifest template with placeholders
   for fleet name, attached containers table, host-port policy.
 
-The "Note to context-kit maintainers" preamble from the u-d-b
+The "Note to context-kit maintainers" preamble from the example-monorepo
 version was replaced with a shorter "Origin" note that points
-at u-d-b session 1117 + this session and references the
+at example-monorepo session 1117 + this session and references the
 proposal doc.
 
 ### `cli/_pattern/README.md` — Sub-patterns row added

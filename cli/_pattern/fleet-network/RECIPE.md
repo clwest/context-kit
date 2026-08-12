@@ -9,7 +9,7 @@ network, then once per new app to attach.
 Before you start, know:
 
 - **Fleet root directory**: where you keep your apps (e.g.
-  `/Users/donkeyking/development/`)
+  `~/dev/`)
 - **Currently running data containers** you want on the network — for each:
   - Container name (`docker ps --format '{{.Names}}'`)
   - Which app owns it (for the manifest)
@@ -21,18 +21,18 @@ Before you start, know:
 
 ```bash
 # 1. Create the anchor directory at the fleet root
-mkdir -p /Users/donkeyking/development/infra
+mkdir -p ~/dev/infra
 
 # 2. Create the external Docker network (idempotent — if it exists, this
 #    errors but doesn't break anything)
 docker network create fleet-net
 
 # 3. Drop in the anchor compose file (declares fleet-net as external)
-cp templates/docker-compose.yml /Users/donkeyking/development/infra/
+cp templates/docker-compose.yml ~/dev/infra/
 
 # 4. Drop in the manifest template and fill it out for your fleet
-cp templates/README.md /Users/donkeyking/development/infra/
-$EDITOR /Users/donkeyking/development/infra/README.md
+cp templates/README.md ~/dev/infra/
+$EDITOR ~/dev/infra/README.md
 ```
 
 ## One-time per existing container: attach
@@ -89,7 +89,7 @@ services:
 ```
 
 The new service can now reach any other `fleet-net` member by container name
-(e.g. `udb-postgres:5432`).
+(e.g. `app-a-postgres:5432`).
 
 ## Host-port collision policy
 
@@ -98,7 +98,7 @@ When two apps want `:8000`, one has to move. Conventions to codify in your
 manifest:
 
 - **One app per common port** — anchor the "canonical owner" of each port
-  (e.g. u-d-b owns `:8000` because its Procfile + Makefile assume it).
+  (e.g. `app-a` owns `:8000` because its Procfile + Makefile assume it).
 - **Document the swap point** — if you move an app to a non-default port,
   add a line to its README so the move is reversible.
 - **Apps inside `fleet-net` containers are unaffected** — different network
@@ -135,4 +135,4 @@ The manifest needs to be re-edited any time:
 
 - `templates/docker-compose.yml` — the anchor file with no services
 - `templates/README.md` — manifest template with placeholders to fill in
-- The first worked instance: `/Users/donkeyking/development/infra/`
+- `README.md` — the pattern overview and worked example

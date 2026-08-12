@@ -1,6 +1,6 @@
 """Placeholder derivation and substitution for context-kit.
 
-A single user-provided app name (e.g. "Donkey Betz") is the source of truth;
+A single user-provided app name (e.g. "Example App") is the source of truth;
 every other form (APP_UPPER, APP_SLUG, APP_TITLE) is derived mechanically so
 callers never hand-maintain the variants.
 """
@@ -16,8 +16,8 @@ def derive_placeholders(app_name: str) -> dict[str, str]:
     """Derive all placeholder variants from a single app name.
 
     Examples:
-        >>> derive_placeholders("donkey-betz")["APP_UPPER"]
-        'DONKEY_BETZ'
+        >>> derive_placeholders("example-app")["APP_UPPER"]
+        'EXAMPLE_APP'
         >>> derive_placeholders("MyApp")["APP_TITLE"]
         'My App'
         >>> derive_placeholders("two words")["APP_SLUG"]

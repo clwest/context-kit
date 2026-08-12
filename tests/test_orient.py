@@ -158,7 +158,7 @@ class TestLatestHandoffSelection(unittest.TestCase):
         self.assertIsNone(_latest_numbered_handoff(self.handoffs_dir))
 
     def test_four_digit_session_beats_three_digit(self):
-        # The unified-donkey-betz bug: ASCII '9' > '1', so under
+        # The example-monorepo bug: ASCII '9' > '1', so under
         # lex-sort SESSION_999_* wins. Numeric sort must pick 1098.
         self._touch("SESSION_999_STOCK_INTELLIGENCE_HUB.md")
         winner = self._touch("SESSION_1098_WRAP_CANARY_GREEN.md")
@@ -554,7 +554,7 @@ class TestAnchorPinFromCanonicalDocs(unittest.TestCase):
         (self.project / "docs" / "ALPHA_WHAT_IT_IS.md").write_text("# What\n")
         # Two ``*_INVENTORY.md`` candidates. Alphabetic-first is
         # BACKUP, but verify.yaml will pin PRIMARY. Mirrors the
-        # Donkey Betz situation: BACKEND_INVENTORY sorts before
+        # Example App situation: BACKEND_INVENTORY sorts before
         # PLATFORM_INVENTORY despite the latter being canonical.
         (self.project / "docs" / "BACKUP_INVENTORY.md").write_text("# backup\n")
         (self.project / "docs" / "PRIMARY_INVENTORY.md").write_text("# primary\n")

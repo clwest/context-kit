@@ -48,7 +48,7 @@ ANCHOR_DOC_GLOBS = (
 )
 
 # Section headings that may contain calibration moments worth promoting
-# to TRUST_CALIBRATION.md. The recent character-os convention is
+# to TRUST_CALIBRATION.md. The recent example-agent-os convention is
 # "Calibration moments worth carrying"; the original collab-roles guide
 # uses "AI Notes". Accept both — fuzzy on either word.
 CALIBRATION_HEADING_PATTERNS = (

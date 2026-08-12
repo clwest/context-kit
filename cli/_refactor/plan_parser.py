@@ -1,7 +1,7 @@
 """Parse a Phase-0-style migration plan markdown file.
 
 The reference shape is the auto-generated ``TASKS_MIGRATION_PLAN.md``
-produced by unified-donkey-betz's ``scripts/phase0_tasks_inventory.py``,
+produced by example-monorepo's ``scripts/phase0_tasks_inventory.py``,
 but the parser is intentionally lenient: any markdown file with a
 ``Total tasks:`` (or ``Total items:``) line and a markdown table whose
 first column is a destination filename will work.

@@ -29,7 +29,7 @@ in commit `203226c`.
 ## Dogfood batch 2 — 7 real-world public repos
 
 Run read-only against a fresh batch of well-known projects in
-`/Users/donkeyking/development/context-kit-dogfood-repos/`:
+`~/dev/context-kit-dogfood-repos/`:
 
   openzeppelin-contracts, ripgrep, next.js, transformers,
   django, react-native, kubernetes
@@ -109,7 +109,7 @@ kubernetes (95+ .go files in `cmd/`, 175+ in `pkg/`).
   children". openzeppelin gets all 7 needs-clarification dirs
   in "Classify unrecognized directories".
 - **No regressions vs. v0.7.0** on the original 5 dogfood repos
-  (fns-monorepo, turborepo, flutter, expo, solidity-template).
+  (example-web3-monorepo, turborepo, flutter, expo, solidity-template).
 
 ### What batch 2 says about v0.9.0 scope
 
@@ -178,7 +178,7 @@ Suggested v0.9.0 spec:
 | v0.7.0 release context | `docs/handoffs/SESSION_009_ADOPT_AND_0_7_0.md` |
 | Adopt code | `cli/adopt.py` |
 | Adopt tests | `tests/test_adopt.py` |
-| Dogfood repos | `/Users/donkeyking/development/context-kit-dogfood-repos/` |
+| Dogfood repos | `~/dev/context-kit-dogfood-repos/` |
 | v0.8.0 dogfood HTML reports (latest run) | `/var/folders/.../T/contextkit-adopt-report-*.html` |
 
 ## AI Notes

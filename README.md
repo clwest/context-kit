@@ -681,12 +681,12 @@ Everything under `starter/scaffold/` is language-specific and opt-in.
 
 The bootstrap derives every form from a single `NAME`:
 
-| Placeholder | Input `"My App"` | Input `"donkey-betz"` |
+| Placeholder | Input `"My App"` | Input `"example-app"` |
 |---|---|---|
-| `{{APP}}` | `My App` | `donkey-betz` |
-| `{{APP_SLUG}}` | `my-app` | `donkey-betz` |
-| `{{APP_UPPER}}` | `MY_APP` | `DONKEY_BETZ` |
-| `{{APP_TITLE}}` | `My App` | `Donkey Betz` |
+| `{{APP}}` | `My App` | `example-app` |
+| `{{APP_SLUG}}` | `my-app` | `example-app` |
+| `{{APP_UPPER}}` | `MY_APP` | `EXAMPLE_APP` |
+| `{{APP_TITLE}}` | `My App` | `Example App` |
 | `{{DATE}}` | today, YYYY-MM-DD | today, YYYY-MM-DD |
 | `{{YEAR}}` | today's year | today's year |
 

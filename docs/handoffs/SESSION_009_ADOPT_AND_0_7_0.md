@@ -47,7 +47,7 @@ The smallest credible surface area:
 
 ### v0.1 — split-monorepo detection (3f45087)
 
-Real `/development/` projects almost never have manifests at root —
+Real `~/dev/` projects almost never have manifests at root —
 they have `backend/` + `frontend/` (and sometimes `mobile/`). v0.1
 falls back to a depth-1 walk into seven recognized subdirs
 (`backend`, `frontend`, `web`, `mobile`, `api`, `client`, `server`)
@@ -59,8 +59,8 @@ when the root scan returns empty.
   frame anchors where the domain logic lives).
 - Generators render a per-subdir bullet table in BUILD_PLAN.md and
   the CLAUDE.md augment block when `parts` is non-empty.
-- Verified against `focus-flow`, `dealflowtracker`,
-  `contract-concierge`, `norman-handyman-mvp` (three-part split:
+- Verified against `example-web-app`, `example-tracker-app`,
+  `example-contract-app`, `example-mvp-app` (three-part split:
   backend + web + mobile), and `ai-content-studio` (single-stack
   root, regression-tested to confirm root still wins over a
   same-named subdir).
@@ -69,7 +69,7 @@ when the root scan returns empty.
 ### v0.2 — visibility-first unclassified scan (7a5ddb8)
 
 The load-bearing principle that emerged from the
-clarity-timelock + flow-name-service dogfood:
+example-clarity-contract + example-name-service dogfood:
 
 > **Never allow real project structure to be invisible.**
 
@@ -100,19 +100,19 @@ treadmill that would otherwise be required to keep up with new
 languages and frameworks.
 
 - +13 tests (33 total).
-- Three new dogfood fixtures logged in the proposal: dbao-studio
-  (§17), donkey_betz_world (§18), tornado-core (§20).
+- Three new dogfood fixtures logged in the proposal: example-django-app
+  (§17), example-mobile-app (§18), example-solidity-app (§20).
 
 ### v0.2.x — safety + clarity polish (8abde7d)
 
-The unified-donkey-betz dogfood (90+ subdir Django monorepo)
+The example-monorepo dogfood (90+ subdir Django monorepo)
 exposed four concrete issues that needed fixing before adopt was
 safe to use on real projects:
 
 1. **Idempotency** (the load-bearing fix). v0.2 had `BUILD_PLAN.md`,
    `PROJECT_WHAT_IT_IS.md`, and `00-START-NEXT-SESSION.md` as
    create-only — re-running `--write` would silently overwrite
-   user edits. unified-donkey-betz already had a hand-written
+   user edits. example-monorepo already had a hand-written
    `00-START-NEXT-SESSION.md` that v0.2 would have clobbered.
    v0.2.x wraps all three in adopt markers (same pattern as
    CLAUDE.md augment block) and adds a `skip` plan kind that
@@ -133,12 +133,12 @@ safe to use on real projects:
    only monorepos.
 4. **Data-only directory grouping.** Subdirs with files but no
    recognized source extensions collapse into a single "Data /
-   content / non-code directories" footer. unified-donkey-betz
+   content / non-code directories" footer. example-monorepo
    went from 35 identical "no recognized extensions" cards to
    one collapsible block.
 
 - +20 tests (53 total).
-- Confirmed safe on unified-donkey-betz: `would skip
+- Confirmed safe on example-monorepo: `would skip
   00-START-NEXT-SESSION.md (exists without adopt markers)`.
 
 ### `--html` static review report (2d350df) — proposal §21
@@ -197,10 +197,10 @@ reusable, structured signals:
 
 The first batch of `context-kit-dogfood-repos` clones (5
 open-source projects: expo-monorepo-example,
-flutter-monorepo-example, fns-monorepo, solidity-template,
+flutter-monorepo-example, example-web3-monorepo, solidity-template,
 turborepo-next-django-starter) exposed that 3 of 5 monorepo
 shapes emitted ZERO failure records under v0.2.x. Most damning:
-fns-monorepo with 29 `.sol` files plus `apps/forge/foundry.toml`
+example-web3-monorepo with 29 `.sol` files plus `apps/forge/foundry.toml`
 fired no labels because the depth-1 scan can't enter `apps/`.
 
 Two additions:
@@ -223,7 +223,7 @@ Two additions:
 
 - +8 tests (88 total for adopt).
 - All five cloned dogfood repos now produce meaningful labels.
-  Headline: fns-monorepo went from 0 failures to 1
+  Headline: example-web3-monorepo went from 0 failures to 1
   (MONOREPO_DEPTH_LIMIT for `apps/`).
 
 ### 0.7.0 release prep (a0ae625)
@@ -316,13 +316,13 @@ Closes the audit's release blockers:
   the visibility-first principle; §21 is the `--html` design;
   §22 is the v0.3 MONOREPO_DEPTH_LIMIT proposal. Appendix C is
   the broader dogfood-fixture inventory.
-- **Dogfood projects:** `/development/` for the original five
-  (focus-flow, dealflowtracker, contract-concierge,
-  norman-handyman-mvp, ai-content-studio) plus the four full
-  fixtures (dbao-studio, donkey_betz_world, clarity-timelock,
-  unified-donkey-betz, tornado-core under apps/). Five cloned
+- **Dogfood projects:** `~/dev/` for the original five
+  (example-web-app, example-tracker-app, example-contract-app,
+  example-mvp-app, ai-content-studio) plus the four full
+  fixtures (example-django-app, example-mobile-app, example-clarity-contract,
+  example-monorepo, example-solidity-app under apps/). Five cloned
   open-source projects under
-  `/development/context-kit-dogfood-repos/`.
+  `~/dev/context-kit-dogfood-repos/`.
 
 ## AI Notes
 

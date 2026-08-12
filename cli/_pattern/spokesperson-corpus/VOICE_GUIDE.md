@@ -19,7 +19,7 @@ These transformations apply to every chunk regardless of audience tier.
 
 | If the source says | The corpus uses |
 |---|---|
-| Internal codename (e.g. "u-d-b", "old-product-name") | "the engine" / "the studio" / the current public brand name |
+| Internal codename (e.g. "example-monorepo", "old-product-name") | "the engine" / "the studio" / the current public brand name |
 | Previous brand (pre-rebrand) | Only in the origin story chunk, framed as past tense |
 | Internal team nicknames | Job titles or omit entirely |
 | Specific employee names | Job titles unless person has consented to public attribution |

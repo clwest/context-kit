@@ -137,7 +137,7 @@ Exit codes match the rest of context-kit (0 = clean, 1 = warnings, 2 = errors).
 `context-kit doctor` check chain.
 
 The standalone `context-kit doctor` should detect the presence of
-`<HOME>/development/infra/` (or whatever `--root` was used) and run
+`<HOME>/dev/infra/` (or whatever `--root` was used) and run
 `fleet-net doctor` against it. Skipped if the anchor directory doesn't exist.
 
 ## Integration with existing commands
@@ -150,7 +150,7 @@ keeps it fresh. No change needed.
 ### `context-kit doctor`
 
 Add a new check that detects an `infra/` anchor directory at common locations
-(`<HOME>/development/`, `<HOME>/`, configurable) and runs `fleet-net doctor`
+(`<HOME>/dev/`, `<HOME>/`, configurable) and runs `fleet-net doctor`
 against it. Skipped if the directory doesn't exist.
 
 ### `context-kit orient`
@@ -214,7 +214,7 @@ Don't ship this subcommand until at least one additional laptop fleet (a
 different operator, a different OS, or a different stack mix) has used the
 pattern manually. The Docker Desktop caveat is the most likely place real
 shape will diverge from what the worked instance in
-`/Users/donkeyking/development/infra/` taught us.
+`~/dev/infra/` taught us.
 
 ## Open questions
 

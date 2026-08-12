@@ -147,14 +147,14 @@ Once this repo is accessible, the fastest bootstrap:
 
 ```bash
 # From the new app's repo root:
-cp -r /path/to/unified-donkey-betz/docs/docs-pattern docs/docs-pattern
+cp -r /path/to/example-monorepo/docs/docs-pattern docs/docs-pattern
 
 # Copy the verifier + inventory templates (language-adapt if needed):
-cp /path/to/unified-donkey-betz/core/services/doc_claim_verification.py <backend>/
-cp /path/to/unified-donkey-betz/core/services/platform_inventory.py <backend>/
-cp /path/to/unified-donkey-betz/core/management/commands/verify_doc_claims.py <backend>/commands/
-cp /path/to/unified-donkey-betz/core/management/commands/generate_platform_inventory.py <backend>/commands/
-cp /path/to/unified-donkey-betz/core/management/commands/build_docs_index.py <backend>/commands/
+cp /path/to/example-monorepo/core/services/doc_claim_verification.py <backend>/
+cp /path/to/example-monorepo/core/services/platform_inventory.py <backend>/
+cp /path/to/example-monorepo/core/management/commands/verify_doc_claims.py <backend>/commands/
+cp /path/to/example-monorepo/core/management/commands/generate_platform_inventory.py <backend>/commands/
+cp /path/to/example-monorepo/core/management/commands/build_docs_index.py <backend>/commands/
 ```
 
 Then adapt to your stack (Django → FastAPI → Next.js):

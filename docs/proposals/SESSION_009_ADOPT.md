@@ -7,7 +7,7 @@ shipped:
   - v0.1 (3f45087): split-layout detection (depth-1 subdir scan)
 deferred:
   - v0.2: deeper-than-1 layouts (apps/<name>/, microservices), confidence scoring, [adopt: please describe] doctor checks, recommend-stack integration, wizard branch
-authors: chris@donkeybetz.com, claude (claude-opus-4-7)
+authors: chris, claude (claude-opus-4-7)
 ---
 
 # Session 009 — `context-kit adopt`
@@ -255,15 +255,15 @@ nailing the contract before code is written is worth the time.
 `adopt` is read-only against source code — the strict invariant is
 **source bytes never change**.
 
-## 6. Sample dry-run report (against `focus-flow`)
+## 6. Sample dry-run report (against `example-web-app`)
 
 To make this concrete — what would `context-kit adopt
-/Users/donkeyking/development/focus-flow` print today?
+~/dev/example-web-app` print today?
 
 ```
 context-kit adopt — DRY RUN
 ===========================
-target: /Users/donkeyking/development/focus-flow
+target: ~/dev/example-web-app
 
 Detected:
   • Split monorepo (backend/ + frontend/)
@@ -410,8 +410,8 @@ we have real-user feedback on the bare command.
 > set lands as fixtures and assertions are added in v0.2 work.
 >
 > Real-world dogfood (manual, dry-run only) covered all 6 listed
-> projects: focus-flow, dealflowtracker, contract-concierge,
-> norman-handyman-mvp, ai-content-studio, and (held in reserve) the
+> projects: example-web-app, example-tracker-app, example-contract-app,
+> example-mvp-app, ai-content-studio, and (held in reserve) the
 > Flutter project. All five tested projects produce usable plans on
 > first try.
 
@@ -444,7 +444,7 @@ large and varied. The pattern:
 - `[adopt: please describe]` placeholders count matches expected.
 - Managed-block markers present and well-formed.
 - README first paragraph extraction works for the README shapes
-  we have in /development/.
+  we have in ~/dev/.
 
 **Materializer tests** (~6):
 - Dry-run never writes.
@@ -455,18 +455,18 @@ large and varied. The pattern:
   (`idea.md`, session priorities).
 
 **Real-world dogfood tests** — *not in CI*. We run these manually
-against `/development/` projects before each release of `adopt`:
+against `~/dev/` projects before each release of `adopt`:
 
 | Project | Expected detection | Notes |
 |---|---|---|
-| `focus-flow` | Split monorepo (backend + frontend) | The medium case. |
-| `dealflowtracker` | Split monorepo + render.yaml + start.sh | Tests deployment-script signal handling. |
-| `norman-handyman-mvp` | Multi-platform (backend + mobile + web) + existing CLAUDE.md | Tests augment-only path on a real CLAUDE.md. |
-| `contract-concierge` | Split monorepo + render.yaml | Smaller version of dealflowtracker. |
+| `example-web-app` | Split monorepo (backend + frontend) | The medium case. |
+| `example-tracker-app` | Split monorepo + render.yaml + start.sh | Tests deployment-script signal handling. |
+| `example-mvp-app` | Multi-platform (backend + mobile + web) + existing CLAUDE.md | Tests augment-only path on a real CLAUDE.md. |
+| `example-contract-app` | Split monorepo + render.yaml | Smaller version of example-tracker-app. |
 | `ai-content-studio` | Django (largest test) | Stress test — many subdirs, many manifests. |
 | `flutter` | Flutter / Dart | Tests pubspec detection. |
 
-The user explicitly excluded `unified-donkey-betz` from dogfooding;
+The user explicitly excluded `example-monorepo` from dogfooding;
 that's the integration-mega-project and would be a poor first test.
 
 Total expected tests: **~50**, raising the suite from 239 → ~289.
@@ -638,11 +638,11 @@ after v0 + v0.1 shipped to track what landed and what's next.*
 
 ## 15. v0.2 backlog (post-v0.1)
 
-> **Update (2026-04-26, after the clarity-timelock + flow-name-service
+> **Update (2026-04-26, after the example-clarity-contract + example-name-service
 > dogfood):** items #1 and #2 below are **superseded by §19**, which
 > consolidates them under a single core principle — *visibility
 > first, classification second*. The original items captured the
-> right symptoms (dbao-studio's misclassification, donkey_betz_world's
+> right symptoms (example-django-app's misclassification, example-mobile-app's
 > silent drop) but proposed ecosystem-by-ecosystem fixes that don't
 > generalize. §19's fallback-scan approach handles every fixture we've
 > logged so far, plus future Web3 / Solidity / Rust / Go projects we
@@ -659,7 +659,7 @@ five-project dogfood at the close of v0.1:
    "abandoned-shape" repos where the root carries weak/leftover
    manifests (e.g. a root `package.json` for tooling) and the
    real application lives in `backend/` + `frontend/`. The
-   dbao-studio fixture (see §17) is the canonical example: root
+   example-django-app fixture (see §17) is the canonical example: root
    has both `package.json` and `requirements.txt`, but `backend/`
    contains `manage.py` (a much stronger Django signal) and the
    existing CLAUDE.md confirms "Django backend". v0.2 should: (a)
@@ -677,7 +677,7 @@ five-project dogfood at the close of v0.1:
    `go.mod`, `Gemfile`, `*.xcodeproj`, `app/build.gradle`) is
    silently dropped — `_detect_in_dir()` returns `unknown` with
    empty signals and the scanner skips the subdir entirely so it
-   never appears in the dry-run report. The donkey_betz_world
+   never appears in the dry-run report. The example-mobile-app
    fixture (see §18) is the canonical example: the repo has a
    real Flutter app under `mobile/` but v0.1's report mentions
    only backend + frontend. v0.2 should: (a) extend the manifest
@@ -746,13 +746,13 @@ closes the "honest about what we don't know" loop alongside
 item 6. Items 7–9 are nice-to-haves once the core is solid.
 
 Specific fixture-to-item mapping (post-§19):
-- **All four logged fixtures** (dbao-studio §17, donkey_betz_world
-  §18, plus the clarity-timelock and flow-name-service cases that
+- **All four logged fixtures** (example-django-app §17, example-mobile-app
+  §18, plus the example-clarity-contract and example-name-service cases that
   motivated §19) are addressed by §19's visibility-first design.
-- **dbao-studio** additionally benefits from item #5 (framework
+- **example-django-app** additionally benefits from item #5 (framework
   detection inside manifests) — §19 makes mobile/ visible but
   doesn't upgrade "Python" to "Django"; item #5 does.
-- **donkey_betz_world** likewise benefits from item #5.
+- **example-mobile-app** likewise benefits from item #5.
 - All four fixtures benefit from item #4 (idempotent rewrites)
   if the user hand-edits the generated docs and re-runs adopt.
 
@@ -780,9 +780,9 @@ let real projects expose the next limit, then design v0.2 against
 evidence. This is the same pattern that worked for `recommend-
 stack` (Session 7) and `doctor` (Session 6).
 
-## 17. v0.2 fixture: dbao-studio
+## 17. v0.2 fixture: example-django-app
 
-A real project at `/Users/donkeyking/development/dbao-studio` that
+A real project at `~/dev/example-django-app` that
 v0.1 misclassifies. Logged here as a concrete acceptance target
 for the v0.2 work — when v0.2 ships, the dry-run against this
 project should produce a correct BUILD_PLAN without hand-editing.
@@ -872,9 +872,9 @@ And the generated BUILD_PLAN's `## Tech stack` heading should read:
 - **Frontend:** JavaScript / Node.js (detected from `frontend/package.json`)
 ```
 
-### Acceptance criteria for "v0.2 handles dbao-studio"
+### Acceptance criteria for "v0.2 handles example-django-app"
 
-- [ ] `detect_stack(dbao_studio_path).parts` is non-empty and
+- [ ] `detect_stack(django_app_path).parts` is non-empty and
       contains `{"backend": "django", "frontend": "javascript"}`
       (or `"python"` if framework detection from item #4 doesn't
       land in the same v0.2 ship).
@@ -908,30 +908,30 @@ And the generated BUILD_PLAN's `## Tech stack` heading should read:
 A v0.2 release that ships §19 + items #4 + #5 would handle this
 fixture cleanly. The other backlog items (#3 Turborepo walking,
 #6 doctor placeholders, #7–9) are orthogonal — important on their
-own merits but not required to fix dbao-studio.
+own merits but not required to fix example-django-app.
 
 ### How to use this fixture during v0.2 implementation
 
 Manual (dry-run, safe — never touches source):
 
 ```bash
-python3 context_kit.py adopt /Users/donkeyking/development/dbao-studio
+python3 context_kit.py adopt ~/dev/example-django-app
 ```
 
 The expected output above (or close to it) is the eyeball test.
 For automated coverage, lift a stripped-down fixture under
-`tests/fixtures/adopt/dbao_studio_shape/` containing just the
+`tests/fixtures/adopt/django_app_shape/` containing just the
 manifest files and an existing CLAUDE.md — that lets the test
 suite assert the new detection priority without depending on the
-real `/development/` path.
+real `~/dev/` path.
 
-## 18. v0.2 fixture: donkey_betz_world (Flutter mobile)
+## 18. v0.2 fixture: example-mobile-app (Flutter mobile)
 
-A real project at `/Users/donkeyking/development/donkey_betz_world`
+A real project at `~/dev/example-mobile-app`
 that v0.1 partially handles correctly but silently drops one
 component. Logged as a second concrete acceptance target for v0.2,
-complementary to dbao-studio (§17). Where dbao-studio exposes the
-"misclassification" failure mode, donkey_betz_world exposes the
+complementary to example-django-app (§17). Where example-django-app exposes the
+"misclassification" failure mode, example-mobile-app exposes the
 worse "honest-by-omission" failure mode — the dry-run report
 mentions only the two stacks v0.1 understands and gives no signal
 that anything was missed.
@@ -988,7 +988,7 @@ The generated BUILD_PLAN's `## Tech stack` section reads:
 An AI session loaded into this project from these docs would build
 two-thirds of the application — backend and web frontend — and
 have no awareness that there's a Flutter mobile app to keep in
-sync. That's a more dangerous failure than dbao-studio's
+sync. That's a more dangerous failure than example-django-app's
 misclassification: a wrong fact can be challenged; a missing fact
 cannot.
 
@@ -1035,12 +1035,12 @@ sub-bullet and is the load-bearing part of the fix; the manifest
 recognition list extension is item #2's "(a)" and is mostly
 mechanical.
 
-### Acceptance criteria for "v0.2 handles donkey_betz_world"
+### Acceptance criteria for "v0.2 handles example-mobile-app"
 
 Either path satisfies the fixture:
 
 **Full fix** (item #2 ships both (a) and (b)):
-- [ ] `detect_stack(donkey_betz_world).parts` contains
+- [ ] `detect_stack(example-mobile-app).parts` contains
       `{"backend": "python", "frontend": "javascript", "mobile": "flutter"}`
       (or whatever `_lang_label` ends up calling Dart).
 - [ ] BUILD_PLAN.md renders all three subdirs in its bullet table.
@@ -1084,7 +1084,7 @@ three subdirs.
 Manual (dry-run, safe — never touches source):
 
 ```bash
-python3 context_kit.py adopt /Users/donkeyking/development/donkey_betz_world
+python3 context_kit.py adopt ~/dev/example-mobile-app
 ```
 
 Compare the output against the "desired v0.2 behavior" block
@@ -1094,7 +1094,7 @@ silent-omission gap regardless of whether full Flutter support
 lands at the same time.
 
 For automated coverage, lift a stripped-down fixture under
-`tests/fixtures/adopt/donkey_betz_world_shape/` containing the
+`tests/fixtures/adopt/example-mobile-app_shape/` containing the
 three subdir manifests (a one-line `manage.py`, a `{}`
 `package.json`, and a minimal `pubspec.yaml`). The test asserts
 that `mobile/` appears in the report — either as a detected part
@@ -1104,8 +1104,8 @@ silent omission.
 ## 19. Core principle for v0.2: visibility first, classification second
 
 > **Status:** authoritative for v0.2 design. Supersedes §15 items
-> #1 and #2. Added 2026-04-26 after the clarity-timelock and
-> flow-name-service dogfood made it clear that ecosystem-by-
+> #1 and #2. Added 2026-04-26 after the example-clarity-contract and
+> example-name-service dogfood made it clear that ecosystem-by-
 > ecosystem manifest recognition is a losing strategy — every new
 > ecosystem (Web3, Flutter, Rust, Go, Solidity, Move, Cadence, …)
 > would require its own carve-out and would silently miss anything
@@ -1237,13 +1237,13 @@ behavior. None of the dry-run outputs below requires any per-
 ecosystem code — they all fall out of the visibility-first
 fallback scan.
 
-**focus-flow** (no change — already classified by v0.1):
+**example-web-app** (no change — already classified by v0.1):
 
 ```
 Detected stack: Split monorepo — backend=Python, frontend=JavaScript / Node.js
 ```
 
-**dbao-studio** (root wins for classification, but `backend/` is
+**example-django-app** (root wins for classification, but `backend/` is
 now also surfaced as a separate signal):
 
 ```
@@ -1262,7 +1262,7 @@ classification missed. Item #5 (framework detection inside
 manifests) would later upgrade root from "JavaScript" to
 "JavaScript (no detected framework)" or similar.
 
-**donkey_betz_world** (mobile/ now surfaces):
+**example-mobile-app** (mobile/ now surfaces):
 
 ```
 Detected stack: Split monorepo — backend=Python, frontend=JavaScript / Node.js
@@ -1274,7 +1274,7 @@ Unknown but present (depth 1):
                        verify with user.
 ```
 
-**clarity-timelock** (whole project surfaces from invisibility):
+**example-clarity-contract** (whole project surfaces from invisibility):
 
 ```
 Detected stack: Unknown stack — no manifest detected at root or in
@@ -1287,7 +1287,7 @@ Unknown but present (depth 1):
                                  smart contracts; verify with user.
 ```
 
-**flow-name-service** (cadence/ surfaces; api/ surfaces as empty):
+**example-name-service** (cadence/ surfaces; api/ surfaces as empty):
 
 ```
 Detected stack: Split monorepo — web=JavaScript / Node.js
@@ -1321,10 +1321,10 @@ Unknown but present (depth 1):
 
 ### Acceptance criteria for §19
 
-- [ ] All four logged fixtures (dbao-studio, donkey_betz_world,
-      clarity-timelock, flow-name-service) produce dry-run output
+- [ ] All four logged fixtures (example-django-app, example-mobile-app,
+      example-clarity-contract, example-name-service) produce dry-run output
       where every non-hidden depth-1 subdir is named explicitly.
-- [ ] No regression for already-classified projects (focus-flow,
+- [ ] No regression for already-classified projects (example-web-app,
       ai-content-studio, the test fixtures): existing classification
       output is unchanged; the "Unknown but present" section
       appears only when `unclassified_subdirs` is non-empty.
@@ -1471,9 +1471,9 @@ new section.
 | Generator: section is omitted when `unclassified_subdirs` is empty (no extra noise on clean projects) | negative assert |
 | Regression: ai-content-studio (single-stack root) still works | classification unchanged, no new section |
 
-## 20. v0.2 fixture: tornado-core (legacy Solidity / Truffle)
+## 20. v0.2 fixture: example-solidity-app (legacy Solidity / Truffle)
 
-A real project at `/Users/donkeyking/development/apps/tornado-core`
+A real project at `~/dev/apps/example-solidity-app`
 that v0.1 confidently misclassifies — possibly the most consequential
 mistake in the dogfood inventory. The repo is the original Tornado
 Cash core: zk-SNARK Ethereum mixer contracts plus the Truffle
@@ -1527,7 +1527,7 @@ generated BUILD_PLAN's `## Tech stack` section would read
 mention of Solidity, smart contracts, or zk-SNARKs. An AI session
 loaded into these docs would propose Node.js solutions for what
 is fundamentally a Solidity DeFi protocol with cryptographic
-circuits. **This failure mode is worse than dbao-studio's:** there
+circuits. **This failure mode is worse than example-django-app's:** there
 isn't even an existing CLAUDE.md to compensate for the wrong
 classification.
 
@@ -1570,9 +1570,9 @@ table and reports itself. The same mechanism handles `.move`,
 `.cairo`, `.fc` (Tact / TON), and any other smart-contract
 language we eventually want to surface.
 
-### Acceptance criteria for "v0.2 handles tornado-core"
+### Acceptance criteria for "v0.2 handles example-solidity-app"
 
-- [ ] `detect_stack(tornado_core_path).language` is still
+- [ ] `detect_stack(solidity_app_path).language` is still
       `"javascript"` (root classification unchanged — v0.2 is not
       claiming to know what Truffle is).
 - [ ] `detect_stack(...).unclassified_subdirs` contains
@@ -1606,7 +1606,7 @@ of the load-bearing fix.
 Manual (dry-run, safe — never touches source):
 
 ```bash
-python3 context_kit.py adopt /Users/donkeyking/development/apps/tornado-core
+python3 context_kit.py adopt ~/dev/apps/example-solidity-app
 ```
 
 Compare against the "Desired §19 behavior" block above. The two
@@ -1626,54 +1626,51 @@ EVM-specific code.
 
 ## Appendix C: Dogfood fixture inventory
 
-Snapshot of candidate projects scanned across `/development/` and
-`/development/apps/` on 2026-04-26 (134 entries surveyed, 47 of
+Snapshot of candidate projects scanned across `~/dev/` and
+`~/dev/apps/` on 2026-04-26 (134 entries surveyed, 47 of
 them nested wrappers). Only the top-10 most useful for `adopt`
-testing are listed here. Already-tested fixtures (focus-flow,
-dealflowtracker, contract-concierge, norman-handyman-mvp,
+testing are listed here. Already-tested fixtures (example-web-app,
+example-tracker-app, example-contract-app, example-mvp-app,
 ai-content-studio) and the four that earned full sections (§17
-dbao-studio, §18 donkey_betz_world, §20 tornado-core, plus the
-clarity-timelock and flow-name-service cases that motivated §19)
+example-django-app, §18 example-mobile-app, §20 example-solidity-app, plus the
+example-clarity-contract and example-name-service cases that motivated §19)
 are excluded from this table to keep it curated.
 
 | # | Path | Interesting shape | Failure mode | Why useful |
 |---|---|---|---|---|
 | 1 | `apps/reflex-project` | Python full-stack: `requirements.txt` + `rxconfig.py`, no JS at all | v0.1 says "Python" but misses that this is Reflex (compiles to React) | Tests narrowness of recognized manifests; `rxconfig.py` is the real defining file |
-| 2 | `donkey_betz_visualizer` | True 3-part split: `backend/` + `frontend/` + `mobile/` (Flutter), no existing CLAUDE.md | mobile/ silently dropped (donkey_betz_world repeat, no CLAUDE.md) | Cleaner 3-part split fixture than donkey_betz_world; tests fresh-create on three-stack repos |
+| 2 | `example_visualizer` | True 3-part split: `backend/` + `frontend/` + `mobile/` (Flutter), no existing CLAUDE.md | mobile/ silently dropped (example-mobile-app repeat, no CLAUDE.md) | Cleaner 3-part split fixture than example-mobile-app; tests fresh-create on three-stack repos |
 | 3 | `apps/stacks-course/stacks-token-streaming` | Wrapper layout (single child) + Clarinet + `package.json` | Wrapper hides project AND `Clarinet.toml` unrecognized | Two failure modes in one fixture; Stacks ecosystem |
-| 4 | `donkey-betz-agent-orchestra` | 5 root manifests (JS+Py+Docker+Make), 282 .py vs 4 .js, existing CLAUDE.md | dbao-studio shape "turned up to 11" — most extreme misclassification we've seen | Stress test for §19 + #5 framework detection; augment-mode on real CLAUDE.md |
+| 4 | `example-agent-orchestra` | 5 root manifests (JS+Py+Docker+Make), 282 .py vs 4 .js, existing CLAUDE.md | example-django-app shape "turned up to 11" — most extreme misclassification we've seen | Stress test for §19 + #5 framework detection; augment-mode on real CLAUDE.md |
 | 5 | `apps/LangChain-Udemy-Course` | No manifests; numbered course dirs (`01_*/` … `19_*/`) full of notebooks | v0.1 returns "Unknown" with zero useful info | Tests §19's per-subdir reporting on notebook-only projects |
 | 6 | `apps/3d-course` | Multiple unrecognized peer demo subdirs (`three-js-animation/`, `three-js-sample/`, `three-js-webpack/`) | All four sibling demos invisible | Tests "wrapper without the wrapper" — sibling mini-apps |
 | 7 | `mentorforge` | Recognized split (`backend/` + `frontend/`) PLUS 4 unrecognized peer dirs (`analysis/`, `financial/`, `reports/`, `research/`) | v0.1 reports only backend+frontend; the four domain dirs silently dropped | Tests §19's "merge classified + unclassified in one report" requirement |
-| 8 | `compliancesentinel` / `ironwood-protocol` / `pitchdeckforge` (cluster) | Identical empty-root + `render.yaml` + `start.sh` + `backend/` + `frontend/` shape | Detection works (focus-flow shape), but `render.yaml` invisible at root | Tests whether §19 reports notable root-level non-manifest files |
+| 8 | `compliancesentinel` / `ironwood-protocol` / `pitchdeckforge` (cluster) | Identical empty-root + `render.yaml` + `start.sh` + `backend/` + `frontend/` shape | Detection works (example-web-app shape), but `render.yaml` invisible at root | Tests whether §19 reports notable root-level non-manifest files |
 | 9 | `flutter` (the SDK) | ~5 GB Flutter SDK source tree, ~50 subdirs, no recognized manifests, thousands of `.dart` files | Stress test — does the depth-2 walk + file caps hold? | Performance/cost fixture distinct from classification fixtures |
-| 10 | `apps/Donkey Betz` *(literal space in name)* | Mixed root + 387 .py vs 6 .js + space in directory name | Same dbao-studio shape; whitespace-in-path edge case | Whitespace-safety smoke test on adopt's path handling |
+| 10 | `apps/Example App` *(literal space in name)* | Mixed root + 387 .py vs 6 .js + space in directory name | Same example-django-app shape; whitespace-in-path edge case | Whitespace-safety smoke test on adopt's path handling |
 
 Honorable mentions worth knowing about (not in the top 10):
 
 - **`apps/totk_companion`** — `pubspec.yaml` at root + `backend/` subdir. Inverted shape: root has *some* manifest-shaped file so §19's recognized-subdir scan doesn't fire on `backend/`.
 - **`apps/working_reflex/reflex-project`** — nested wrapper containing a real Reflex app. Tests wrapper detection AND Reflex recognition in one go.
-- **`court_evidence_apps`** — meta-project: `01_deliverables_from_database/`, `02_app_source_evidence/`, `00_OVERVIEW_START_HERE.md`. Different conceptual shape from anything else here.
-- **`apps/tornado-core/circuits/`** — first `.circom` (zk-SNARK / cryptography) ecosystem we've seen; baked into the `NOTABLE_EXTENSIONS` table by §20's acceptance criteria.
+- **`example_meta_project`** — meta-project: `01_deliverables_from_database/`, `02_app_source_evidence/`, `00_OVERVIEW_START_HERE.md`. Different conceptual shape from anything else here.
+- **`apps/example-solidity-app/circuits/`** — first `.circom` (zk-SNARK / cryptography) ecosystem we've seen; baked into the `NOTABLE_EXTENSIONS` table by §20's acceptance criteria.
 
-Empty/dead candidates (skip): `SuperClaude`, `founder-toolkit`,
-`apps/buffet_project`, `apps/crewai_test`, `apps/eleven-labs-tutorial`,
-`nicolas`, `apps/Donkey_Betz_Server`, `apps/api_playground`,
-`apps/chatterbot`, `apps/donkey_workspace`, `apps/aidentifier`,
-`apps/ner_labels`, `apps/3js-app`, `apps/realtime_api`,
-`apps/twillo_text`, `apps/tailwind_udemy`, `apps/reddit-testing`,
-`apps/three-js-next-app`, `apps/r3f-animated-book-slider-starter`,
-`apps/Nextjs-Creative-Portfolio-Starter-Code-Files`,
-`apps/testing-front-end`,
-`apps/Car-rental-app-with-AB-testing-and-personalisation`. Some are
-just `app.py` + nothing; others are starter-repo clones with
-`package.json` only.
+Empty/dead candidates (skip): roughly 20 local subdirectories were
+intentionally excluded from the survey. Some were just `app.py` +
+nothing; others were starter-repo clones with `package.json` only.
+Representative shapes: `apps/example-one` (empty scaffold),
+`apps/example-two` (starter-repo clone), `apps/example-three`
+(tutorial checkout), plus similar variants. The specific names are
+not load-bearing — the point of this section is that dead-shell
+folders exist in real dev directories and adopt must not crash on
+them.
 
-This appendix is a snapshot. Re-running the survey scanner over
-`/development/` will surface different projects as the directory
-evolves; the value here is the *failure-mode coverage* — together
+This appendix is a snapshot. Re-running the survey scanner over the
+target dev directory will surface different projects as it evolves;
+the value here is the *failure-mode coverage* — together
 the top 10 above plus the five fixtures with full sections (§17,
-§18, §20, plus clarity-timelock and flow-name-service in §19's
+§18, §20, plus example-clarity-contract and example-name-service in §19's
 worked examples) cover every distinct way v0.1 fails that we've
 documented to date.
 
@@ -1681,7 +1678,7 @@ documented to date.
 
 > **Status:** design only. Added 2026-04-26 after the v0.2
 > visibility-first ship (commit 7a5ddb8) made the dry-run output
-> long enough on real projects (tornado-core surfaces 7 unclassified
+> long enough on real projects (example-solidity-app surfaces 7 unclassified
 > subdirs) that reading it in a terminal became painful. This section
 > proposes the smallest UX layer that makes adopt's output reviewable.
 > No code in this commit.
@@ -1731,7 +1728,7 @@ re-read this list before adding anything.
   visibility output is the load-bearing reason this UX exists. The
   report's center-of-page real estate goes to the "Unknown but
   present" section, with collapsible per-subdir items so 7
-  unclassified subdirs (tornado-core's case) don't render as a wall
+  unclassified subdirs (example-solidity-app's case) don't render as a wall
   of text by default. Classified parts get a card too, but tighter.
 - **CLI dry-run text output unchanged.** `--html` is purely
   *additive*. Removing the flag leaves adopt v0.2 behaving exactly
@@ -1939,7 +1936,7 @@ It's orthogonal to the rest of the v0.2 backlog (§15 items #3 –
 > **Status:** design proposal, not yet implemented. Added 2026-04-26
 > after the first batch of `context-kit-dogfood-repos` (5 cloned
 > open-source projects: expo-monorepo-example, flutter-monorepo-example,
-> fns-monorepo, solidity-template, turborepo-next-django-starter)
+> example-web3-monorepo, solidity-template, turborepo-next-django-starter)
 > exposed a category the v0.2.x failure taxonomy doesn't cover.
 > No code in this commit.
 
@@ -1954,7 +1951,7 @@ cannot see that `apps/forge/` is a Foundry Solidity project and
 `apps/next/` is a Next.js app — those project boundaries collapse
 into a single `apps/` aggregate.
 
-The most damning case: **fns-monorepo emits 0 failure records**
+The most damning case: **example-web3-monorepo emits 0 failure records**
 even though it contains 29 Solidity files plus a Foundry config
 buried at `apps/forge/foundry.toml`. None of the existing v0.2.x
 labels (ROOT_SIGNAL_OVERRIDE, MISLEADING_CLASSIFICATION,
@@ -1984,16 +1981,16 @@ whatever depth limit v0.3 picks.
 The detector should fire **once per workspace-container subdir**, not
 once per child project, to avoid the 70-card explosion problem.
 
-### Primary fixture: fns-monorepo
+### Primary fixture: example-web3-monorepo
 
-A real project at `/Users/donkeyking/development/context-kit-dogfood-repos/fns-monorepo`.
+A real project at `~/dev/context-kit-dogfood-repos/example-web3-monorepo`.
 The Filecoin Name Service Turborepo: a Solidity Foundry contracts
 project and a Next.js dApp frontend coexisting in one workspace.
 
 **What's actually there:**
 
 ```
-fns-monorepo/
+example-web3-monorepo/
 ├── package.json          ← root (Turborepo orchestration)
 ├── pnpm-workspace.yaml
 ├── turbo.json
@@ -2051,7 +2048,7 @@ Description text in the report:
 
 **`expo-monorepo-example`** — Turborepo + Expo. `apps/example/` is a
 real Expo app with `package.json` + `app.config.*`. Same depth-2
-invisibility as fns-monorepo but with only one child workspace.
+invisibility as example-web3-monorepo but with only one child workspace.
 v0.2.x emits **0 failure labels**. v0.3 should emit
 MONOREPO_DEPTH_LIMIT for `apps/`.
 
@@ -2098,7 +2095,7 @@ here so it ships alongside or before the MONOREPO_DEPTH_LIMIT work.
 ### Acceptance criteria for v0.3 MONOREPO_DEPTH_LIMIT
 
 - [ ] `analyze_failures` emits at least one MONOREPO_DEPTH_LIMIT
-      record for fns-monorepo, with `detected_in="apps"` and
+      record for example-web3-monorepo, with `detected_in="apps"` and
       `example` naming a real depth-2 file (foundry.toml,
       package.json, or a .sol path).
 - [ ] Same label fires for expo-monorepo-example,

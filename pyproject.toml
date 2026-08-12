@@ -14,10 +14,10 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
-    { name = "Chris", email = "westremarketing@gmail.com" },
+    { name = "Chris", email = "chris@context-kit.com" },
 ]
 maintainers = [
-    { name = "Chris", email = "westremarketing@gmail.com" },
+    { name = "Chris", email = "chris@context-kit.com" },
 ]
 keywords = [
     "ai",
