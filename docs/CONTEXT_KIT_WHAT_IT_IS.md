@@ -41,8 +41,9 @@ verifier, and AI-collaboration conventions that keep AI-assisted
 projects from losing context across sessions, distilled from ~1,100
 AI-assisted build sessions.
 
-**Scale (manual, see inventory):** ~7 Python source files, 5 CLI
-subcommands, 8 guide docs, 1 Claude skill, 69 unit tests.
+**Scale (see the runtime-derived inventory for exact counts):**
+~28 Python modules under `cli/`, 25 CLI subcommands, 8 guide docs,
+1 Claude skill, and ~1,000+ unit + integration tests.
 
 ---
 
@@ -65,7 +66,9 @@ where a single session ships everything.
 
 Two things on purpose:
 
-**The tool.** A zero-dependency Python CLI:
+**The tool.** A zero-dependency Python CLI. The load-bearing
+subcommands (see `README.md` for the full reference and the
+runtime inventory for the exact current set):
 
 | Subcommand | Purpose |
 |---|---|
@@ -74,6 +77,10 @@ Two things on purpose:
 | `orient` | Print the project's authoritative session-start context as one plain-text report. The Claude skill calls this. |
 | `hotpath` | Read-only file-size dashboard. Warns when any file or the top-N sum is large enough to dominate an AI session's context. |
 | `verify` | Read-only truth/status layer that checks whether key repo claims are verified, doc-only, conflicting, or unknown. |
+| `inspect` | Deterministic system map of a repo (stack, subsystems, hot files, risks, framework signals). |
+| `doctor` | Read-only environment + setup diagnostics (Python, git, Node, Expo, inventory freshness, drift checks). |
+| `adopt` | Retrofit context-kit's docs layer onto an existing project. |
+| `seed`, `recommend-stack`, `inventory`, `handoff`, `chat`, `audit`, `fix`, `exec`, `capabilities`, `coverage`, `behavior`, `connections`, `refactor`, `translation-init`, `codex` / `start-codex` | Focused helpers layered on top of the load-bearing five. |
 
 **The teaching material.** 8 guide docs at the repo root explaining
 each piece of the pattern:
@@ -163,8 +170,7 @@ agent-orchestration layer). Every rule in the guide docs cost a real
 bug, a dead-end session, or a silent hallucination to learn.
 
 The first public release (`0.3.0`) shipped 2026-04-21. The `orient`
-command, Claude skill, and `hotpath` shipped on 2026-04-25 in
-response to LinkedIn feedback from Damian Tedrow, Brian Turney, and
-Austin (Ethereum Foundation).
+command, Claude skill, and `hotpath` shipped on 2026-04-25 in response
+to feedback on the launch post.
 
 See `CHANGELOG.md` for the live release history.

@@ -15,9 +15,9 @@ Status taxonomy:
 Warnings never affect the exit code. Only blocking does.
 
 Provenance: the specific checks here came directly from real dogfood
-friction (Munchkin App). See ``docs/handoffs/SESSION_006_DOCTOR.md``
-for the receipts. The dependency direction is **doctor → inventory**;
-never invert it.
+friction (an Expo / React Native app). See
+``docs/handoffs/SESSION_006_DOCTOR.md`` for the receipts. The dependency
+direction is **doctor → inventory**; never invert it.
 """
 
 from __future__ import annotations

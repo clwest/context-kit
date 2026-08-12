@@ -11,11 +11,11 @@ diagnostics. Seven checks, human + JSON output, exit `1` only on
 blocking issues. The first feature spec'd entirely from real
 incidents rather than imagined need.
 
-## Provenance — Munchkin App dogfood
+## Provenance — Expo / React Native dogfood
 
 Every check in this command traces back to a specific moment of pain
-on Munchkin App (an Expo / React Native project the human was
-building in parallel with context-kit):
+on the parallel dogfood app (an Expo / React Native project the human
+was building alongside context-kit):
 
 | Check | Originating incident |
 |---|---|
@@ -151,5 +151,5 @@ wheel build                        contextkit_ai-0.4.3.tar.gz + .whl  (after ver
 - The TRUST_CALIBRATION entry this session is unusual — it's not a
   correction, it's a positive lesson. Real friction beats imagined
   feature specs. The "every check in doctor traces back to a named
-  Munchkin App incident" was the cleanest design conversation we've
+  dogfood-app incident" was the cleanest design conversation we've
   had so far. Worth holding to that bar for new features.

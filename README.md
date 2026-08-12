@@ -12,7 +12,7 @@ keep your AI pair programmer from starting over every session. Designed
 so even non-technical builders can go from a raw idea to a Claude-ready
 project without choosing a stack alone.
 
-Five commands, one loop:
+**The beginner / greenfield loop is five commands:**
 
 ```
 init  →  recommend-stack  →  seed  →  doctor  →  orient
@@ -27,13 +27,20 @@ init  →  recommend-stack  →  seed  →  doctor  →  orient
 | **`context-kit orient`** | Loads the current context for the next AI session *(the bundled Claude Code skill calls this automatically)* |
 | **`context-kit chat`** | Sends the orient prompt plus your message to local Ollama |
 
-Plus `inventory --check` for CI drift detection, `hotpath` for
-file-size budget warnings, **`adopt`** for retrofitting
-context-kit onto an *existing* project (the five-command loop above
-assumes you're starting fresh; `adopt` is the entry point when you
-already have code), and **`refactor`** for reporting progress
-on multi-PR module-extraction work (split a monolith file into
-sibling modules across many PRs and watch the percentage tick up).
+That five-command loop is the *starting-point workflow* — it is not
+the whole CLI. The full CLI is larger (see the **CLI reference**
+section below and `context-kit --help` for the current shipped list);
+the extra commands are focused helpers layered on top of the loop,
+not replacements for it.
+
+Additional commands worth knowing about early: `inventory --check`
+for CI drift detection, `hotpath` for file-size budget warnings,
+**`adopt`** for retrofitting context-kit onto an *existing* project
+(the five-command loop above assumes you're starting fresh; `adopt`
+is the entry point when you already have code), and **`refactor`**
+for reporting progress on multi-PR module-extraction work (split a
+monolith file into sibling modules across many PRs and watch the
+percentage tick up).
 For a smoother Codex startup, use `context-kit codex --mode=execute --short`.
 That opens Codex interactively by default, copies the startup prompt,
 and tells you to paste it as the first Codex message. Add `--exec` for
@@ -667,7 +674,8 @@ context-kit project structure, Node.js, Expo SDK + config,
 file-watcher / `ulimit` pressure, and inventory freshness. Exits `1`
 only if a **blocking** issue is found; warnings never affect the exit
 code. Specifically tuned for the EMFILE / Expo Go SDK mismatch /
-deprecated `expo-cli` friction we hit when dogfooding on Munchkin App.
+deprecated `expo-cli` friction hit while dogfooding on a real
+Expo / React Native project.
 
 `inventory` generates runtime-derived counts (CLI subcommands, guide
 docs, templates, tests, package metadata, hot-path summary, etc.)

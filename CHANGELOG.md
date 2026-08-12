@@ -9,6 +9,97 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-08-12
+
+**Public-portfolio release: fold in ~62 commits of post-v0.15.0 work
+into a shippable wheel.** No net new user-facing subcommand family
+compared to 0.15.0 that wasn't already in the code — this release
+publishes what the repo already exposed so the wheel matches the
+README and the CLI parity gap is closed.
+
+### Added (rolled up from the post-0.15.0 in-tree work)
+
+- **`chat`** — local Ollama chat mode with orient-grounded context,
+  a planner mode for command-only inspection, deterministic
+  capability shortlist for grounding, and repo-inspection grounding.
+- **`verify`** — read-only truth/status layer that classifies key
+  repo claims as `VERIFIED`, `DOC_ONLY`, `CONFLICT`, or `UNKNOWN`
+  (Django settings, Celery beat, tracked artifacts, doc-only count
+  claims). Includes `--json`, `--write`, `--all-docs`,
+  `--include-archive`.
+- **`inspect`** — deterministic system-map upgrades: scoped inspect
+  modes, Documentation Intelligence signals, `audit ↔ inspect`
+  bridge, `--scope` / `--include-history` / `--include-related`.
+- **`capabilities`** — deterministic capability summary derived from
+  `inspect` facts, used as chat grounding.
+- **`coverage`** — tracked-file coverage classification (covered /
+  skipped / unclassified) with docs-rag- and asset-aware rules.
+- **`behavior`** — behavioral risk-surface map for tracked files.
+- **`connections`** — audit wiring between backend routes,
+  frontend/mobile clients, tasks, agents, and spiders. Includes
+  FastAPI decorator route extraction, scoped connection audits,
+  route-role classification for orphan-route findings.
+- **`handoff write`** — session-end anchor re-stamp + calibration
+  audit that re-stamps `last_revised:` frontmatter across anchor
+  docs.
+- **`translation-init`** — prints a structured prompt for an AI to
+  populate `docs/<APP>_TRANSLATION_LAYER.md` (audience/persona
+  contract, Live Chat Mode for non-technical personas).
+- **`codex` / `start-codex`** — wrappers that launch a Codex session
+  with the same context-kit boot protocol (interactive by default,
+  `--exec` for one-shot automation).
+- **`audit-response`** — heuristic audit of a saved chat response
+  against the current orientation.
+- **`orient` — runtime state block** — `orient` now emits a
+  `## CURRENT RUNTIME STATE` section (version, latest handoff, test
+  count, doctor status). `--short` for compact output. `orient`
+  respects `canonical_docs` when resolving source-of-truth anchors.
+- **Doctor drift checks** — narrative-anchor freshness, test-count
+  drift, start-vs-handoff conflict, handoff numbering continuity,
+  version drift, translation-layer presence, pipeline / behavior /
+  translation scaffolds.
+- **Bundled sub-patterns** — `cli/_pattern/spokesperson-corpus/`
+  and `cli/_pattern/fleet-network/` ship as reference sub-patterns,
+  each with a proposal doc for the future CLI subcommand.
+
+### Changed
+
+- **README** — beginner-loop framing is now explicit: the
+  five-command loop (`init → recommend-stack → seed → doctor →
+  orient`) is presented as the beginner starting point, not the
+  full CLI surface. The CLI reference and `context-kit --help`
+  remain the source of truth for the shipped command set.
+- **Narrative anchor** — stale "~7 Python source files / 5 CLI
+  subcommands / 69 unit tests" scale line replaced with pointers
+  to the runtime inventory and a current summary of the
+  load-bearing subcommands.
+- **Provenance references** — dogfood-project references in
+  `README.md`, `CHANGELOG.md`, `cli/doctor.py`, `cli/hotpath.py`,
+  `docs/TRUST_CALIBRATION.md`, and older handoffs generalized
+  (private project names and third-party attribution names
+  removed, substance preserved).
+
+### Removed
+
+- `docs/DISTRIBUTION_NOTES.md` and `docs/LAUNCH_FEEDBACK.md` —
+  internal release/marketing planning; not part of the public
+  artifact.
+
+### Public-release notes
+
+- LICENSE / `pyproject.toml` list `chris@context-kit.com` as the
+  canonical public contact; historical git commit-author email
+  (`chris@donkeybetz.com`) is preserved in Git history and not
+  rewritten.
+- Zero runtime dependencies preserved (`project.dependencies = []`).
+- All 1085 unit + integration tests pass; ruff clean.
+- Wheel built from this cleaned state exposes the full documented
+  command surface (`init`, `inspect`, `verify`, `chat`,
+  `capabilities`, `handoff`, `translation-init`, `codex`,
+  `start-codex`, `audit-response`, `coverage`, `behavior`,
+  `connections`, and the 15 commands the 0.15.0 wheel already
+  shipped).
+
 ## [0.15.0] — 2026-04-30
 
 **Refactor progress tracking.** A new `refactor` command group ships
@@ -1544,7 +1635,7 @@ init  →  recommend-stack  →  seed  →  doctor  →  orient
 Two real features ship in this release: `recommend-stack` (Session 7,
 beginner stack guidance driven by the medication-reminder use case)
 and `doctor` (Session 6, environment diagnostics driven by real
-Munchkin App / Expo / Metro friction).
+Expo / Metro friction on the dogfood project).
 
 ### Added
 - `context-kit recommend-stack PATH` — opinionated, deterministic v0
@@ -1573,7 +1664,7 @@ Munchkin App / Expo / Metro friction).
   issues; warnings never affect the exit code. Human + JSON output.
   No file mutations. Bundled into `RUNTIME_COPY` so generated projects
   ship the command standalone. Specific checks driven directly by
-  real Munchkin App dogfood friction (EMFILE under Metro, Expo Go
+  real Expo / React Native dogfood friction (EMFILE under Metro, Expo Go
   SDK mismatches, `expo-cli` deprecation drift) — see
   `docs/handoffs/SESSION_006_DOCTOR.md`.
 
@@ -1653,9 +1744,9 @@ features. Did **not** include `seed` — that arrived in 0.4.2.
   largest files in a project and warns when any single file exceeds
   50 KB or the top 10 sum exceeds 200 KB (both tunable). Prefers
   `git ls-files` when inside a git repo, falls back to a recursive
-  walk (with sensible ignores). Inspired by Damian Tedrow's "hot
-  path" observation that file size is a strong proxy for whether a
-  region of code will fit comfortably in an AI session's context.
+  walk (with sensible ignores). Inspired by a launch-post reader's
+  "hot path" observation that file size is a strong proxy for whether
+  a region of code will fit comfortably in an AI session's context.
 - `context-kit inventory` — runtime inventory generator with
   `--write` / `--check` / `--json` modes. Writes only inside HTML
   comment markers (`<!-- context-kit:inventory:start -->` /

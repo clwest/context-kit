@@ -52,8 +52,8 @@ Maintainer-only file. Drafts (not finals) for:
 
 - Long-form LinkedIn follow-up post
 - Twitter/X short thread
-- Reply snippets for Damian, Brian, and Austin under their original
-  LinkedIn comments
+- Reply snippets for the three named readers under their original
+  launch-post comments
 - Suggested launch ordering (replies → long post → thread → PyPI)
 - A "what we deliberately aren't doing" section to keep the launch
   honest

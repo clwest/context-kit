@@ -108,20 +108,20 @@ All green. Smoke-tested end-to-end:
 
 ## Why this work
 
-Three pieces of public feedback on the LinkedIn announcement post:
+Three pieces of public feedback on the launch announcement:
 
-- **Damian Tedrow** suggested an "orient tool" assembled at session
+- **Reader A** suggested an "orient tool" assembled at session
   start, not a static doc, and described a "hot path" file-size
-  dashboard he uses to detect when an agent is outside its effective
+  dashboard used to detect when an agent is outside its effective
   context. Both ideas are now in code: `orient` and `hotpath`.
-- **Brian Turney** pushed on "split context" — the deeper failure isn't
+- **Reader B** pushed on "split context" — the deeper failure isn't
   context loss, it's that docs / runtime / outputs drift apart over
-  sessions. His ask: "a single authoritative path the system can't
+  sessions. Their ask: "a single authoritative path the system can't
   deviate from." `orient` is that path; the skill ensures the agent
   reads from it before doing anything else.
-- **Austin (Ethereum Foundation)** asked for a skill file — "give it to
-  my agent and it does everything." That's now `skills/context-kit/SKILL.md`,
-  copied automatically into every generated project.
+- **Reader C** asked for a skill file — "give it to my agent and it
+  does everything." That's now `skills/context-kit/SKILL.md`, copied
+  automatically into every generated project.
 
 The dogfood scaffold closes the loop: context-kit's own repo now
 follows (an adapted version of) its own pattern. Future drift between
@@ -134,10 +134,10 @@ immediately visible.
 
 See `00-START-NEXT-SESSION.md`. Four options, all independent:
 
-- **A** — PyPI publish (Austin's #2)
+- **A** — PyPI publish (Reader C's #2)
 - **B** — Tweet-able 30-sec demo + GitHub `.github/ISSUE_TEMPLATE/` for
   "Where it broke" feedback
-- **C** — Reply to Damian and Brian on LinkedIn with what shipped
+- **C** — Reply to launch-post readers with what shipped
 - **D** — Build a real Python inventory generator and replace the
   manual `CONTEXT_KIT_INVENTORY.md` with regenerated output (the
   proof-of-concept of the drift verifier pattern in our own repo)

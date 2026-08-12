@@ -39,9 +39,9 @@ Each entry:
 **Type:** signal-source pattern (not a correction; a positive lesson)
 **Session:** SESSION_006_DOCTOR (`feat(doctor): add environment diagnostics`)
 **Context:** scoping `context-kit doctor`. The user supplied a list of
-checks anchored in concrete dogfood pain — Munchkin App's Metro
-EMFILE crash, Expo Go SDK 54 vs project SDK 51 mismatch, the
-`expo doctor` → `npx expo-doctor` CLI rename. Every check landed
+checks anchored in concrete dogfood pain — a real Expo / React Native
+app's Metro EMFILE crash, Expo Go SDK 54 vs project SDK 51 mismatch,
+the `expo doctor` → `npx expo-doctor` CLI rename. Every check landed
 as a one-line spec; no design haggling needed.
 **What was striking:** the design conversation was the shortest of
 any feature so far (Sessions 1-5 had multi-paragraph back-and-forth
@@ -65,10 +65,10 @@ Practical rules going forward:
   the feature might be premature. Better to wait for the first real
   failure than to build for hypothetical ones.
 - **Document the provenance** in the feature's commit message,
-  changelog entry, and handoff. "This came from the Munchkin App
-  EMFILE crash" is more durable than "this catches file-watcher
-  issues." Future maintainers can reason about the spec by tracing
-  back to the incident.
+  changelog entry, and handoff. "This came from the Expo/Metro EMFILE
+  crash on the dogfood app" is more durable than "this catches
+  file-watcher issues." Future maintainers can reason about the spec
+  by tracing back to the incident.
 
 This isn't a correction (no judgment was wrong this session); it's
 the principle being made explicit for future sessions.

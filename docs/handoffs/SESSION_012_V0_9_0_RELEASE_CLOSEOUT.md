@@ -166,14 +166,14 @@ helper that:
   `gh release create` so the full publish sequence is one
   command after twine succeeds.
 
-### Real user feedback from Austin
+### Real user feedback from an external dogfood user
 
-Austin is the first non-author user lined up to try
-`context-kit adopt` on real projects. Capture the friction
-points, mislabels, and confusing copy verbatim — that's the
-strongest signal for what to ship in v0.10.0+. Don't pre-empt
-his findings with speculative work; wait for the actual
-feedback session, then fold the results into the next handoff.
+The first non-author user is lined up to try `context-kit adopt`
+on real projects. Capture the friction points, mislabels, and
+confusing copy verbatim — that's the strongest signal for what to
+ship in v0.10.0+. Don't pre-empt their findings with speculative
+work; wait for the actual feedback session, then fold the results
+into the next handoff.
 
 ## Where state actually is right now
 
@@ -197,7 +197,7 @@ feedback session, then fold the results into the next handoff.
 | v0.7.0 release context | `docs/handoffs/SESSION_009_ADOPT_AND_0_7_0.md` |
 | Adopt code | `cli/adopt.py` |
 | Adopt tests | `tests/test_adopt.py` |
-| Dogfood repos | `~/dev/context-kit-dogfood-repos/` |
+| Dogfood repos | local dogfood workspace |
 
 ## AI Notes
 
@@ -207,8 +207,8 @@ gaps" pattern — each release exposes the next layer of
 because the prior generation of output is finally clean
 enough to make the gap visible. v0.7.0 dogfood revealed the
 workspace-walking gap; v0.8.0 dogfood revealed the
-ecosystem-coverage gap; v0.9.0 dogfood (when Austin runs it)
-will reveal whatever comes next.
+ecosystem-coverage gap; v0.9.0 dogfood (when the external user
+runs it) will reveal whatever comes next.
 
 The determinism flake is the kind of bug that ONLY shows up
 under release-prep stress (running the suite 5+ times in a

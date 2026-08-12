@@ -1,9 +1,10 @@
 """context-kit `hotpath` subcommand: file-size dashboard.
 
-Inspired by Damian Tedrow's "hot path" idea: when an AI session keeps
-looping in the same code, the underlying cause is often that the
-relevant files no longer fit comfortably in context. Pure file-size is
-a surprisingly good proxy for "this will dominate your context window."
+Inspired by the "hot path" idea from a reader of the original launch
+post: when an AI session keeps looping in the same code, the underlying
+cause is often that the relevant files no longer fit comfortably in
+context. Pure file-size is a surprisingly good proxy for "this will
+dominate your context window."
 
 This command is read-only and advisory. It always exits 0; the value is
 the printed warnings, which an agent can read and act on (narrow focus,

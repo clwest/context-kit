@@ -210,8 +210,8 @@ seed integration                   Tech stack present: BUILD_PLAN.md
   recommendation that *is itself* an artifact of the tool — the
   medication-reminders rule's accessibility focus came from the human
   describing his Parkinson's-affected dad. Same provenance pattern as
-  doctor's Munchkin App origins. Real-friction-driven design keeps
-  paying off.
+  doctor's Expo / React Native dogfood origins. Real-friction-driven
+  design keeps paying off.
 - AI-paced estimate at design-approval time: 15-20 minutes.
   Implementation took roughly that. The earlier calibration about
   AI-pace estimates being too high doesn't apply when the design has
