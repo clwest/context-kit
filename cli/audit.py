@@ -99,7 +99,7 @@ def _run_audit_write() -> int:
     skipped_unfilled = False
     for filename, content, marker in _SCAFFOLD_FILES:
         path = audit_dir / filename
-        rel = path.relative_to(Path.cwd())
+        rel = path.relative_to(Path.cwd()).as_posix()
         if path.exists():
             print(f"  skipped    {rel} (already exists)")
             if marker in path.read_text(encoding="utf-8"):

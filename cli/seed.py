@@ -121,9 +121,9 @@ def run_seed(args: argparse.Namespace) -> int:
     verb = "would " if args.dry_run else ""
     for path, action in actions:
         try:
-            rel = path.relative_to(project)
+            rel = path.relative_to(project).as_posix()
         except ValueError:
-            rel = path
+            rel = Path(path).as_posix()
         print(f"  {verb}{action:9}  {rel}")
 
     if args.dry_run:

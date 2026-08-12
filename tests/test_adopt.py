@@ -705,7 +705,11 @@ class TestAdoptHtmlReport(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo = Path(self._tmp.name)
+        # ``run_adopt`` calls ``Path(path).resolve()``, which on Windows
+        # expands 8.3 short-names (``RUNNER~1``) to their long form
+        # (``runneradmin``). Resolve here so ``str(self.repo)`` matches
+        # what the report actually embeds.
+        self.repo = Path(self._tmp.name).resolve()
         # A minimal project with one classified subdir + one unclassified
         # one. Matches the example-mobile-app dogfood shape in miniature.
         (self.repo / "package.json").write_text("{}", encoding="utf-8")

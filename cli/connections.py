@@ -641,10 +641,13 @@ def _severity_rank(severity: str) -> int:
 
 
 def _rel(project: Path, path: Path) -> str:
+    # Emitted into JSON / evidence strings / regex-checked user output —
+    # normalize to POSIX so tests and downstream tooling see the same
+    # separator on Linux, macOS, and Windows.
     try:
-        return str(path.relative_to(project))
+        return path.relative_to(project).as_posix()
     except ValueError:
-        return str(path)
+        return Path(path).as_posix()
 
 
 def _render_text(report: ConnectionReport) -> str:

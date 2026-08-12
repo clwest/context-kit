@@ -700,7 +700,7 @@ def check_narrative_anchor_freshness(project: Path) -> CheckResult:
             label="Narrative anchor freshness",
             status="skipped",
             detail=(
-                f"{anchor_path.relative_to(project)} has no parseable "
+                f"{anchor_path.relative_to(project).as_posix()} has no parseable "
                 "frontmatter date (last_revised / date / generated)"
             ),
         )
@@ -721,7 +721,7 @@ def check_narrative_anchor_freshness(project: Path) -> CheckResult:
             label="Narrative anchor freshness",
             status="skipped",
             detail=(
-                f"{latest.path.relative_to(project)} has no parseable "
+                f"{latest.path.relative_to(project).as_posix()} has no parseable "
                 "frontmatter date"
             ),
         )
@@ -742,7 +742,7 @@ def check_narrative_anchor_freshness(project: Path) -> CheckResult:
         label="Narrative anchor freshness",
         status="warning",
         detail=(
-            f"narrative anchor ({anchor_path.relative_to(project)}) "
+            f"narrative anchor ({anchor_path.relative_to(project).as_posix()}) "
             f"dated {anchor_date} is older than latest handoff "
             f"({latest.token}) dated {handoff_date}. Sessions have "
             "moved on; the anchor's frontmatter hasn't."
@@ -1685,7 +1685,7 @@ def check_start_handoff_conflict(project: Path) -> CheckResult:
             status="warning",
             detail=(
                 f"Verify {state.START_DOC} next task against "
-                f"{latest.path.relative_to(project)}; the task text was not "
+                f"{latest.path.relative_to(project).as_posix()}; the task text was not "
                 "found verbatim in the latest handoff."
             ),
             fix=(
@@ -1729,7 +1729,7 @@ def _scan_files_for_placeholders(project: Path) -> list[str]:
                 continue
             if _ADOPT_PLACEHOLDER_RE.search(text):
                 try:
-                    rel = str(path.relative_to(project))
+                    rel = path.relative_to(project).as_posix()
                 except ValueError:
                     rel = path.name
                 found.add(rel)

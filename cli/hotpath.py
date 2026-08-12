@@ -211,9 +211,9 @@ def _top_section(project: Path, top: list[tuple[Path, int]]) -> str:
     lines = [f"## TOP {len(top)} LARGEST FILES"]
     for path, size in top:
         try:
-            rel = path.relative_to(project)
+            rel = path.relative_to(project).as_posix()
         except ValueError:
-            rel = path
+            rel = Path(path).as_posix()
         lines.append(f"  {_fmt_size(size):>10}  {rel}")
     return "\n".join(lines)
 
@@ -231,9 +231,9 @@ def _warnings_section(
     lines = ["## WARNINGS"]
     for path, size in over_single:
         try:
-            rel = path.relative_to(project)
+            rel = path.relative_to(project).as_posix()
         except ValueError:
-            rel = path
+            rel = Path(path).as_posix()
         lines.append(
             f"  ! {rel} is {_fmt_size(size)} "
             f"(over {single_threshold_kb} KB single-file threshold)"

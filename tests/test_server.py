@@ -38,12 +38,17 @@ class TestProjectTitleDiscovery(unittest.TestCase):
     def test_reads_title_from_frontmatter(self):
         docs = self.tmpdir / "docs"
         docs.mkdir()
+        # Explicit encoding: the frontmatter contains a UTF-8 em-dash;
+        # the default codepage on Windows (cp1252) would mangle it on
+        # write and produce a ``\ufffd`` when the reader (UTF-8) reads
+        # it back.
         (docs / "MY_APP_WHAT_IT_IS.md").write_text(
             '---\n'
             'title: "My App — What It Actually Is"\n'
             'status: stub\n'
             '---\n\n'
-            '# My App\n'
+            '# My App\n',
+            encoding="utf-8",
         )
         # The " — What It Actually Is" suffix is stripped.
         self.assertEqual(_find_project_title(self.tmpdir), "My App")

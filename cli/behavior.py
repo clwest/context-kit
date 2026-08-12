@@ -395,10 +395,14 @@ def _trim(text: str, limit: int = 120) -> str:
 
 
 def _rel(project: Path, path: Path) -> str:
+    # Emit POSIX-style forward slashes so machine-readable output
+    # (JSON ``top_files``, evidence strings, deterministic markdown) is
+    # identical across Linux, macOS, and Windows. Filesystem operations
+    # still use native paths — only the *emitted* string is normalized.
     try:
-        return str(path.relative_to(project))
+        return path.relative_to(project).as_posix()
     except ValueError:
-        return str(path)
+        return Path(path).as_posix()
 
 
 def _to_json(report: BehaviorReport) -> dict:

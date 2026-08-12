@@ -21,6 +21,33 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+def _configure_stdio_utf8() -> None:
+    """Force UTF-8 encoding on stdout/stderr so CLI output is portable.
+
+    Motivation: on Windows, the default console encoding is cp1252, which
+    raises ``UnicodeEncodeError`` when the CLI prints any character
+    outside that codepage (e.g. ``≤``, ``—``, ``…``). Ubuntu and macOS
+    default to UTF-8 so this is a no-op there.
+
+    Uses ``errors='replace'`` rather than ``'strict'`` so a genuinely
+    un-mappable character on some future exotic stream prints as ``?``
+    instead of crashing the command mid-output. This preserves the
+    principle that CLI output is best-effort human-readable text, while
+    still surfacing the mismatch visually so the user notices.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (LookupError, ValueError, OSError):
+            # Non-text streams (redirected to a BytesIO, closed, etc.) —
+            # skip silently. The check is best-effort; failure here must
+            # not prevent the CLI from running.
+            pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="context-kit",
@@ -1045,6 +1072,7 @@ def _run_handoff(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_stdio_utf8()
     parser = build_parser()
     args = parser.parse_args(argv)
 

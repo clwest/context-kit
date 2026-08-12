@@ -3680,7 +3680,7 @@ def render_adopt_html(repo: Path, stack: StackProfile,
     plan_html = ['<section class="card">', '  <h2>What adopt would write</h2>']
     verb_prefix = "Will " if write_mode else "Would "
     for p in plan:
-        rel_path = str(p.path.relative_to(repo)) if p.path.is_relative_to(repo) else str(p.path)
+        rel_path = p.path.relative_to(repo).as_posix() if p.path.is_relative_to(repo) else Path(p.path).as_posix()
         badge_cls = "badge-create" if p.kind == "create" else "badge-augment"
         badge_text = f"{verb_prefix}{p.kind}"
         plan_html.append(
@@ -4442,9 +4442,9 @@ def analyze_failures(repo: Path, stack: StackProfile,
         if p.kind != "skip":
             continue
         try:
-            rel = str(p.path.relative_to(repo))
+            rel = p.path.relative_to(repo).as_posix()
         except ValueError:
-            rel = str(p.path)
+            rel = Path(p.path).as_posix()
         out.append(FailureRecord(
             failure_type=FAILURE_IDEMPOTENCY_RISK,
             severity="medium",

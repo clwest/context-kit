@@ -131,9 +131,9 @@ def run_init(args: argparse.Namespace) -> int:
     if not args.quiet:
         for p in written:
             try:
-                rel = p.relative_to(target)
+                rel = p.relative_to(target).as_posix()
             except ValueError:
-                rel = p
+                rel = Path(p).as_posix()
             print(f"  + {rel}")
         print(f"\ncontext-kit: wrote {len(written)} files.")
         if written:

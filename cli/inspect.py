@@ -895,10 +895,7 @@ def _build_hot_files(sized: list[tuple[Path, int]], project: Path) -> list[HotFi
     ranked = sorted(sized, key=lambda fs: fs[1], reverse=True)[:_HOT_FILES_TOP_N]
     out: list[HotFile] = []
     for path, size in ranked:
-        try:
-            rel = str(path.relative_to(project))
-        except ValueError:
-            rel = str(path)
+        rel = _relpath(project, path)
         out.append(HotFile(path=rel, bytes=size))
     return out
 
@@ -933,7 +930,7 @@ def _risk_tracked_venv(project: Path, sized: list[tuple[Path, int]]) -> list[Ris
             continue
         parts = rel.parts
         if parts and parts[0] in _TRACKED_VENV_NAMES:
-            found.setdefault(parts[0], []).append(str(rel))
+            found.setdefault(parts[0], []).append(rel.as_posix())
     out: list[Risk] = []
     for venv_name, evidence in found.items():
         out.append(
@@ -1002,7 +999,7 @@ def _risk_oversized_static_assets(project: Path, sized: list[tuple[Path, int]]) 
             continue
         if not any(seg in rel.parts for seg in _STATIC_DIR_SEGMENTS):
             continue
-        offenders.append((str(rel), size))
+        offenders.append((rel.as_posix(), size))
     if not offenders:
         return []
     offenders.sort(key=lambda t: t[1], reverse=True)
@@ -1152,10 +1149,7 @@ def _check_stale_docs(project: Path, files: list[Path] | None = None) -> list[St
         if age_days < _STALE_DOC_AGE_DAYS:
             continue
 
-        try:
-            rel = str(path.relative_to(project))
-        except ValueError:
-            rel = str(path)
+        rel = _relpath(project, path)
         stale.append(StaleDoc(path=rel, evidence=f"{evidence_line} ({age_days} days old)"))
 
     return stale
@@ -1210,10 +1204,10 @@ def _inspect_documentation_intelligence(project: Path, files: list[Path] | None 
             try:
                 for path in sorted(docs_dir.glob("*_WHAT_IT_IS.md")):
                     if path.is_file():
-                        anchor_docs.append(str(path.relative_to(project)))
+                        anchor_docs.append(path.relative_to(project).as_posix())
                 for path in sorted(docs_dir.glob("*_INVENTORY.md")):
                     if path.is_file():
-                        anchor_docs.append(str(path.relative_to(project)))
+                        anchor_docs.append(path.relative_to(project).as_posix())
             except OSError:
                 pass
 
@@ -1224,7 +1218,7 @@ def _inspect_documentation_intelligence(project: Path, files: list[Path] | None 
                     if not child.is_dir():
                         continue
                     if any(pat in child.name.lower() for pat in _AUDIT_FOLDER_PATTERNS):
-                        audit_folders.append(str(child.relative_to(project)))
+                        audit_folders.append(child.relative_to(project).as_posix())
             except OSError:
                 pass
 
@@ -1244,7 +1238,7 @@ def _inspect_documentation_intelligence(project: Path, files: list[Path] | None 
                         child.name in _RAG_CORPUS_FILENAMES
                         or child.suffix in (".jsonl", ".json")
                     ):
-                        rag_corpus_paths.append(str(child.relative_to(project)))
+                        rag_corpus_paths.append(child.relative_to(project).as_posix())
                 rag_corpus_present = bool(rag_corpus_paths)
             except OSError:
                 pass
@@ -1252,13 +1246,13 @@ def _inspect_documentation_intelligence(project: Path, files: list[Path] | None 
         markdown_files = [path for path in files if path.suffix.lower() == ".md" and ("docs" in path.parts or path.parent == project)]
         markdown_count = len(markdown_files)
         handoff_count = sum(1 for p in markdown_files if "handoffs" in p.parts and p.name.startswith("SESSION_"))
-        anchor_docs = [str(p.relative_to(project)) for p in markdown_files if p.name.endswith(("_WHAT_IT_IS.md", "_INVENTORY.md"))]
-        audit_folders = sorted({str(p.parent.relative_to(project)) for p in markdown_files if any(pat in p.parent.name.lower() for pat in _AUDIT_FOLDER_PATTERNS)})
+        anchor_docs = [p.relative_to(project).as_posix() for p in markdown_files if p.name.endswith(("_WHAT_IT_IS.md", "_INVENTORY.md"))]
+        audit_folders = sorted({p.parent.relative_to(project).as_posix() for p in markdown_files if any(pat in p.parent.name.lower() for pat in _AUDIT_FOLDER_PATTERNS)})
         process_docs_present = any(
             any(part in {"docs-pattern", "process", "patterns"} for part in p.parts)
             for p in files
         )
-        rag_corpus_paths = [str(p.relative_to(project)) for p in files if p.parts and p.parts[0] == ".rag" and p.is_file() and (p.name in _RAG_CORPUS_FILENAMES or p.suffix in (".jsonl", ".json"))]
+        rag_corpus_paths = [p.relative_to(project).as_posix() for p in files if p.parts and p.parts[0] == ".rag" and p.is_file() and (p.name in _RAG_CORPUS_FILENAMES or p.suffix in (".jsonl", ".json"))]
         rag_corpus_present = bool(rag_corpus_paths)
 
     strength = _classify_doc_intel(
@@ -2841,10 +2835,13 @@ def _path_is_ignored(rel_path: str) -> bool:
 
 
 def _relpath(project: Path, path: Path) -> str:
+    # Deterministic, cross-platform emission — POSIX separators only.
+    # Every relative path emitted by ``inspect`` (JSON, deterministic
+    # markdown, evidence lines) flows through this helper.
     try:
-        return str(path.relative_to(project))
+        return path.relative_to(project).as_posix()
     except ValueError:
-        return str(path)
+        return Path(path).as_posix()
 
 
 def _latest_numbered_handoff(handoffs_dir: Path) -> Path | None:

@@ -95,7 +95,10 @@ class _FakeResponse:
 class TestChatSmoke(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.tmpdir = Path(self._tmp.name)
+        # Resolve so tests that compare against paths embedded in
+        # command output (which resolve their inputs) don't fail on
+        # Windows where the tempdir returns an 8.3 short-name form.
+        self.tmpdir = Path(self._tmp.name).resolve()
         self.project = self.tmpdir / "chat-app"
         self.other_project = self.tmpdir / "other-chat-app"
         self.nested_project = self.tmpdir / "mentorforge"

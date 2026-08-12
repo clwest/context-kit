@@ -98,7 +98,7 @@ def run_fix(args: argparse.Namespace) -> int:
     if not phases:
         print(
             "context-kit: no phases parsed from "
-            f"{_AUDIT_DIR / _CLEANUP_PLAN}. Expected `### Phase N` headings "
+            f"{(_AUDIT_DIR / _CLEANUP_PLAN).as_posix()}. Expected `### Phase N` headings "
             "or `- Phase N` bullets."
         )
         return 1

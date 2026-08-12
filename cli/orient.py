@@ -101,11 +101,11 @@ def render_chat_orient(project: Path) -> str:
     what, inventory = _find_anchor_docs(project)
     if what:
         sections.append("## WHAT_IT_IS PREVIEW")
-        sections.append(f"### {what.relative_to(project)}\n\n" + _preview(what))
+        sections.append(f"### {what.relative_to(project).as_posix()}\n\n" + _preview(what))
 
     if inventory and not _is_low_signal_inventory(inventory):
         sections.append("## INVENTORY PREVIEW")
-        sections.append(f"### {inventory.relative_to(project)}\n\n" + _preview(inventory))
+        sections.append(f"### {inventory.relative_to(project).as_posix()}\n\n" + _preview(inventory))
 
     latest_handoff = _section_latest_handoff(project)
     if latest_handoff:
@@ -140,7 +140,7 @@ def _render_short(project: Path) -> str:
     # Session-start index — filename only, no preview.
     session_start = _find_session_start_doc(project)
     if session_start is not None:
-        rel = session_start.relative_to(project)
+        rel = session_start.relative_to(project).as_posix()
         lines.append("## SESSION START INDEX")
         lines.append(f"  {rel}    (open and read first)")
         lines.append("")
@@ -149,7 +149,7 @@ def _render_short(project: Path) -> str:
     # stays compact. The audience contract is too large to inline.
     translation = _find_translation_layer_doc(project)
     if translation is not None:
-        rel = translation.relative_to(project)
+        rel = translation.relative_to(project).as_posix()
         lines.append("## TRANSLATION LAYER")
         lines.append(f"  {rel}    (audience contract; same truth → different explanation)")
         lines.append("")
@@ -159,7 +159,7 @@ def _render_short(project: Path) -> str:
     if handoffs_dir.is_dir():
         latest = _latest_numbered_handoff(handoffs_dir)
         if latest is not None:
-            rel = latest.relative_to(project)
+            rel = latest.relative_to(project).as_posix()
             lines.append("## LATEST HANDOFF")
             lines.append(f"  {rel}")
             lines.append("")
@@ -388,35 +388,35 @@ def _section_source_of_truth(project: Path) -> str:
         # file specifically so a returning agent has a 30-second
         # answer before the long anchor docs.
         lines.append(
-            f"  0. {session_start.relative_to(project)}    "
+            f"  0. {session_start.relative_to(project).as_posix()}    "
             "— project-owned session-start index (read this first)"
         )
     if what:
-        lines.append(f"  1. {what.relative_to(project)}    — narrative anchor")
+        lines.append(f"  1. {what.relative_to(project).as_posix()}    — narrative anchor")
     else:
         lines.append("  1. docs/<APP>_WHAT_IT_IS.md    — narrative anchor (NOT FOUND)")
     if inventory:
         if inventory_low_signal:
             lines.append(
-                f"  2. {inventory.relative_to(project)}    — runtime anchor "
+                f"  2. {inventory.relative_to(project).as_posix()}    — runtime anchor "
                 "(LOW-SIGNAL: context-kit-shape detectors didn't match this repo; "
                 "treat counts as informational, not authoritative)"
             )
         else:
-            lines.append(f"  2. {inventory.relative_to(project)}    — runtime anchor (regenerable; wins on conflict)")
+            lines.append(f"  2. {inventory.relative_to(project).as_posix()}    — runtime anchor (regenerable; wins on conflict)")
     else:
         lines.append("  2. docs/<APP>_INVENTORY.md    — runtime anchor (NOT FOUND)")
     if pipeline:
-        lines.append(f"  3. {pipeline.relative_to(project)}    — runtime flow map (entry points, guards, retrieval, scrubs)")
+        lines.append(f"  3. {pipeline.relative_to(project).as_posix()}    — runtime flow map (entry points, guards, retrieval, scrubs)")
     else:
         lines.append("  3. docs/<APP>_PIPELINE.md    — runtime flow map (optional; recommended for LLM/agent/task projects)")
     if behavior:
-        lines.append(f"  4. {behavior.relative_to(project)}    — behavior layer (voice, UI/source-of-truth, constraint preservation)")
+        lines.append(f"  4. {behavior.relative_to(project).as_posix()}    — behavior layer (voice, UI/source-of-truth, constraint preservation)")
     else:
         lines.append("  4. docs/<APP>_BEHAVIOR_LAYER.md    — behavior layer (optional; recommended for chat/voice/persona surfaces)")
     if translation:
         lines.append(
-            f"  5. {translation.relative_to(project)}    "
+            f"  5. {translation.relative_to(project).as_posix()}    "
             "— translation layer (audience contract: same truth → different explanation, zero invention)"
         )
     else:
@@ -425,7 +425,7 @@ def _section_source_of_truth(project: Path) -> str:
             "— translation layer (optional; recommended for multi-audience / stakeholder projects)"
         )
     if do_nots:
-        lines.append(f"  6. {do_nots.relative_to(project)}    — project-specific anti-patterns / dos and don'ts")
+        lines.append(f"  6. {do_nots.relative_to(project).as_posix()}    — project-specific anti-patterns / dos and don'ts")
     else:
         lines.append("  6. docs/<APP>_DO_NOTS.md    — project-specific anti-patterns (optional)")
     lines.append(
@@ -488,7 +488,7 @@ def _section_session_start(project: Path) -> str:
     session_start = _find_session_start_doc(project)
     if session_start is None:
         return ""
-    rel = session_start.relative_to(project)
+    rel = session_start.relative_to(project).as_posix()
     return f"## SESSION START INDEX — {rel}\n\n" + _preview(session_start)
 
 
@@ -496,9 +496,9 @@ def _section_anchors(project: Path) -> str:
     what, inventory = _find_anchor_docs(project)
     blocks = ["## ANCHORS (preview)"]
     if what:
-        blocks.append(f"### {what.relative_to(project)}\n\n" + _preview(what))
+        blocks.append(f"### {what.relative_to(project).as_posix()}\n\n" + _preview(what))
     if inventory:
-        blocks.append(f"### {inventory.relative_to(project)}\n\n" + _preview(inventory))
+        blocks.append(f"### {inventory.relative_to(project).as_posix()}\n\n" + _preview(inventory))
     if len(blocks) == 1:
         blocks.append("  (no anchor docs found under docs/)")
     return "\n\n".join(blocks)
@@ -510,7 +510,7 @@ def _section_pipeline(project: Path) -> str:
     pipeline = _find_pipeline_doc(project)
     if pipeline is None:
         return ""
-    rel = pipeline.relative_to(project)
+    rel = pipeline.relative_to(project).as_posix()
     return f"## PIPELINE — {rel}\n\n" + _preview(pipeline)
 
 
@@ -520,7 +520,7 @@ def _section_behavior_layer(project: Path) -> str:
     behavior = _find_behavior_layer_doc(project)
     if behavior is None:
         return ""
-    rel = behavior.relative_to(project)
+    rel = behavior.relative_to(project).as_posix()
     return f"## BEHAVIOR LAYER — {rel}\n\n" + _preview(behavior)
 
 
@@ -537,7 +537,7 @@ def _section_translation_layer(project: Path) -> str:
     translation = _find_translation_layer_doc(project)
     if translation is None:
         return ""
-    rel = translation.relative_to(project)
+    rel = translation.relative_to(project).as_posix()
     return f"## TRANSLATION LAYER — {rel}\n\n" + _preview(translation)
 
 
@@ -546,7 +546,7 @@ def _section_do_nots(project: Path) -> str:
     do_nots = _find_do_nots_doc(project)
     if do_nots is None:
         return ""
-    rel = do_nots.relative_to(project)
+    rel = do_nots.relative_to(project).as_posix()
     return f"## DO NOTS — {rel}\n\n" + _preview(do_nots)
 
 
@@ -559,7 +559,7 @@ def _section_latest_handoff(project: Path) -> str:
     if latest is None:
         return f"## LATEST HANDOFF\n  (none yet) {HANDOFFS_DIR}/"
 
-    rel = latest.relative_to(project)
+    rel = latest.relative_to(project).as_posix()
     return f"## LATEST HANDOFF — {rel}\n\n" + _preview(latest)
 
 
@@ -698,7 +698,7 @@ def _pin_from_canonical(
         return None
 
     candidate_rel = matching[0]
-    suffix_rels = {str(p.relative_to(project)) for p in suffix_matches}
+    suffix_rels = {p.relative_to(project).as_posix() for p in suffix_matches}
     if candidate_rel not in suffix_rels:
         return None
 
@@ -727,7 +727,7 @@ def _anchor_ambiguity(project: Path) -> list[str]:
             continue
         if _pin_from_canonical(project, matches, canonical, suffix) is not None:
             continue
-        rels = [str(p.relative_to(project)) for p in matches]
+        rels = [p.relative_to(project).as_posix() for p in matches]
         warnings.append(
             f"WARNING: {len(matches)} {label} candidates found "
             f"({', '.join(rels)}). Picked '{rels[0]}' alphabetically. "

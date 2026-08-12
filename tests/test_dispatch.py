@@ -112,5 +112,58 @@ def _invoke_main_with_namespace(ns: argparse.Namespace) -> int:
     return 1
 
 
+class TestStdioUtf8Configuration(unittest.TestCase):
+    """Regression coverage for the Windows cp1252 UnicodeEncodeError.
+
+    ``main`` reconfigures stdout/stderr to UTF-8 at entry so CLI output
+    that contains non-latin-1 characters (e.g. ``≤``) doesn't crash the
+    process on Windows consoles that default to cp1252.
+    """
+
+    def test_configure_stdio_utf8_is_idempotent_and_no_ops_on_missing_reconfigure(self):
+        # Streams that don't expose ``reconfigure`` (e.g. redirected to a
+        # BytesIO or a plain StringIO in some Python builds) must be
+        # tolerated. Real sys.stdout/stderr expose reconfigure on 3.7+.
+        class _NoReconfigure:
+            pass
+
+            def write(self, s):  # pragma: no cover — never called here
+                return len(s)
+
+        original_stdout, original_stderr = sys.stdout, sys.stderr
+        try:
+            sys.stdout = _NoReconfigure()  # type: ignore[assignment]
+            sys.stderr = _NoReconfigure()  # type: ignore[assignment]
+            # Must not raise.
+            context_kit._configure_stdio_utf8()
+        finally:
+            sys.stdout, sys.stderr = original_stdout, original_stderr
+
+    def test_configure_stdio_utf8_survives_reconfigure_errors(self):
+        # If a stream's reconfigure raises (e.g. non-text stream, closed
+        # file), the helper must swallow it — never let stdio setup crash
+        # the CLI mid-boot.
+        class _RaisingReconfigure:
+            def reconfigure(self, *args, **kwargs):
+                raise OSError("simulated non-text stream")
+
+        original_stdout, original_stderr = sys.stdout, sys.stderr
+        try:
+            sys.stdout = _RaisingReconfigure()  # type: ignore[assignment]
+            sys.stderr = _RaisingReconfigure()  # type: ignore[assignment]
+            context_kit._configure_stdio_utf8()  # must not raise
+        finally:
+            sys.stdout, sys.stderr = original_stdout, original_stderr
+
+    def test_can_print_non_ascii_after_configure(self):
+        # End-to-end: after configuration, printing a character that
+        # would crash cp1252 (like U+2264 ≤) succeeds.
+        context_kit._configure_stdio_utf8()
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            print("count \u2264 5")
+        self.assertIn("\u2264", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

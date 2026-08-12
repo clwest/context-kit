@@ -334,9 +334,9 @@ def _key_docs(project: Path) -> list[str]:
         if path is None:
             continue
         try:
-            rel = path.relative_to(project)
+            rel = path.relative_to(project).as_posix()
         except ValueError:
-            rel = path
+            rel = Path(path).as_posix()
         docs.append(f"{label}: {rel}")
     return docs
 

@@ -102,9 +102,9 @@ def run_inventory(args: argparse.Namespace) -> int:
     if args.write:
         path, action = write_inventory(project)
         try:
-            rel = path.relative_to(project)
+            rel = path.relative_to(project).as_posix()
         except ValueError:
-            rel = path
+            rel = Path(path).as_posix()
         print(f"context-kit: {action} {rel}")
         return 0
 
@@ -233,7 +233,7 @@ def _starter_files(project: Path) -> list[str]:
         rel = p.relative_to(starter)
         if rel.parts and rel.parts[0] == "scaffold":
             continue
-        out.append(str(rel))
+        out.append(rel.as_posix())
     return sorted(out)
 
 
@@ -242,7 +242,7 @@ def _scaffold_files(project: Path) -> list[str]:
     if not scaffold.is_dir():
         return []
     return sorted(
-        str(p.relative_to(scaffold))
+        p.relative_to(scaffold).as_posix()
         for p in scaffold.rglob("*")
         if p.is_file()
     )
@@ -294,9 +294,9 @@ def _skill_files(project: Path) -> list[str]:
         for p in base.rglob("SKILL.md"):
             if p.is_file():
                 try:
-                    rel = str(p.relative_to(project))
+                    rel = p.relative_to(project).as_posix()
                 except ValueError:
-                    rel = str(p)
+                    rel = Path(p).as_posix()
                 found[rel] = None
     return sorted(found.keys())
 
@@ -384,10 +384,13 @@ def _hotpath_summary(project: Path) -> dict:
 
 
 def _relpath(p: Path, project: Path) -> str:
+    # Emitted into the auto-generated inventory block, which must be
+    # byte-identical across Linux, macOS, and Windows (otherwise
+    # ``inventory --check`` reports spurious drift on Windows CI).
     try:
-        return str(p.relative_to(project))
+        return p.relative_to(project).as_posix()
     except ValueError:
-        return str(p)
+        return Path(p).as_posix()
 
 
 # ---------------------------------------------------------------------------

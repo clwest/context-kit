@@ -382,10 +382,12 @@ def _directory_key(project: Path, path: Path) -> str:
 
 
 def _rel(project: Path, path: Path) -> str:
+    # Emitted into machine-readable / deterministic output — POSIX-only
+    # so Linux, macOS, and Windows produce byte-identical results.
     try:
-        return str(path.relative_to(project))
+        return path.relative_to(project).as_posix()
     except ValueError:
-        return str(path)
+        return Path(path).as_posix()
 
 
 def _pct(numer: int, denom: int) -> float:

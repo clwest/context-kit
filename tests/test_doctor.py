@@ -742,8 +742,11 @@ class TestAdoptPlaceholderCheck(unittest.TestCase):
         self.assertIn("00-START-NEXT-SESSION.md", result.detail)
 
     def test_warns_on_what_it_is_doc(self):
+        # Explicit UTF-8: the em-dash below is not encodable in cp1252,
+        # which is the default text-write encoding on Windows.
         (self.tmpdir / "docs" / "PROJECT_WHAT_IT_IS.md").write_text(
-            "# Project\n\nMotivation: [adopt: please describe — adopt cannot infer]\n"
+            "# Project\n\nMotivation: [adopt: please describe — adopt cannot infer]\n",
+            encoding="utf-8",
         )
         result = check_adopt_placeholders(self.tmpdir)
         self.assertEqual(result.status, "warning")

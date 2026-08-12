@@ -480,9 +480,9 @@ def _print_restamp_summary(
         return
     for r in results:
         try:
-            rel = r.path.relative_to(project)
+            rel = r.path.relative_to(project).as_posix()
         except ValueError:
-            rel = r.path
+            rel = Path(r.path).as_posix()
         if r.action == "restamped":
             change = f"last_revised: {r.last_revised_before or '(missing)'} → {r.last_revised_after}"
             if r.covers_before and r.covers_after and r.covers_before != r.covers_after:
