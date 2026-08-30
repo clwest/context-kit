@@ -13,7 +13,7 @@
 - **Package version:** `0.16.0` in `pyproject.toml` (release-readiness cut; matches the wheel built for this cycle).
 - **Latest tag:** `v0.15.0` (v0.16.0 tag not yet cut — this release-readiness work is committed locally, unpushed).
 - **Branch:** `main`. Release-readiness commit pending push.
-- **Tests:** **1085 / 1085 passing** via `python3 -m unittest discover -s tests -t .`.
+- **Tests:** **1088 / 1088 passing** via `python3 -m unittest discover -s tests -t .`.
 - **Inventory:** regenerated as part of the release-readiness pass.
 - **Doctor:** 0 blocking; carried warnings for `PIPELINE.md` / `BEHAVIOR_LAYER.md` / SESSION_005 numbering gap remain deliberately deferred.
 - **Latest handoff:** `SESSION_019` (`docs/handoffs/SESSION_019_FLEET_NETWORK_PATTERN.md`) — describes the state before the release-readiness pass.
