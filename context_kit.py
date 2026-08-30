@@ -921,6 +921,91 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the compact startup prompt instead of the full prompt.",
     )
 
+    # guardrails (group)
+    guardrails = sub.add_parser(
+        "guardrails",
+        help="Portable CI drift gate — run built-in and plug-in checks, or install the workflow template",
+        description=(
+            "Run a portable CI drift gate for the current project. Two "
+            "built-in checks ship (verify-conflicts, tracked-generated-"
+            "paths); repo-specific checks land in "
+            ".context-kit/guardrails.py via a `CHECKS = [Check(...)]` "
+            "module attribute. `guardrails install-workflow` writes a "
+            "GitHub Actions template that installs contextkit-ai from "
+            "PyPI and runs `guardrails run` in strict mode."
+        ),
+    )
+    guardrails_sub = guardrails.add_subparsers(
+        dest="guardrails_action", required=False, metavar="ACTION"
+    )
+
+    g_run = guardrails_sub.add_parser(
+        "run",
+        help="Run built-in and plug-in checks (default action)",
+        description=(
+            "Run every built-in check plus any Check listed in "
+            ".context-kit/guardrails.py. Exits 1 if any check with "
+            "blocking=True fails and --strict is on (the default). "
+            "Downgrade specific checks to advisory via --advisory NAME "
+            "(repeatable) — the downgrade is visible in the invocation, "
+            "not hidden in the code."
+        ),
+    )
+    g_run.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    g_run.add_argument(
+        "--advisory",
+        action="append",
+        metavar="NAME",
+        help="Downgrade a named check to advisory (never blocks). Repeatable.",
+    )
+    g_run.add_argument(
+        "--only",
+        action="append",
+        metavar="NAME",
+        help="Restrict the run to the named check(s). Repeatable.",
+    )
+    g_run_strict = g_run.add_mutually_exclusive_group()
+    g_run_strict.add_argument(
+        "--strict",
+        dest="strict",
+        action="store_true",
+        default=True,
+        help="Fail (exit 1) on any blocking check (default).",
+    )
+    g_run_strict.add_argument(
+        "--no-strict",
+        dest="strict",
+        action="store_false",
+        help="Warn only; exit 0 regardless of check outcomes.",
+    )
+
+    g_install = guardrails_sub.add_parser(
+        "install-workflow",
+        help="Write .github/workflows/repo-guardrails.yml from the bundled template",
+    )
+    g_install.add_argument(
+        "--project",
+        default=None,
+        help="Project root (default: current working directory)",
+    )
+    g_install.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing workflow file.",
+    )
+
+    # When invoked as bare `context-kit guardrails` (no sub-action),
+    # default to `run` on the current directory in strict mode. The
+    # runner code checks `guardrails_action` and falls back to `run`
+    # when it is None, so we do not need the attribute to be set here
+    # — but we do need `strict` to exist for the `run` code path.
+    guardrails.set_defaults(guardrails_action=None, strict=True, project=None,
+                             advisory=None, only=None)
+
     # refactor (group)
     from cli.refactor import add_subparser as _add_refactor_subparser
     _add_refactor_subparser(sub)
@@ -992,6 +1077,7 @@ def build_parser() -> argparse.ArgumentParser:
 #   * `handoff` — has a sub-action layer (`handoff write`) that argparse
 #     already enforces. See `_run_handoff`.
 _COMMANDS: dict[str, tuple[str, str]] = {
+    "guardrails":       ("cli.guardrails",       "run_guardrails"),
     "start":            ("cli.server",           "run_start"),
     "orient":           ("cli.orient",           "run_orient"),
     "chat":             ("cli.chat",             "run_chat"),

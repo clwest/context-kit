@@ -1,0 +1,52 @@
+name: Repo Guardrails
+
+# Runs `context-kit guardrails run` in strict mode on every PR against
+# main and every push to main. Installs context-kit from PyPI — no
+# repository secret, no cross-repo token, no site-specific setup.
+#
+# Advisory downgrades belong in this file, not in the checker code.
+# The rule (carried over from unified-donkey-betz): a check that
+# cannot run in an environment must be advisory in that environment
+# and strict where it can run, and the difference must be visible in
+# the invocation. To downgrade a check in CI without weakening its
+# local behavior, add `--advisory <check-name>` below.
+#
+# Repo-specific checks live in `.context-kit/guardrails.py`. Any
+# check declared there is picked up automatically; no edit here is
+# needed to add or remove them.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  repo-guardrails:
+    name: Repo Guardrails
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history: some plug-in checks may use `git ls-files`
+          # or walk `HEAD^`. Cheap on repos of any realistic size.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install context-kit
+        run: |
+          python -m pip install --upgrade pip
+          pip install contextkit-ai
+
+      - name: Run guardrails (strict)
+        run: context-kit guardrails run

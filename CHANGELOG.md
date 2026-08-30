@@ -9,6 +9,45 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`guardrails`** — new subcommand family for a portable CI drift
+  gate, extracted from the `unified-donkey-betz` guardrails pack
+  (harvest program session 4).
+  - `guardrails run` — runs built-in checks plus any Check listed in
+    `.context-kit/guardrails.py`. Two built-ins ship:
+    `verify-conflicts` (fails on any CONFLICT finding from
+    `context-kit verify`) and `tracked-generated-paths` (fails when
+    a git-tracked path matches a pattern in
+    `.context-kit/guardrails.yaml` under `forbidden_paths:`).
+  - `guardrails install-workflow` — writes
+    `.github/workflows/repo-guardrails.yml` from the bundled template.
+    The template installs `contextkit-ai` from PyPI and runs
+    `guardrails run` in strict mode on every PR to `main` and every
+    push to `main`. No repository secrets, no cross-repo tokens.
+  - Repo-specific checks land via a plug-in file
+    (`.context-kit/guardrails.py`) exporting `CHECKS: list[Check]`. A
+    broken plug-in surfaces as a failing `plugin-load` check, not a
+    silent drop of the real checks.
+  - The "advisory in one environment, strict in another" rule from
+    the source pack is carried over: `--advisory NAME` (repeatable)
+    downgrades a check to non-blocking, and the downgrade lives in
+    the invocation (workflow file), not in the code.
+- **`context-kit-guardrails` skill** — new bundled Claude skill at
+  `cli/_skills/context-kit-guardrails/SKILL.md`. Related to but
+  distinct from the existing `context-kit` orientation skill: this
+  one fires when a project needs standing CI hygiene rather than
+  session-start orientation. The SKILL.md is explicit about the
+  boundary between the two.
+
+### Notes
+
+- Zero new runtime dependencies.
+- No net change to the six UDB-specific checks (Postgres
+  application-name tags, DOC-AUTOGEN markers on named docs, ORM
+  shape-signature scans) — those were repo furniture and belong in
+  the plug-in file of their repo, not in the shipped tool.
+
 ## [0.16.0] — 2026-08-12
 
 **Public-portfolio release: fold in ~62 commits of post-v0.15.0 work
