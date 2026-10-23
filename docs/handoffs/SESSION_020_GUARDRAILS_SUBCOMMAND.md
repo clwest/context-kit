@@ -103,8 +103,8 @@ name warnings).
   wheel carries them.
 - `CHANGELOG.md` — entry under `[Unreleased]`. **Version bump not
   applied**; the brief said "propose both; Chris ships." Proposed:
-  minor bump to `0.17.0` (new user-visible subcommand family + new
-  skill + one added package-data glob; no breaking change).
+  the next minor release after `0.16.0` (new user-visible subcommand
+  family + new skill + one added package-data glob; no breaking change).
 
 ## What the brief got wrong
 
@@ -170,9 +170,18 @@ not needed.
 Draft entry landed under `[Unreleased]` in `CHANGELOG.md`. The brief was
 explicit: propose, do not apply. Chris ships.
 
-Proposed next tag: **`v0.17.0`** — minor, because this adds a new
-user-visible subcommand family plus a new bundled skill, and does not
-change or remove any existing surface.
+Proposed next tag: the **next minor release after `v0.16.0`** — this
+adds a new user-visible subcommand family plus a new bundled skill, and
+does not change or remove any existing surface. The proposal is not
+applied; the current package version remains `0.16.0`.
+
+## Next session priorities
+
+### FIRST THING: decide on PIPELINE / BEHAVIOR_LAYER docs for context-kit itself
+
+This remains the first open item from the prior session-start file.
+Choose whether to write these docs or document a deliberate skip, then
+continue with the carried priorities in `00-START-NEXT-SESSION.md`.
 
 ## AI Notes
 

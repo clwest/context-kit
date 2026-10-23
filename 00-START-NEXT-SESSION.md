@@ -3,20 +3,20 @@
 > **Source of truth (read in this order):**
 > 1. `docs/CONTEXT_KIT_WHAT_IT_IS.md` — narrative anchor
 > 2. `docs/CONTEXT_KIT_INVENTORY.md` — runtime anchor (auto-generated; wins on counts)
-> 3. `docs/handoffs/SESSION_019_FLEET_NETWORK_PATTERN.md` — current continuity handoff
-> 4. `docs/handoffs/SESSION_018_SPOKESPERSON_CORPUS_PATTERN.md` — prior session, sibling sub-pattern bundle
+> 3. `docs/handoffs/SESSION_020_GUARDRAILS_SUBCOMMAND.md` — current continuity handoff
+> 4. `docs/handoffs/SESSION_019_FLEET_NETWORK_PATTERN.md` — prior session, fleet-network pattern
 >
 > When narrative and runtime disagree, runtime wins.
 
 ## Current State
 
 - **Package version:** `0.16.0` in `pyproject.toml` (release-readiness cut; matches the wheel built for this cycle).
-- **Latest tag:** `v0.15.0` (v0.16.0 tag not yet cut — this release-readiness work is committed locally, unpushed).
-- **Branch:** `main`. Release-readiness commit pending push.
-- **Tests:** **1088 / 1088 passing** via `python3 -m unittest discover -s tests -t .`.
-- **Inventory:** regenerated as part of the release-readiness pass.
-- **Doctor:** 0 blocking; carried warnings for `PIPELINE.md` / `BEHAVIOR_LAYER.md` / SESSION_005 numbering gap remain deliberately deferred.
-- **Latest handoff:** `SESSION_019` (`docs/handoffs/SESSION_019_FLEET_NETWORK_PATTERN.md`) — describes the state before the release-readiness pass.
+- **Latest tag:** `v0.16.0`.
+- **Branch:** `main`, currently aligned with `origin/main` before these documentation refreshes.
+- **Tests:** **1116 / 1116 passing** via `python3 -m unittest discover -s tests -t .`.
+- **Inventory:** regenerated after Session 020; `inventory --check` should pass.
+- **Doctor:** 0 blocking; remaining warnings are the unresolved PIPELINE / BEHAVIOR_LAYER doc decision and the SESSION_005 numbering gap.
+- **Latest handoff:** `SESSION_020` (`docs/handoffs/SESSION_020_GUARDRAILS_SUBCOMMAND.md`).
 
 ## Next Task — in strict order
 
