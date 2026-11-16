@@ -25,7 +25,7 @@ init  →  recommend-stack  →  seed  →  doctor  →  orient
 | **`context-kit seed idea.md`** | Turns the raw idea into Claude-ready context |
 | **`context-kit doctor`** | Catches environment / setup blockers before they bite |
 | **`context-kit orient`** | Loads the current context for the next AI session *(the bundled Claude Code skill calls this automatically)* |
-| **`context-kit chat`** | Sends the orient prompt plus your message to local Ollama |
+| **`context-kit chat`** | Sends the orient prompt plus your message to the configured Ollama endpoint |
 
 That five-command loop is the *starting-point workflow* — it is not
 the whole CLI. The full CLI is larger (see the **CLI reference**
@@ -114,7 +114,7 @@ Load-bearing terms used throughout the docs:
 - Replacing your test runner, linter, formatter, or CI.
 - Supervising an AI coding agent's ongoing work. `context-kit codex` can
   prepare and launch Codex. Optional `context-kit chat` sends requests to
-  local Ollama.
+  the configured Ollama endpoint.
 - Cloud sync, hosted state, telemetry, or authentication.
 - Framework-specific integrations beyond what's opt-in under
   `starter/scaffold/`.
@@ -202,8 +202,11 @@ The minimum loop is `init → seed → orient`.
 
 ### Ollama chat
 
-`context-kit chat` talks to a local Ollama server at
-`http://localhost:11434` by default. It uses these environment
+`context-kit chat` defaults to the Ollama endpoint
+`http://localhost:11434`. `OLLAMA_BASE_URL` can select a different endpoint,
+including a remote server. Project context and conversation messages are sent
+to that configured endpoint; data handling is not necessarily local-only.
+It uses these environment
 variables:
 
 - `OLLAMA_BASE_URL` for the Ollama server URL
@@ -277,7 +280,7 @@ Commands:
   init NAME            Scaffold a new project with the context-kit pattern
   start                Launch the onboarding server for the current project
   orient               Print the assembled session-start orientation report
-  chat                 Send the orient prompt plus a user prompt to local Ollama
+  chat                 Send the orient prompt plus a user prompt to the configured Ollama endpoint
   inspect              Print a deterministic system map for any repo
   hotpath              Show the largest files most likely to dominate AI context
   inventory            Generate a runtime-derived inventory of the project

@@ -3,43 +3,25 @@
 > **Source of truth (read in this order):**
 > 1. `docs/CONTEXT_KIT_WHAT_IT_IS.md` — narrative anchor
 > 2. `docs/CONTEXT_KIT_INVENTORY.md` — runtime anchor (auto-generated; wins on counts)
-> 3. `docs/handoffs/SESSION_021_CODEX_CONTINUITY_DOGFOOD.md` — current continuity handoff
-> 4. `docs/handoffs/SESSION_020_GUARDRAILS_SUBCOMMAND.md` — prior session, guardrails subcommand
+> 3. `docs/CONTEXT_KIT_PIPELINE.md` — runtime flow map
+> 4. `docs/CONTEXT_KIT_BEHAVIOR_LAYER.md` — terminal/report contract
+> 5. `docs/CONTEXT_KIT_TRANSLATION_LAYER.md` — audience contract
+> 6. `docs/handoffs/SESSION_023_SESSION_005_GAP_CLOSED.md` — current continuity handoff
 >
 > When narrative and runtime disagree, runtime wins.
 
 ## Current State
 
-- **Package version:** `0.16.0` in `pyproject.toml`; latest local tag `v0.16.0`.
-- **Branch:** `main`, one local documentation commit ahead of the `origin/main` reference (no fetch performed); not pushed.
-- **Working tree:** clean after the Session 021 documentation commit, which includes the existing README scope clarification.
-- **Tests:** this task did not run the test suite. Session 020 reported 1116 passing; current inventory/orient discovers 1116 tests by parsing definitions, which is not a test run.
-- **Inventory:** follow-up `inventory --write` and `inventory --check` both exit 0; inventory is current and includes 20 numbered handoffs. No commands/features changed.
-- **Diagnostics:** prior `verify` exited 0 (1 VERIFIED, 4 DOC_ONLY, 0 CONFLICT, 1 UNKNOWN); not rerun for this inventory follow-up. Final `doctor` exits 0 (11 OK, 0 blocking, 3 warnings: missing PIPELINE, missing BEHAVIOR_LAYER, SESSION_005 gap; 4 skipped). See Session 021 for details.
-- **Latest handoff:** `SESSION_021` (`docs/handoffs/SESSION_021_CODEX_CONTINUITY_DOGFOOD.md`).
+- **Version:** `0.16.0`; documentation-only completion of Sessions 022 and 023.
+- **Decision:** historical gap note records only evidence supported by Sessions 004, 006 and the changelog; original Session 005 details remain unavailable.
+- **Working tree / delivery:** all intended documentation staged on `main`; commit and push pending after successful checks. The prior environment restrictions are cleared.
+- **Tests:** `python3 -m unittest discover -s tests -t .` exited 0: `Ran 1116 tests in 10.815s`, `OK`, including the three live-server classes blocked in the prior attempt.
+- **Checks:** inventory current (175 tracked files, 23 handoffs); verify exit 0 (1 VERIFIED, 4 DOC_ONLY, 0 CONFLICT, 1 UNKNOWN); doctor exit 0 (14 OK, 0 blocking, 0 warnings, 4 skipped); staged and working diff whitespace checks pass.
+- **Latest handoff:** `SESSION_023`; includes the preserved Session 022 pipeline/behavior contracts and README/CLAUDE corrections.
 
 ## Next Task — in strict order
 
-### FIRST THING: decide on PIPELINE / BEHAVIOR_LAYER docs for context-kit itself
-
-Pending across SESSIONS 015 → 019 — five sessions of deliberate defer is itself a drift signal. Either:
-
-- **Write them.** `docs/CONTEXT_KIT_PIPELINE.md` (how `orient`, `doctor`, `handoff write`, `inventory`, the bundled sub-patterns flow from invocation → output) and `docs/CONTEXT_KIT_BEHAVIOR_LAYER.md` (voice + UI source-of-truth contract for `chat` and `inspect`). Templates ship in `cli/_pattern/templates/`.
-- **Document the deliberate skip.** Add a short paragraph to `CLAUDE.md` or the narrative anchor explaining why these two doc types don't apply to context-kit itself (no LLM pipeline runs server-side; no persona surface), then teach `doctor` to suppress them when the project opts out.
-
-The cost of repeatedly carrying these is now visible — every session's handoff has to acknowledge them. Pick one this session. The decision matters more than the choice.
-
-### Then: backfill SESSION_005 numbering gap
-
-Cheapest clear is a placeholder:
-
-```bash
-$EDITOR docs/handoffs/SESSION_005_INTENTIONAL_GAP.md
-```
-
-One paragraph explaining the gap (cross-reference CHANGELOG / git log around 2026-02 or whenever that window was). Or add a `Numbering gaps:` line in the narrative anchor and teach `check_handoff_numbering` to suppress it.
-
-### Then: INVENTORY git-SHA drift check (carried from SESSION_016)
+### FIRST THING: INVENTORY git-SHA drift check (carried from SESSION_016)
 
 Small change:
 
