@@ -3,20 +3,20 @@
 > **Source of truth (read in this order):**
 > 1. `docs/CONTEXT_KIT_WHAT_IT_IS.md` — narrative anchor
 > 2. `docs/CONTEXT_KIT_INVENTORY.md` — runtime anchor (auto-generated; wins on counts)
-> 3. `docs/handoffs/SESSION_020_GUARDRAILS_SUBCOMMAND.md` — current continuity handoff
-> 4. `docs/handoffs/SESSION_019_FLEET_NETWORK_PATTERN.md` — prior session, fleet-network pattern
+> 3. `docs/handoffs/SESSION_021_CODEX_CONTINUITY_DOGFOOD.md` — current continuity handoff
+> 4. `docs/handoffs/SESSION_020_GUARDRAILS_SUBCOMMAND.md` — prior session, guardrails subcommand
 >
 > When narrative and runtime disagree, runtime wins.
 
 ## Current State
 
-- **Package version:** `0.16.0` in `pyproject.toml` (release-readiness cut; matches the wheel built for this cycle).
-- **Latest tag:** `v0.16.0`.
-- **Branch:** `main`, currently aligned with `origin/main` before these documentation refreshes.
-- **Tests:** **1116 / 1116 passing** via `python3 -m unittest discover -s tests -t .`.
-- **Inventory:** regenerated after Session 020; `inventory --check` should pass.
-- **Doctor:** 0 blocking; remaining warnings are the unresolved PIPELINE / BEHAVIOR_LAYER doc decision and the SESSION_005 numbering gap.
-- **Latest handoff:** `SESSION_020` (`docs/handoffs/SESSION_020_GUARDRAILS_SUBCOMMAND.md`).
+- **Package version:** `0.16.0` in `pyproject.toml`; latest local tag `v0.16.0`.
+- **Branch:** `main`, one local documentation commit ahead of the `origin/main` reference (no fetch performed); not pushed.
+- **Working tree:** clean after the Session 021 documentation commit, which includes the existing README scope clarification.
+- **Tests:** this task did not run the test suite. Session 020 reported 1116 passing; current inventory/orient discovers 1116 tests by parsing definitions, which is not a test run.
+- **Inventory:** follow-up `inventory --write` and `inventory --check` both exit 0; inventory is current and includes 20 numbered handoffs. No commands/features changed.
+- **Diagnostics:** prior `verify` exited 0 (1 VERIFIED, 4 DOC_ONLY, 0 CONFLICT, 1 UNKNOWN); not rerun for this inventory follow-up. Final `doctor` exits 0 (11 OK, 0 blocking, 3 warnings: missing PIPELINE, missing BEHAVIOR_LAYER, SESSION_005 gap; 4 skipped). See Session 021 for details.
+- **Latest handoff:** `SESSION_021` (`docs/handoffs/SESSION_021_CODEX_CONTINUITY_DOGFOOD.md`).
 
 ## Next Task — in strict order
 

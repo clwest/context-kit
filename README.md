@@ -112,8 +112,9 @@ Load-bearing terms used throughout the docs:
 **Out of scope:**
 
 - Replacing your test runner, linter, formatter, or CI.
-- Running or supervising AI agents. context-kit prints prompts;
-  it does not call any model API.
+- Supervising an AI coding agent's ongoing work. `context-kit codex` can
+  prepare and launch Codex. Optional `context-kit chat` sends requests to
+  local Ollama.
 - Cloud sync, hosted state, telemetry, or authentication.
 - Framework-specific integrations beyond what's opt-in under
   `starter/scaffold/`.

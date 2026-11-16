@@ -2,7 +2,7 @@
 title: "context-kit — What It Actually Is"
 status: active
 generated: 2026-04-25
-last_revised: 2026-08-29 (SESSION 20)
+last_revised: 2026-11-16 (SESSION 21)
 companion_doc: CONTEXT_KIT_INVENTORY.md
 ---
 
