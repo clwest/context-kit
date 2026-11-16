@@ -14,7 +14,7 @@
 
 - **Version:** `0.16.0`; documentation-only completion of Sessions 022 and 023.
 - **Decision:** historical gap note records only evidence supported by Sessions 004, 006 and the changelog; original Session 005 details remain unavailable.
-- **Working tree / delivery:** all intended documentation staged on `main`; commit and push pending after successful checks. The prior environment restrictions are cleared.
+- **Working tree / delivery:** clean `main`, pushed to `origin/main`. Documentation delivery commit `a0d49da` (`docs: close Session 005 handoff gap`) was confirmed on the remote; this closeout record preserves that observed result. The prior environment restrictions are cleared.
 - **Tests:** `python3 -m unittest discover -s tests -t .` exited 0: `Ran 1116 tests in 10.815s`, `OK`, including the three live-server classes blocked in the prior attempt.
 - **Checks:** inventory current (175 tracked files, 23 handoffs); verify exit 0 (1 VERIFIED, 4 DOC_ONLY, 0 CONFLICT, 1 UNKNOWN); doctor exit 0 (14 OK, 0 blocking, 0 warnings, 4 skipped); staged and working diff whitespace checks pass.
 - **Latest handoff:** `SESSION_023`; includes the preserved Session 022 pipeline/behavior contracts and README/CLAUDE corrections.
